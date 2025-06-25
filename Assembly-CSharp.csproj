@@ -71,7 +71,6 @@
     <Compile Include="Assets/Scripts/Terrain/AnalysisResults.cs" />
     <Compile Include="Assets/Scripts/Terrain/SegmentationVisualizer.cs" />
     <Compile Include="Assets/Scripts/Terrain/TerrainGenerator.cs" />
-    <Compile Include="Assets/Scripts/Terrain/ModelGenerator.cs" />
     <Compile Include="Assets/Scripts/Core/TraversifyDebugger.cs" />
     <Compile Include="Assets/Scripts/Core/TraversifyComponents.cs" />
     <Compile Include="Assets/Scripts/Core/Traversify.cs" />
