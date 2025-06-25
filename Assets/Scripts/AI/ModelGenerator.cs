@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using Traversify.Core;
-using Traversify; // Add this to use the data models
+using Traversify;
 
 public class ModelGenerator : MonoBehaviour
 {
@@ -23,11 +23,21 @@ public class ModelGenerator : MonoBehaviour
     [SerializeField] private GameObject defaultCastleModel;
     [SerializeField] private GameObject defaultBoatModel;
     
+    [Header("AI Integration")]
+    [SerializeField] private bool useAIGeneration = true;
+    [SerializeField] private string tripo3DApiKey = "";
+    
     // Reference to the TraversifyMain
     private TraversifyMain traversifyMain;
     
+    // Reference to WorldManager for AI generation
+    private WorldManager worldManager;
+    
     // Cache for generated models to avoid duplicate requests
     private Dictionary<string, GameObject> modelCache = new Dictionary<string, GameObject>();
+    
+    // Track models generated in current session
+    private List<GameObject> generatedModels = new List<GameObject>();
     
     private void Awake()
     {
@@ -39,11 +49,24 @@ public class ModelGenerator : MonoBehaviour
             traversifyMain = traversifyManagerObj.AddComponent<TraversifyMain>();
             Debug.Log("[ModelGenerator] Created TraversifyManager instance");
         }
+        
+        // Find or create WorldManager
+        worldManager = WorldManager.Instance;
+        if (worldManager == null)
+        {
+            Debug.LogWarning("[ModelGenerator] WorldManager not found, AI generation will be disabled");
+            useAIGeneration = false;
+        }
+        else
+        {
+            Debug.Log("[ModelGenerator] WorldManager found, AI generation enabled");
+        }
     }
     
     public IEnumerator GenerateAndPlaceModels(AnalysisResults analysisResults, Terrain terrain)
     {
         Debug.Log("[ModelGenerator] Starting model generation...");
+        generatedModels.Clear();
         
         // Process terrain objects first for better organization
         yield return StartCoroutine(ProcessMapObjects(analysisResults, terrain, true));
@@ -51,7 +74,7 @@ public class ModelGenerator : MonoBehaviour
         // Process non-terrain objects
         yield return StartCoroutine(ProcessMapObjects(analysisResults, terrain, false));
         
-        Debug.Log("[ModelGenerator] Model generation complete");
+        Debug.Log($"[ModelGenerator] Model generation complete. Generated {generatedModels.Count} models");
     }
     
     private IEnumerator ProcessMapObjects(AnalysisResults analysisResults, Terrain terrain, bool terrainObjectsOnly)
@@ -128,45 +151,220 @@ public class ModelGenerator : MonoBehaviour
             yield break;
         }
         
-        // Use TraversifyManager to generate model
-        GameObject generatedModel = null;
-        bool modelGenerated = false;
-        
-        // Make sure the description is not empty
-        if (string.IsNullOrEmpty(description))
+        // If AI generation is enabled and no prefab exists, use WorldManager
+        if (useAIGeneration && worldManager != null && !string.IsNullOrEmpty(openAIApiKey) && !string.IsNullOrEmpty(tripo3DApiKey))
         {
-            description = "generic " + mapObj.type;
-        }
-        
-        if (traversifyMain != null)
-        {
-            Debug.Log($"[ModelGenerator] Generating model for: {description}");
+            Debug.Log($"[ModelGenerator] Using WorldManager AI generation for: {description}");
             
-            // For demonstration purposes, use fallback models
-            generatedModel = GetFallbackModel(mapObj.type);
-            modelGenerated = (generatedModel != null);
+            GameObject generatedModel = null;
+            bool modelGenerated = false;
             
-            // Simulate model generation time
-            yield return new WaitForSeconds(0.5f);
-        }
-        
-        if (!modelGenerated)
-        {
-            Debug.LogWarning($"[ModelGenerator] Failed to generate model for {description}, using fallback");
-            generatedModel = GetFallbackModel(mapObj.type);
-        }
-        
-        if (generatedModel != null)
-        {
-            // Store in cache
-            modelCache[description] = generatedModel;
+            // Calculate world position for the model
+            Vector3 worldPosition = CalculateWorldPosition(mapObj, terrain);
             
-            // Place the model
-            PlaceModelInstance(generatedModel, mapObj, terrain);
+            // Configure WorldManager with API keys
+            ConfigureWorldManager();
+            
+            // Use WorldManager to generate the model
+            yield return StartCoroutine(GenerateModelWithWorldManager(description, worldPosition, mapObj.type,
+                (model) => {
+                    generatedModel = model;
+                    modelGenerated = true;
+                },
+                (error) => {
+                    Debug.LogError($"[ModelGenerator] WorldManager generation failed: {error}");
+                    modelGenerated = true; // Set to true to exit wait loop
+                }
+            ));
+            
+            // Wait for generation to complete
+            float timeout = 300f; // 5 minutes timeout
+            float elapsed = 0f;
+            while (!modelGenerated && elapsed < timeout)
+            {
+                elapsed += Time.deltaTime;
+                yield return null;
+            }
+            
+            if (generatedModel != null)
+            {
+                // Store in cache
+                modelCache[description] = generatedModel;
+                
+                // Configure the generated model
+                ConfigureGeneratedModel(generatedModel, mapObj, terrain);
+                
+                // Add to our generated models list
+                generatedModels.Add(generatedModel);
+            }
+            else
+            {
+                Debug.LogWarning($"[ModelGenerator] AI generation failed or timed out for {description}, using fallback");
+                generatedModel = GetFallbackModel(mapObj.type);
+                
+                if (generatedModel != null)
+                {
+                    PlaceModelInstance(generatedModel, mapObj, terrain);
+                }
+            }
         }
         else
         {
-            Debug.LogError($"[ModelGenerator] Could not generate or find fallback model for {description}");
+            // Use fallback model when AI generation is not available
+            Debug.Log($"[ModelGenerator] AI generation not available, using fallback for: {description}");
+            GameObject fallbackModel = GetFallbackModel(mapObj.type);
+            
+            if (fallbackModel != null)
+            {
+                // Store in cache
+                modelCache[description] = fallbackModel;
+                
+                // Place the model
+                PlaceModelInstance(fallbackModel, mapObj, terrain);
+            }
+        }
+    }
+    
+    private void ConfigureWorldManager()
+    {
+        if (worldManager == null) return;
+        
+        // Use reflection to set API keys on WorldManager
+        try
+        {
+            var openAIKeyField = typeof(WorldManager).GetField("openAIApiKey", 
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var tripoKeyField = typeof(WorldManager).GetField("tripo3DApiKey", 
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            
+            if (openAIKeyField != null)
+                openAIKeyField.SetValue(worldManager, openAIApiKey);
+            
+            if (tripoKeyField != null)
+                tripoKeyField.SetValue(worldManager, tripo3DApiKey);
+                
+            Debug.Log("[ModelGenerator] Successfully configured WorldManager API keys");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[ModelGenerator] Failed to configure WorldManager: {ex.Message}");
+        }
+    }
+    
+    private IEnumerator GenerateModelWithWorldManager(string description, Vector3 position, string objectType, 
+        Action<GameObject> onSuccess, Action<string> onError)
+    {
+        if (worldManager == null)
+        {
+            onError?.Invoke("WorldManager not available");
+            yield break;
+        }
+        
+        try
+        {
+            // Create a more detailed prompt based on object type
+            string enhancedPrompt = CreateEnhancedPrompt(description, objectType);
+            
+            Debug.Log($"[ModelGenerator] Requesting AI model generation: {enhancedPrompt}");
+            
+            // Call WorldManager's generation method
+            worldManager.GenerateModelWithDescription(enhancedPrompt);
+            
+            // Wait for the model to be generated and placed
+            // WorldManager will handle the entire generation pipeline
+            float waitTime = 0f;
+            float maxWaitTime = 300f; // 5 minutes
+            GameObject generatedModel = null;
+            
+            while (waitTime < maxWaitTime)
+            {
+                // Check if a new model was added to the scene at the expected position
+                // This is a simplified check - you might want to implement a more robust callback system
+                Collider[] nearbyObjects = Physics.OverlapSphere(position, 2f);
+                foreach (var collider in nearbyObjects)
+                {
+                    if (collider.gameObject.name.Contains(objectType) && 
+                        !generatedModels.Contains(collider.gameObject))
+                    {
+                        generatedModel = collider.gameObject;
+                        break;
+                    }
+                }
+                
+                if (generatedModel != null)
+                {
+                    Debug.Log($"[ModelGenerator] Found generated model: {generatedModel.name}");
+                    onSuccess?.Invoke(generatedModel);
+                    yield break;
+                }
+                
+                waitTime += Time.deltaTime;
+                yield return null;
+            }
+            
+            onError?.Invoke("Model generation timed out");
+        }
+        catch (Exception ex)
+        {
+            onError?.Invoke($"Exception during generation: {ex.Message}");
+        }
+    }
+    
+    private string CreateEnhancedPrompt(string baseDescription, string objectType)
+    {
+        // Create more specific prompts based on object type
+        switch (objectType.ToLower())
+        {
+            case "tree":
+                return $"A realistic 3D {baseDescription} suitable for a game environment. Include detailed bark texture and foliage.";
+                
+            case "building":
+            case "house":
+                return $"A detailed 3D {baseDescription} with architectural details, windows, doors, and realistic materials.";
+                
+            case "castle":
+                return $"An impressive 3D medieval {baseDescription} with towers, walls, and fortifications.";
+                
+            case "boat":
+            case "ship":
+                return $"A detailed 3D {baseDescription} with sails, rigging, and nautical details.";
+                
+            case "bridge":
+                return $"A sturdy 3D {baseDescription} suitable for crossing, with structural supports and railings.";
+                
+            case "statue":
+            case "monument":
+                return $"An ornate 3D {baseDescription} with fine sculptural details and weathered stone texture.";
+                
+            default:
+                return $"A high-quality 3D {baseDescription} with realistic textures and appropriate scale for a game environment.";
+        }
+    }
+    
+    private void ConfigureGeneratedModel(GameObject model, MapObject mapObj, Terrain terrain)
+    {
+        if (model == null) return;
+        
+        // The model is already positioned by WorldManager, but we need to ensure proper scale
+        Vector3 appropriateScale = CalculateAppropriateScale(model, mapObj, terrain.terrainData.size);
+        model.transform.localScale = appropriateScale;
+        
+        // Apply rotation
+        model.transform.rotation = Quaternion.Euler(0, mapObj.rotation, 0);
+        
+        // Ensure the model has necessary components
+        if (model.GetComponent<Collider>() == null)
+        {
+            MeshFilter meshFilter = model.GetComponent<MeshFilter>();
+            if (meshFilter != null && meshFilter.mesh != null)
+            {
+                MeshCollider collider = model.AddComponent<MeshCollider>();
+                collider.convex = true;
+            }
+            else
+            {
+                model.AddComponent<BoxCollider>();
+            }
         }
     }
     
@@ -206,11 +404,50 @@ public class ModelGenerator : MonoBehaviour
                 // Store in cache
                 modelCache[description] = templateModel;
             }
-            else
+            else if (useAIGeneration && worldManager != null)
             {
+                // Use AI generation for the template
                 Debug.Log($"[ModelGenerator] Generating template model for group: {description}");
                 
-                // For demonstration purposes, use fallback models
+                GameObject generatedModel = null;
+                bool modelGenerated = false;
+                
+                // Calculate position for first object in group
+                Vector3 firstPosition = CalculateWorldPosition(groupObjects[0], terrain);
+                
+                yield return StartCoroutine(GenerateModelWithWorldManager(description, firstPosition, referenceObj.type,
+                    (model) => {
+                        generatedModel = model;
+                        modelGenerated = true;
+                    },
+                    (error) => {
+                        Debug.LogError($"[ModelGenerator] Template generation failed: {error}");
+                        modelGenerated = true;
+                    }
+                ));
+                
+                // Wait for generation
+                float timeout = 300f;
+                float elapsed = 0f;
+                while (!modelGenerated && elapsed < timeout)
+                {
+                    elapsed += Time.deltaTime;
+                    yield return null;
+                }
+                
+                if (generatedModel != null)
+                {
+                    templateModel = generatedModel;
+                    modelCache[description] = templateModel;
+                }
+                else
+                {
+                    templateModel = GetFallbackModel(referenceObj.type);
+                }
+            }
+            else
+            {
+                Debug.Log($"[ModelGenerator] Using fallback model for group: {description}");
                 templateModel = GetFallbackModel(referenceObj.type);
                 
                 // Simulate model generation time
@@ -259,6 +496,9 @@ public class ModelGenerator : MonoBehaviour
             // Add to group container
             instance.transform.SetParent(groupContainer.transform);
             
+            // Add to generated models list
+            generatedModels.Add(instance);
+            
             yield return null; // Pause after each object to spread load
         }
     }
@@ -268,6 +508,39 @@ public class ModelGenerator : MonoBehaviour
         if (model == null) return;
         
         // Calculate world position
+        Vector3 worldPosition = CalculateWorldPosition(mapObj, terrain);
+        
+        // Calculate appropriate scale based on object type and terrain size
+        Vector3 worldScale = CalculateAppropriateScale(model, mapObj, terrain.terrainData.size);
+        
+        // Create rotation from the float rotation value
+        Quaternion worldRotation = Quaternion.Euler(0, mapObj.rotation, 0);
+        
+        // If using WorldManager, delegate placement to it
+        if (worldManager != null)
+        {
+            worldManager.PlaceModelInScene(model, worldPosition);
+            
+            // Still apply our scale and rotation
+            model.transform.rotation = worldRotation;
+            model.transform.localScale = worldScale;
+        }
+        else
+        {
+            // Apply position, rotation, and scale directly
+            model.transform.position = worldPosition;
+            model.transform.rotation = worldRotation;
+            model.transform.localScale = worldScale;
+            
+            // Make model visible
+            model.SetActive(true);
+        }
+        
+        Debug.Log($"[ModelGenerator] Placed model {model.name} at {worldPosition}, rotation: {worldRotation.eulerAngles}, scale: {worldScale}");
+    }
+    
+    private Vector3 CalculateWorldPosition(MapObject mapObj, Terrain terrain)
+    {
         Vector3 terrainSize = terrain.terrainData.size;
         
         // Convert Vector2 position to Vector3 for the terrain
@@ -281,27 +554,11 @@ public class ModelGenerator : MonoBehaviour
         float terrainHeight = terrain.SampleHeight(worldPos);
         
         // Calculate final position
-        Vector3 worldPosition = new Vector3(
+        return new Vector3(
             worldPos.x,
             terrainHeight,
             worldPos.z
         );
-        
-        // Calculate appropriate scale based on object type and terrain size
-        Vector3 worldScale = CalculateAppropriateScale(model, mapObj, terrainSize);
-        
-        // Create rotation from the float rotation value
-        Quaternion worldRotation = Quaternion.Euler(0, mapObj.rotation, 0);
-        
-        // Apply position, rotation, and scale
-        model.transform.position = worldPosition;
-        model.transform.rotation = worldRotation;
-        model.transform.localScale = worldScale;
-        
-        // Make model visible
-        model.SetActive(true);
-        
-        Debug.Log($"[ModelGenerator] Placed model {model.name} at {worldPosition}, rotation: {worldRotation.eulerAngles}, scale: {worldScale}");
     }
     
     private Vector3 CalculateAppropriateScale(GameObject model, MapObject mapObj, Vector3 terrainSize)
@@ -452,66 +709,28 @@ public class ModelGenerator : MonoBehaviour
         public Vector3 customScale = Vector3.one;
     }
     
-    // Helper methods to be used by the TraversifyMain class
-    public IEnumerator GenerateModelWithDescription(string modelType, string description, Vector3 position, Quaternion rotation, Vector3 scale, 
-        Action<GameObject> onComplete, Action<string> onError)
+    // Public methods for external use
+    public IEnumerator GenerateAndPlaceModels(AnalysisResults analysisResults, Terrain terrain, 
+        System.Action<List<GameObject>> onComplete, System.Action<string> onError, System.Action<int, int> onProgress)
     {
-        bool errorOccurred = false;
-        string errorMessage = "";
+        Debug.Log("[ModelGenerator] Starting model generation with callbacks...");
         
-        try 
+        try
         {
-            GameObject model = null;
+            yield return StartCoroutine(GenerateAndPlaceModels(analysisResults, terrain));
             
-            // First check if we have a matching prefab
-            model = GetPrefabForObjectType(modelType);
-            
-            if (model == null)
-            {
-                // If no prefab, use a fallback model
-                model = GetFallbackModel(modelType);
-            }
-            
-            if (model != null)
-            {
-                GameObject instance = Instantiate(model);
-                instance.transform.position = position;
-                instance.transform.rotation = rotation;
-                instance.transform.localScale = scale;
-                
-                onComplete?.Invoke(instance);
-            }
-            else
-            {
-                errorOccurred = true;
-                errorMessage = $"Failed to generate model for {modelType}";
-            }
+            // Report completion
+            onComplete?.Invoke(generatedModels);
         }
         catch (Exception ex)
         {
-            errorOccurred = true;
-            errorMessage = $"Error generating model: {ex.Message}";
+            Debug.LogError($"[ModelGenerator] Error during model generation: {ex.Message}");
+            onError?.Invoke(ex.Message);
         }
-        
-        // Handle any errors outside the try-catch block
-        if (errorOccurred)
-        {
-            onError?.Invoke(errorMessage);
-        }
-        
-        // Safe to yield outside of try-catch
-        yield return null;
     }
     
-    public void PlaceModelInScene(GameObject model, Vector3 position, Quaternion rotation, Vector3 scale)
-    {
-        if (model == null) return;
-        
-        model.transform.position = position;
-        model.transform.rotation = rotation;
-        model.transform.localScale = scale;
-        
-        // Ensure the model is active
-        model.SetActive(true);
-    }
+    // Stub properties for compatibility
+    public TraversifyDebugger debugger { get; set; }
+    public int maxConcurrentRequests { get; set; } = 3;
+    public float apiRateLimitDelay { get; set; } = 0.5f;
 }

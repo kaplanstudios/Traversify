@@ -215,14 +215,11 @@ public class TraversifySetup : EditorWindow
             InitializeStyles();
         }
         
-        bool scrollViewBegun = false;
-        
+        // Use GUILayout.BeginScrollView instead of EditorGUILayout.BeginScrollView to avoid potential layout nesting issues
+        scrollPosition = GUILayout.BeginScrollView(scrollPosition);
+
         try
         {
-            // Begin the scroll view inside the try block
-            scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
-            scrollViewBegun = true;
-            
             // Header
             EditorGUILayout.Space(20);
             GUILayout.Label("TRAVERSIFY", headerStyle);
@@ -273,32 +270,15 @@ public class TraversifySetup : EditorWindow
             {
                 DrawDownloadProgress();
             }
-            
-            // Make sure to end the scroll view if it was begun
-            if (scrollViewBegun)
-            {
-                EditorGUILayout.EndScrollView();
-                scrollViewBegun = false;
-            }
         }
         catch (Exception e)
         {
-            // If an exception occurred during GUI rendering, report it
             Debug.LogError($"Error in TraversifySetup GUI: {e.Message}\n{e.StackTrace}");
-            
-            // Show error message - but make sure we don't try to end the scroll view again if it's already been ended
-            if (scrollViewBegun)
-            {
-                EditorGUILayout.HelpBox("An error occurred while rendering the UI. Check the console for details.", MessageType.Error);
-                EditorGUILayout.EndScrollView();
-                scrollViewBegun = false;
-            }
-            else
-            {
-                // If the scroll view wasn't begun, show the message outside
-                EditorGUILayout.HelpBox("An error occurred while rendering the UI. Check the console for details.", MessageType.Error);
-            }
+            EditorGUILayout.HelpBox("An error occurred while rendering the UI. Check the console for details.", MessageType.Error);
         }
+
+        // End main scroll view - use GUILayout.EndScrollView to match GUILayout.BeginScrollView
+        GUILayout.EndScrollView();
     }
     
     private void DrawDependenciesSection()
