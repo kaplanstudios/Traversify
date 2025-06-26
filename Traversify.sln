@@ -1,24 +1,27 @@
 ﻿
-Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio 15
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Assembly-CSharp", "Assembly-CSharp.csproj", "{A145D158-1AC7-C5A1-B116-7FD60F7CE0C0}"
+Microsoft Visual Studio Solution File, Format Version 11.00
+# Visual Studio 2010
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Piglet", "Piglet.csproj", "{36c21c8e-64ce-a22c-c82b-4d354fe56783}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Assembly-CSharp-Editor", "Assembly-CSharp-Editor.csproj", "{E5FDA10D-61C1-0A9B-9780-9A6DB90328D0}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Assembly-CSharp-Editor", "Assembly-CSharp-Editor.csproj", "{0da1fde5-c161-9b0a-9780-9a6db90328d0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Assembly-CSharp", "Assembly-CSharp.csproj", "{58d145a1-c71a-a1c5-b116-7fd60f7ce0c0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PigletEditor", "PigletEditor.csproj", "{7a00335e-d025-1f88-72be-6004e793699b}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
-		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{A145D158-1AC7-C5A1-B116-7FD60F7CE0C0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{A145D158-1AC7-C5A1-B116-7FD60F7CE0C0}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{A145D158-1AC7-C5A1-B116-7FD60F7CE0C0}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{A145D158-1AC7-C5A1-B116-7FD60F7CE0C0}.Release|Any CPU.Build.0 = Release|Any CPU
-		{E5FDA10D-61C1-0A9B-9780-9A6DB90328D0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{E5FDA10D-61C1-0A9B-9780-9A6DB90328D0}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{E5FDA10D-61C1-0A9B-9780-9A6DB90328D0}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{E5FDA10D-61C1-0A9B-9780-9A6DB90328D0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{36c21c8e-64ce-a22c-c82b-4d354fe56783}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{36c21c8e-64ce-a22c-c82b-4d354fe56783}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0da1fde5-c161-9b0a-9780-9a6db90328d0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0da1fde5-c161-9b0a-9780-9a6db90328d0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{58d145a1-c71a-a1c5-b116-7fd60f7ce0c0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{58d145a1-c71a-a1c5-b116-7fd60f7ce0c0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7a00335e-d025-1f88-72be-6004e793699b}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7a00335e-d025-1f88-72be-6004e793699b}.Debug|Any CPU.Build.0 = Debug|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

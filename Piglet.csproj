@@ -12,11 +12,11 @@
     <ProductVersion>10.0.20506</ProductVersion>
     <SchemaVersion>2.0</SchemaVersion>
     <RootNamespace></RootNamespace>
-    <ProjectGuid>{58d145a1-c71a-a1c5-b116-7fd60f7ce0c0}</ProjectGuid>
+    <ProjectGuid>{36c21c8e-64ce-a22c-c82b-4d354fe56783}</ProjectGuid>
     <ProjectTypeGuids>{E097FAD1-6243-4DAD-9C02-E9B9EFC3FFC1};{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}</ProjectTypeGuids>
     <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
-    <AssemblyName>Assembly-CSharp</AssemblyName>
+    <AssemblyName>Piglet</AssemblyName>
     <TargetFrameworkVersion>v4.7.1</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <BaseDirectory>.</BaseDirectory>
@@ -25,12 +25,12 @@
     <DebugSymbols>true</DebugSymbols>
     <DebugType>full</DebugType>
     <Optimize>false</Optimize>
-    <OutputPath>Temp\Bin\Debug\Assembly-CSharp\</OutputPath>
+    <OutputPath>Temp\Bin\Debug\Piglet\</OutputPath>
     <DefineConstants>UNITY_6000_1_8;UNITY_6000_1;UNITY_6000;UNITY_5_3_OR_NEWER;UNITY_5_4_OR_NEWER;UNITY_5_5_OR_NEWER;UNITY_5_6_OR_NEWER;UNITY_2017_1_OR_NEWER;UNITY_2017_2_OR_NEWER;UNITY_2017_3_OR_NEWER;UNITY_2017_4_OR_NEWER;UNITY_2018_1_OR_NEWER;UNITY_2018_2_OR_NEWER;UNITY_2018_3_OR_NEWER;UNITY_2018_4_OR_NEWER;UNITY_2019_1_OR_NEWER;UNITY_2019_2_OR_NEWER;UNITY_2019_3_OR_NEWER;UNITY_2019_4_OR_NEWER;UNITY_2020_1_OR_NEWER;UNITY_2020_2_OR_NEWER;UNITY_2020_3_OR_NEWER;UNITY_2021_1_OR_NEWER;UNITY_2021_2_OR_NEWER;UNITY_2021_3_OR_NEWER;UNITY_2022_1_OR_NEWER;UNITY_2022_2_OR_NEWER;UNITY_2022_3_OR_NEWER;UNITY_2023_1_OR_NEWER;UNITY_2023_2_OR_NEWER;UNITY_2023_3_OR_NEWER;UNITY_6000_0_OR_NEWER;UNITY_6000_1_OR_NEWER;PLATFORM_ARCH_64;UNITY_64;UNITY_INCLUDE_TESTS;ENABLE_AR;ENABLE_AUDIO;ENABLE_CACHING;ENABLE_CLOTH;ENABLE_MICROPHONE;ENABLE_MULTIPLE_DISPLAYS;ENABLE_PHYSICS;ENABLE_TEXTURE_STREAMING;ENABLE_VIRTUALTEXTURING;ENABLE_LZMA;ENABLE_UNITYEVENTS;ENABLE_VR;ENABLE_WEBCAM;ENABLE_UNITYWEBREQUEST;ENABLE_WWW;ENABLE_CLOUD_SERVICES;ENABLE_CLOUD_SERVICES_ADS;ENABLE_CLOUD_SERVICES_USE_WEBREQUEST;ENABLE_CLOUD_SERVICES_CRASH_REPORTING;ENABLE_CLOUD_SERVICES_NATIVE_CRASH_REPORTING;ENABLE_CLOUD_SERVICES_PURCHASING;ENABLE_CLOUD_SERVICES_ANALYTICS;ENABLE_CLOUD_SERVICES_BUILD;ENABLE_EDITOR_GAME_SERVICES;ENABLE_UNITY_GAME_SERVICES_ANALYTICS_SUPPORT;ENABLE_CLOUD_LICENSE;ENABLE_EDITOR_HUB_LICENSE;ENABLE_WEBSOCKET_CLIENT;ENABLE_GENERATE_NATIVE_PLUGINS_FOR_ASSEMBLIES_API;ENABLE_DIRECTOR_AUDIO;ENABLE_DIRECTOR_TEXTURE;ENABLE_MANAGED_JOBS;ENABLE_MANAGED_TRANSFORM_JOBS;ENABLE_MANAGED_ANIMATION_JOBS;ENABLE_MANAGED_AUDIO_JOBS;ENABLE_MANAGED_UNITYTLS;INCLUDE_DYNAMIC_GI;ENABLE_SCRIPTING_GC_WBARRIERS;PLATFORM_SUPPORTS_MONO;RENDER_SOFTWARE_CURSOR;ENABLE_MARSHALLING_TESTS;ENABLE_VIDEO;ENABLE_NAVIGATION_OFFMESHLINK_TO_NAVMESHLINK;ENABLE_ACCELERATOR_CLIENT_DEBUGGING;TEXTCORE_1_0_OR_NEWER;EDITOR_ONLY_NAVMESH_BUILDER_DEPRECATED;PLATFORM_STANDALONE_OSX;PLATFORM_STANDALONE;UNITY_STANDALONE_OSX;UNITY_STANDALONE;ENABLE_GAMECENTER;ENABLE_RUNTIME_GI;ENABLE_MOVIES;ENABLE_NETWORK;ENABLE_CRUNCH_TEXTURE_COMPRESSION;ENABLE_CLUSTER_SYNC;ENABLE_CLUSTERINPUT;ENABLE_SPATIALTRACKING;PLATFORM_HAS_CUSTOM_MUTEX;PLATFORM_UPDATES_TIME_OUTSIDE_OF_PLAYER_LOOP;ENABLE_MONO;NET_STANDARD_2_0;NET_STANDARD;NET_STANDARD_2_1;NETSTANDARD;NETSTANDARD2_1;ENABLE_PROFILER;DEBUG;TRACE;UNITY_ASSERTIONS;UNITY_EDITOR;UNITY_EDITOR_64;UNITY_EDITOR_OSX;ENABLE_UNITY_COLLECTIONS_CHECKS;ENABLE_BURST_AOT;UNITY_TEAM_LICENSE;ENABLE_CUSTOM_RENDER_TEXTURE;ENABLE_DIRECTOR;ENABLE_LOCALIZATION;ENABLE_SPRITES;ENABLE_TERRAIN;ENABLE_TILEMAP;ENABLE_TIMELINE;ENABLE_LEGACY_INPUT_MANAGER;TEXTCORE_FONT_ENGINE_1_5_OR_NEWER;TEXTCORE_TEXT_ENGINE_1_5_OR_NEWER;UNITY_UI_INSTALLED;NEWTONSOFT_JSON_INSTALLED;CSHARP_7_OR_LATER;CSHARP_7_3_OR_NEWER</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
     <NoWarn>0169,0649</NoWarn>
-    <AllowUnsafeBlocks>False</AllowUnsafeBlocks>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <TreatWarningsAsErrors>False</TreatWarningsAsErrors>
   </PropertyGroup>
   <PropertyGroup>
@@ -46,45 +46,125 @@
     <Analyzer Include="/Applications/Unity/Hub/Editor/6000.1.8f1/Unity.app/Contents/Tools/Unity.SourceGenerators/Unity.UIToolkit.SourceGenerator.dll" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Assets/Scripts/Terrain/AnalysisResults.cs" />
-    <Compile Include="Assets/Scripts/Terrain/SegmentationVisualizer.cs" />
-    <Compile Include="Assets/Scripts/Terrain/TerrainGenerator.cs" />
-    <Compile Include="Assets/Scripts/AI/ModelGeneratorExtensions.cs" />
-    <Compile Include="Assets/Scripts/Core/TraversifyDebugger.cs" />
-    <Compile Include="Assets/Scripts/Core/Tensor.cs" />
-    <Compile Include="Assets/Scripts/Core/TraversifyComponents.cs" />
-    <Compile Include="Assets/Scripts/Core/Traversify.cs" />
-    <Compile Include="Assets/Scripts/Terrain/LogCategory.cs" />
-    <Compile Include="Assets/Scripts/Terrain/Billboard.cs" />
-    <Compile Include="Assets/Scripts/AI/OpenAIResponse.cs" />
-    <Compile Include="Assets/Scripts/AI/AnalysisTypes.cs" />
-    <Compile Include="Assets/Scripts/Core/WorkerFactory.cs" />
-    <Compile Include="Assets/Scripts/AI/ModelGenerator.cs" />
-    <Compile Include="Assets/Scripts/AI/MapAnalyzer.cs" />
-    <None Include="Assets/TextMesh Pro/Shaders/TMPro.cginc" />
-    <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF-Mobile Overlay.shader" />
-    <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF-Mobile-2-Pass.shader" />
-    <None Include="Assets/TextMesh Pro/Shaders/TMP_Bitmap.shader" />
-    <None Include="Assets/TextMesh Pro/Shaders/TMPro_Mobile.cginc" />
-    <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF SSD.shader" />
-    <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF-Surface-Mobile.shader" />
-    <None Include="Assets/TextMesh Pro/Shaders/SDFFunctions.hlsl" />
-    <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF-Surface.shader" />
-    <None Include="Assets/TextMesh Pro/Sprites/EmojiOne Attribution.txt" />
-    <None Include="Assets/TextMesh Pro/Shaders/TMP_Bitmap-Custom-Atlas.shader" />
-    <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF.shader" />
-    <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF-Mobile SSD.shader" />
-    <None Include="Assets/TextMesh Pro/Resources/LineBreaking Leading Characters.txt" />
-    <None Include="Assets/TextMesh Pro/Shaders/TMPro_Properties.cginc" />
-    <None Include="Assets/TextMesh Pro/Shaders/TMPro_Surface.cginc" />
-    <None Include="Assets/TextMesh Pro/Resources/LineBreaking Following Characters.txt" />
-    <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF-Mobile Masking.shader" />
-    <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF Overlay.shader" />
-    <None Include="Assets/TextMesh Pro/Shaders/TMP_Bitmap-Mobile.shader" />
-    <None Include="Assets/TextMesh Pro/Fonts/LiberationSans - OFL.txt" />
-    <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF-Mobile.shader" />
-    <None Include="Assets/TextMesh Pro/Sprites/EmojiOne.json" />
-    <None Include="Assets/TextMesh Pro/Shaders/TMP_Sprite.shader" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/AttributeAccessor.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/GLTFRoot.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/_Camera.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Util/AssetPathUtil.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/Image.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Importer/GltfImporter.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/SchemaExtensions.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Extensions/KHR_texture_basisuExtension.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Properties/AssemblyInfo.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Extensions/KHR_draco_mesh_compressionExtensionFactory.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Draco/DracoUnityUtil.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Util/UriUtil.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Extensions/ExtTextureTransformExtension.cs" />
+    <Compile Include="Assets/Piglet/Examples/RuntimeAnimation/Scripts/RuntimeAnimationBehaviour.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFUtils.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/CameraOrthographic.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/AnimationChannel.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Extensions/ExtTextureTransformExtensionFactory.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Importer/Editor/EditorGltfImporter.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Exceptions/UriResolutionException.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Importer/GltfImportCache.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/AccessorSparseIndices.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Extensions/UnityWebRequestExtensions.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Util/ZipUtil.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/_Animation.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Texture/TextureLoadingFlags.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Extensions/Vector3Extensions.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Exceptions.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/Node.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Animation/AnimationUtil.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/Scene.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Extensions/KHR_draco_mesh_compressionExtension.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/Material.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Math/Vector4.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/GLTFHelpers.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Math/Vector2.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/MaterialNormalTextureInfo.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/AnimationChannelTarget.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Importer/YieldType.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Extensions/GLTFJsonExtensions.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/Asset.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Math/Color.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Extensions/RectExtensions.cs" />
+    <Compile Include="Assets/Piglet/Scripts/ProgressLog/ProgressLog.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/Texture.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Importer/Runtime/RuntimeGltfImporter.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Importer/GltfImportTask.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Util/MeshUtil.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/GLTFProperty.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Importer/GltfImportOptions.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Android/ContentUriUtil.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/MeshPrimitive.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/GLTFParser.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Extensions/KHR_materials_pbrSpecularGlossinessExtensionFactory.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/Accessor.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Extensions/KHR_materials_pbrSpecularGlossinessExtension.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Draco/DracoUnityExtensions.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/MaterialCommonConstant.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Util/SingletonBehaviour.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Math/Matrix4x4.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Animation/AnimationClipType.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Util/StringUtil.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/Mesh.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/Buffer.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/CameraPerspective.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Extensions/AnimationClipExtensions.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/GLTFId.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Texture/ImageFormat.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/BufferView.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Extensions/KHR_texture_basisuExtensionFactory.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Util/SleepUtil.cs" />
+    <Compile Include="Assets/Piglet/Scripts/WebGL/JsLib.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/Sampler.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/AccessorSparse.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Math/Vector3.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/Extension.cs" />
+    <Compile Include="Assets/Piglet/Examples/RuntimeImport/Scripts/RuntimeImportBehaviour.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Util/PathUtil.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/AccessorSparseValues.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Texture/ImageFormatUtil.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/Skin.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/MaterialPBRMetallicRoughness.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/AnimationSampler.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Math/Quaternion.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Util/HierarchyUtil.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Exceptions/ExternalFileNotFoundException.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Exceptions/JsonParseException.cs" />
+    <Compile Include="Assets/Piglet/Scripts/RenderPipeline/RenderPipelineUtil.cs" />
+    <Compile Include="Assets/Piglet/Scripts/RenderPipeline/RenderPipelineType.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Texture/TextureUtil.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Extensions/GameObjectExtensions.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/GLTFChildOfRootProperty.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Animation/AnimationList.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Util/Singleton.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/TextureInfo.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/MaterialOcclusionTextureInfo.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Importer/NameGenerator.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Importer/GltfImportStep.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Extensions/AnimationCurveExtensions.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Util/StreamUtil.cs" />
+    <Compile Include="Assets/Piglet/Scripts/Util/FileUtil.cs" />
+    <None Include="Assets/Piglet/Dependencies/SharpZipLib/ICSharpCode.SharpZipLib.xml" />
+    <None Include="Assets/Piglet/Resources/Shaders/Standard/MetallicRoughnessMask.shader" />
+    <None Include="Assets/Piglet/Resources/Shaders/Standard/MetallicRoughnessOpaque.shader" />
+    <None Include="Assets/Piglet/Dependencies/UnityGLTF/README.txt" />
+    <None Include="Assets/Piglet/Piglet.asmdef" />
+    <None Include="Assets/Piglet/Resources/Textures/README.txt" />
+    <None Include="Assets/Piglet/Dependencies/SharpZipLib/README.txt" />
+    <None Include="Assets/Piglet/Dependencies/SharpZipLib/LICENSE.txt" />
+    <None Include="Assets/Piglet/Dependencies/UnityGLTF/LICENSE.txt" />
+    <None Include="Assets/Piglet/Resources/Shaders/Standard/SpecularGlossinessMask.shader" />
+    <None Include="Assets/Piglet/Resources/Shaders/Standard/SpecularGlossinessBlend.shader" />
+    <None Include="Assets/Piglet/Resources/Shaders/Standard/SpecularGlossiness.cginc" />
+    <None Include="Assets/Piglet/Dependencies/Json.NET/README.txt" />
+    <None Include="Assets/Piglet/Resources/Shaders/Standard/SpecularGlossinessOpaque.shader" />
+    <None Include="Assets/Piglet/Dependencies/Json.NET/LICENSE.txt" />
+    <None Include="Assets/Piglet/Resources/Shaders/Standard/MetallicRoughness.cginc" />
+    <None Include="Assets/Piglet/Extras/README.txt" />
+    <None Include="Assets/Piglet/Resources/Shaders/Standard/MetallicRoughnessBlend.shader" />
     <Reference Include="UnityEngine">
       <HintPath>/Applications/Unity/Hub/Editor/6000.1.8f1/Unity.app/Contents/Managed/UnityEngine/UnityEngine.dll</HintPath>
     </Reference>
@@ -432,6 +512,27 @@
     </Reference>
     <Reference Include="UnityEditor.XRModule">
       <HintPath>/Applications/Unity/Hub/Editor/6000.1.8f1/Unity.app/Contents/Managed/UnityEngine/UnityEditor.XRModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEditor.Graphs">
+      <HintPath>/Applications/Unity/Hub/Editor/6000.1.8f1/Unity.app/Contents/Managed/UnityEditor.Graphs.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEditor.WebGL.Extensions">
+      <HintPath>/Applications/Unity/Hub/Editor/6000.1.8f1/PlaybackEngines/WebGLSupport/UnityEditor.WebGL.Extensions.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEditor.OSXStandalone.Extensions">
+      <HintPath>/Applications/Unity/Hub/Editor/6000.1.8f1/Unity.app/Contents/PlaybackEngines/MacStandaloneSupport/UnityEditor.OSXStandalone.Extensions.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEditor.VisionOS.Extensions">
+      <HintPath>/Applications/Unity/Hub/Editor/6000.1.8f1/PlaybackEngines/VisionOSPlayer/UnityEditor.VisionOS.Extensions.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEditor.WindowsStandalone.Extensions">
+      <HintPath>/Applications/Unity/Hub/Editor/6000.1.8f1/PlaybackEngines/WindowsStandaloneSupport/UnityEditor.WindowsStandalone.Extensions.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEditor.Android.Extensions">
+      <HintPath>/Applications/Unity/Hub/Editor/6000.1.8f1/PlaybackEngines/AndroidPlayer/UnityEditor.Android.Extensions.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEditor.iOS.Extensions">
+      <HintPath>/Applications/Unity/Hub/Editor/6000.1.8f1/PlaybackEngines/iOSSupport/UnityEditor.iOS.Extensions.dll</HintPath>
     </Reference>
     <Reference Include="Unity.Collections.LowLevel.ILSupport">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/PackageCache/com.unity.collections@56bff8827a7e/Unity.Collections.LowLevel.ILSupport/Unity.Collections.LowLevel.ILSupport.dll</HintPath>
@@ -841,70 +942,11 @@
     <Reference Include="UnityEditor.UI">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/UnityEditor.UI.dll</HintPath>
     </Reference>
-    <Reference Include="Unity.Collections.Editor">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Collections.Editor.dll</HintPath>
-    </Reference>
-    <Reference Include="Unity.Rider.Editor">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Rider.Editor.dll</HintPath>
-    </Reference>
-    <Reference Include="Unity.Multiplayer.Center.Common">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Multiplayer.Center.Common.dll</HintPath>
-    </Reference>
-    <Reference Include="Unity.InferenceEngine">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.InferenceEngine.dll</HintPath>
-    </Reference>
-    <Reference Include="Unity.TextMeshPro">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.TextMeshPro.dll</HintPath>
-    </Reference>
-    <Reference Include="Unity.InferenceEngine.iOSBLAS">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.InferenceEngine.iOSBLAS.dll</HintPath>
-    </Reference>
-    <Reference Include="Unity.InferenceEngine.ONNX.Editor">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.InferenceEngine.ONNX.Editor.dll</HintPath>
-    </Reference>
-    <Reference Include="Unity.EditorCoroutines.Editor">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.EditorCoroutines.Editor.dll</HintPath>
-    </Reference>
-    <Reference Include="Unity.InferenceEngine.MacBLAS">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.InferenceEngine.MacBLAS.dll</HintPath>
-    </Reference>
-    <Reference Include="Unity.Mathematics">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Mathematics.dll</HintPath>
-    </Reference>
     <Reference Include="UnityEngine.UI">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/UnityEngine.UI.dll</HintPath>
     </Reference>
-    <Reference Include="Unity.Multiplayer.Center.Editor">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Multiplayer.Center.Editor.dll</HintPath>
-    </Reference>
-    <Reference Include="Unity.Mathematics.Editor">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Mathematics.Editor.dll</HintPath>
-    </Reference>
-    <Reference Include="Unity.InferenceEngine.Editor">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.InferenceEngine.Editor.dll</HintPath>
-    </Reference>
-    <Reference Include="Unity.TextMeshPro.Editor">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.TextMeshPro.Editor.dll</HintPath>
-    </Reference>
-    <Reference Include="Unity.Burst.Editor">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Burst.Editor.dll</HintPath>
-    </Reference>
-    <Reference Include="Unity.Collections">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Collections.dll</HintPath>
-    </Reference>
-    <Reference Include="Unity.Burst">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Burst.dll</HintPath>
-    </Reference>
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="Piglet.csproj">
-      <Project>{36c21c8e-64ce-a22c-c82b-4d354fe56783}</Project>
-      <Name>Piglet</Name>
-    </ProjectReference>
-    <ProjectReference Include="PigletEditor.csproj">
-      <Project>{7a00335e-d025-1f88-72be-6004e793699b}</Project>
-      <Name>PigletEditor</Name>
-    </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it.

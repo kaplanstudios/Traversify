@@ -6,8 +6,11 @@ using System.Linq;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.Networking;
-using Unity.Barracuda;
+#if USE_UNITY_INFERENCE
+using Unity.AI.Inference;
+#endif
 using Traversify.Core;
+using Traversify.AI;
 
 namespace Traversify
 {
@@ -48,11 +51,9 @@ namespace Traversify
         public GameObject settingsPanel;
         
         [Header("Terrain Settings")]
-        [SerializeField] private Vector3 terrainSize = new Vector3(500, 100, 500);
-        [SerializeField] private int terrainResolution = 513;
+        [SerializeField] public Vector3 terrainSize = new Vector3(500, 100, 500);
+        [SerializeField] public int terrainResolution = 513;
         [SerializeField] private Material terrainMaterial;
-        [SerializeField] private bool generateWater = true;
-        [SerializeField] private float waterHeight = 0.1f;
         [SerializeField] private float heightMapMultiplier = 30f;
         
         [Header("Processing Settings")]
@@ -76,7 +77,11 @@ namespace Traversify
         [SerializeField] private bool saveGeneratedAssets = true;
         [SerializeField] private string assetSavePath = "Assets/GeneratedTerrains";
         [SerializeField] private bool generateMetadata = true;
-        
+
+        [Header("Water Settings")]
+        [SerializeField] private bool generateWater = true;
+        [SerializeField] private float waterHeight = 0.5f;
+
         // Component references
         private MapAnalyzer mapAnalyzer;
         private TerrainGenerator terrainGenerator;
@@ -203,6 +208,9 @@ namespace Traversify
         
         private void InitializeComponents()
         {
+            // Find and assign button references if they haven't been set
+            FindButtonReferences();
+            
             try
             {
                 GameObject componentContainer = GameObject.Find("TraversifyComponents");
@@ -247,6 +255,54 @@ namespace Traversify
             }
         }
         
+        private void FindButtonReferences()
+        {
+            // Find UI buttons if they haven't been assigned in the inspector
+            if (uploadButton == null)
+            {
+                uploadButton = GameObject.Find("UploadButton")?.GetComponent<Button>();
+                if (uploadButton == null)
+                    debugger?.LogWarning("Upload button reference not found", LogCategory.UI);
+            }
+            
+            if (generateButton == null)
+            {
+                generateButton = GameObject.Find("GenerateButton")?.GetComponent<Button>();
+                if (generateButton == null)
+                    debugger?.LogWarning("Generate button reference not found", LogCategory.UI);
+            }
+            
+            if (cancelButton == null)
+            {
+                cancelButton = GameObject.Find("CancelButton")?.GetComponent<Button>();
+            }
+            
+            // Find settings button and panel if needed
+            Button settingsButton = GameObject.Find("SettingsButton")?.GetComponent<Button>();
+            if (settingsButton != null && settingsPanel != null)
+            {
+                // Make sure settings button opens the settings panel
+                settingsButton.onClick.RemoveAllListeners();
+                settingsButton.onClick.AddListener(() => settingsPanel.SetActive(true));
+                
+                // Find and set up the close button for settings panel
+                Button closeButton = settingsPanel.transform.Find("SettingsWindow/CloseButton")?.GetComponent<Button>();
+                if (closeButton != null)
+                {
+                    closeButton.onClick.RemoveAllListeners();
+                    closeButton.onClick.AddListener(() => settingsPanel.SetActive(false));
+                }
+                
+                // Add click listener to the panel background to close on click outside
+                Button overlayButton = settingsPanel.GetComponent<Button>();
+                if (overlayButton != null)
+                {
+                    overlayButton.onClick.RemoveAllListeners();
+                    overlayButton.onClick.AddListener(() => settingsPanel.SetActive(false));
+                }
+            }
+        }
+        
         private void ConfigureComponents()
         {
             if (mapAnalyzer != null)
@@ -254,6 +310,14 @@ namespace Traversify
                 mapAnalyzer.maxObjectsToProcess = maxObjectsToProcess;
                 mapAnalyzer.useHighQuality = useHighQualityAnalysis;
                 mapAnalyzer.openAIApiKey = openAIApiKey;
+                // Add GPU acceleration setting
+                mapAnalyzer.useGPU = useGPUAcceleration;
+                
+                // Make sure API key is correctly set
+                if (!string.IsNullOrEmpty(openAIApiKey))
+                {
+                    Debug.Log($"[Traversify] API key set successfully: {openAIApiKey.Substring(0, 3)}...{openAIApiKey.Substring(openAIApiKey.Length - 3)}");
+                }
             }
             
             if (terrainGenerator != null)
@@ -282,10 +346,24 @@ namespace Traversify
             }
         }
         
+        private string GetModelPath(string modelFileName)
+        {
+            // Changed to only use StreamingAssets path
+            return Path.Combine(Application.streamingAssetsPath, "Traversify", "Models", modelFileName);
+        }
+        
         private void ValidateModelFiles()
         {
             string[] requiredModels = { "yolov8n.onnx", "FasterRCNN-12.onnx", "sam2_hiera_base.onnx" };
             List<string> missingModels = new List<string>();
+            
+            // Ensure the directory exists
+            string modelsDir = Path.Combine(Application.streamingAssetsPath, "Traversify", "Models");
+            if (!Directory.Exists(modelsDir))
+            {
+                Directory.CreateDirectory(modelsDir);
+                debugger.Log($"Created models directory at {modelsDir}", LogCategory.System);
+            }
             
             foreach (string modelFile in requiredModels)
             {
@@ -293,6 +371,22 @@ namespace Traversify
                 if (!File.Exists(modelPath))
                 {
                     missingModels.Add(modelFile);
+                    
+                    // Try to copy model from Assets/Scripts/AI/Models if it exists there
+                    string sourcePath = Path.Combine(Application.dataPath, "Scripts", "AI", "Models", modelFile);
+                    if (File.Exists(sourcePath))
+                    {
+                        try
+                        {
+                            File.Copy(sourcePath, modelPath);
+                            debugger.Log($"Copied model {modelFile} to StreamingAssets", LogCategory.System);
+                            missingModels.Remove(modelFile);
+                        }
+                        catch (Exception ex)
+                        {
+                            debugger.LogError($"Failed to copy model {modelFile}: {ex.Message}", LogCategory.System);
+                        }
+                    }
                 }
             }
             
@@ -335,23 +429,6 @@ namespace Traversify
             PlayerPrefs.Save();
         }
         
-        private string GetModelPath(string modelFileName)
-        {
-            string[] possiblePaths = new string[]
-            {
-                Path.Combine(Application.streamingAssetsPath, "Traversify", "Models", modelFileName),
-                Path.Combine(Application.dataPath, "StreamingAssets", "Traversify", "Models", modelFileName),
-                Path.Combine(Application.dataPath, "Traversify", "Models", "ONNX", modelFileName)
-            };
-            
-            foreach (string path in possiblePaths)
-            {
-                if (File.Exists(path))
-                    return path;
-            }
-            
-            return possiblePaths[0];
-        }
 
         private void OpenFileExplorer()
         {
@@ -812,6 +889,10 @@ namespace Traversify
             bool visualizationComplete = false;
             string visualizationError = null;
             
+            // Add timeout mechanism to prevent infinite waiting
+            float timeout = 30f; // 30 seconds timeout
+            float startTime = Time.time;
+            
             yield return StartCoroutine(segmentationVisualizer.VisualizeSegments(
                 analysisResults, 
                 generatedTerrain,
@@ -825,27 +906,39 @@ namespace Traversify
                     visualizationComplete = true;
                 },
                 (progress) => {
-                    float totalProgress = 0.7f + (progress * 0.1f);
+                    // Allocate 20% range for segmentation to move from 70% to 90%
+                    float totalProgress = 0.7f + (progress * 0.2f);
                     UpdateProgress(totalProgress);
                     OnProgressUpdate?.Invoke(totalProgress);
                 }
             ));
             
-            while (!visualizationComplete && !isCancelled)
+            // Wait with timeout
+            while (!visualizationComplete && !isCancelled && (Time.time - startTime) < timeout)
             {
                 yield return null;
+            }
+            
+            // Check for timeout
+            if (!visualizationComplete && !isCancelled)
+            {
+                debugger.LogWarning("Segmentation visualization timed out, skipping this step", LogCategory.Visualization);
+                UpdateProgress(0.9f, "Segmentation visualization skipped due to timeout");
+                yield break;
             }
             
             if (isCancelled) yield break;
             
             if (!string.IsNullOrEmpty(visualizationError))
             {
-                throw new Exception($"Segmentation visualization failed: {visualizationError}");
+                debugger.LogWarning($"Segmentation visualization failed: {visualizationError}", LogCategory.Visualization);
+                UpdateProgress(0.9f, "Segmentation visualization failed, continuing...");
+                yield break;
             }
             
             generatedObjects.AddRange(visualizationObjects);
             
-            UpdateProgress(0.8f, "Segmentation visualization complete");
+            UpdateProgress(0.9f, "Segmentation visualization complete");
             debugger.Log($"Created {visualizationObjects.Count} visualization objects", LogCategory.Visualization);
         }
         

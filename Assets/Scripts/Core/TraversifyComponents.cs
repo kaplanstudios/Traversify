@@ -237,6 +237,8 @@ namespace Traversify
         public Vector2 center;
         public float radius;
         
+        // Add group identifier for grouping
+        public string groupId;
         // Add key and value for dictionary compatibility
         public string Key { get; set; }
         public List<MapObject> Value { get { return objects; } }
