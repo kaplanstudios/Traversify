@@ -52,6 +52,7 @@
     <Compile Include="Assets/Scripts/AI/ModelGeneratorExtensions.cs" />
     <Compile Include="Assets/Scripts/Core/TraversifyDebugger.cs" />
     <Compile Include="Assets/Scripts/Core/Tensor.cs" />
+    <Compile Include="Assets/Scripts/Core/TraversifyManager.cs" />
     <Compile Include="Assets/Scripts/Core/TraversifyComponents.cs" />
     <Compile Include="Assets/Scripts/Core/Traversify.cs" />
     <Compile Include="Assets/Scripts/Terrain/LogCategory.cs" />
@@ -841,6 +842,9 @@
     <Reference Include="UnityEditor.UI">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/UnityEditor.UI.dll</HintPath>
     </Reference>
+    <Reference Include="Unity.AI.Navigation">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.AI.Navigation.dll</HintPath>
+    </Reference>
     <Reference Include="Unity.Collections.Editor">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Collections.Editor.dll</HintPath>
     </Reference>
@@ -849,6 +853,9 @@
     </Reference>
     <Reference Include="Unity.Multiplayer.Center.Common">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Multiplayer.Center.Common.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.AI.Navigation.Updater">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.AI.Navigation.Updater.dll</HintPath>
     </Reference>
     <Reference Include="Unity.InferenceEngine">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.InferenceEngine.dll</HintPath>
@@ -874,11 +881,17 @@
     <Reference Include="UnityEngine.UI">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/UnityEngine.UI.dll</HintPath>
     </Reference>
+    <Reference Include="Unity.AI.Navigation.Editor">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.AI.Navigation.Editor.dll</HintPath>
+    </Reference>
     <Reference Include="Unity.Multiplayer.Center.Editor">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Multiplayer.Center.Editor.dll</HintPath>
     </Reference>
     <Reference Include="Unity.Mathematics.Editor">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Mathematics.Editor.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.AI.Navigation.Editor.ConversionSystem">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.AI.Navigation.Editor.ConversionSystem.dll</HintPath>
     </Reference>
     <Reference Include="Unity.InferenceEngine.Editor">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.InferenceEngine.Editor.dll</HintPath>

@@ -1,73 +1,75 @@
+/*************************************************************************
+ *  Traversify – AnalysisTypes                                           *
+ *  Author : OpenAI Assistance                                           *
+ *  Desc   : Common DTOs & enums shared by MapAnalyzer, ModelGenerator,  *
+ *           SegmentationVisualizer, etc.  Kept generic—no hard‑coded    *
+ *           classes or labels so the system can self‑adapt.             *
+ *************************************************************************/
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
 namespace Traversify.AI
 {
+    /*──────────────────────── Enumerations ─────────────────────────────*/
     /// <summary>
-    /// Represents a segmented region of the source image with associated detection info.
+    /// High‑level step identifiers for progress callbacks.
     /// </summary>
-    public class ImageSegment
+    public enum AnalysisStage
     {
-        public Rect boundingBox;
-        public Texture2D mask;
-        public DetectedObject detectedObject;
-        public Color color; // add segment color for rendering and mask overlay
-        public float area; // Add area property for segment size calculation
+        None             = 0,
+        YoloDetection    = 1,
+        Sam2Segmentation = 2,
+        FasterRcnn       = 3,
+        OpenAIEnhance    = 4,
+        HeightEstimation = 5,
+        Finalizing       = 6
     }
 
     /// <summary>
-    /// Request payload for per-segment analysis routines.
+    /// Similarity metric used during clustering.
     /// </summary>
-    public class SegmentAnalysisRequest
+    public enum SimilarityMetric
     {
-        public ImageSegment segment;
-        public Texture2D sourceImage;
+        Cosine,
+        Euclidean,
+        Manhattan
     }
 
-    /// <summary>
-    /// Stores results of analyzing a segment (classification, height, features, placement data).
-    /// </summary>
-    public class AnalyzedSegment
+    /*──────────────────── Data‑carrier classes (POCO) ──────────────────*/
+    [Serializable]
+    public class TerrainFeature
     {
-        public ImageSegment originalSegment;
-        public Rect boundingBox;
-        public bool isTerrain;
-        public float classificationConfidence;
-        public string objectType;
-        public string detailedClassification;
-        public string enhancedDescription;
-        public Dictionary<string, float> features;
-        
-        // Terrain-specific
-        public float estimatedHeight;
-        public Texture2D heightMap;
-        public Dictionary<string, float> topologyFeatures;
-        
-        // Object-specific
-        public Vector2 normalizedPosition;
-        public Vector3 estimatedScale;
-        public float estimatedRotation;
-        public float placementConfidence;
+        public string     type;           // e.g. "hill", "river"
+        public string     label;          // human‑readable label
+        public Rect       boundingBox;    // in source‑image pixels
+        public Texture2D  segmentMask;    // alpha‑encoded mask
+        public Color      segmentColor;   // overlay color
+        public float      confidence;     // 0‑1
+        public float      elevation;      // world‑space Y offset
     }
 
-    /// <summary>
-    /// Groups multiple AnalyzedSegments of the same type together for bulk processing.
-    /// </summary>
-    public class ObjectGrouping
+    [Serializable]
+    public class MapObject
     {
-        public string groupId;
-        public string objectType;
-        public List<AnalyzedSegment> segments = new List<AnalyzedSegment>();
+        public string     type;               // e.g. "building"
+        public string     label;              // raw class label
+        public string     enhancedDescription;// OpenAI description
+        public Vector2    position;           // normalized (0‑1, 0‑1)
+        public Rect       boundingBox;        // pixels
+        public Texture2D  segmentMask;
+        public Color      segmentColor;
+        public Vector3    scale;              // world localScale
+        public float      rotation;           // Y‑axis
+        public float      confidence;         // 0‑1
+        public bool       isGrouped;          // part of cluster
     }
 
-    /// <summary>
-    /// Simple result from object detection (class + confidence).
-    /// </summary>
-    public class DetectedObject
+    [Serializable]
+    public class ObjectGroup
     {
-        public string className;
-        public float confidence;
-        public Rect boundingBox; // Add bounding box property
-        public int classIndex; // Add class index property
+        public string           groupId;  // guid
+        public string           type;     // cluster type name
+        public List<MapObject>  objects   = new();
     }
 }
