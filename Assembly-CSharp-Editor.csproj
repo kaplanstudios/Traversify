@@ -855,11 +855,11 @@
     <Reference Include="Unity.AI.Navigation">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.AI.Navigation.dll</HintPath>
     </Reference>
-    <Reference Include="Unity.Collections.Editor">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Collections.Editor.dll</HintPath>
-    </Reference>
     <Reference Include="Unity.Rider.Editor">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Rider.Editor.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.Collections.Editor">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Collections.Editor.dll</HintPath>
     </Reference>
     <Reference Include="Unity.Multiplayer.Center.Common">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Multiplayer.Center.Common.dll</HintPath>
@@ -876,23 +876,23 @@
     <Reference Include="Unity.InferenceEngine.iOSBLAS">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.InferenceEngine.iOSBLAS.dll</HintPath>
     </Reference>
-    <Reference Include="Unity.InferenceEngine.ONNX.Editor">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.InferenceEngine.ONNX.Editor.dll</HintPath>
-    </Reference>
     <Reference Include="Unity.EditorCoroutines.Editor">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.EditorCoroutines.Editor.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.InferenceEngine.ONNX.Editor">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.InferenceEngine.ONNX.Editor.dll</HintPath>
     </Reference>
     <Reference Include="Unity.InferenceEngine.MacBLAS">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.InferenceEngine.MacBLAS.dll</HintPath>
     </Reference>
-    <Reference Include="Unity.Mathematics">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Mathematics.dll</HintPath>
+    <Reference Include="Unity.AI.Navigation.Editor">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.AI.Navigation.Editor.dll</HintPath>
     </Reference>
     <Reference Include="UnityEngine.UI">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/UnityEngine.UI.dll</HintPath>
     </Reference>
-    <Reference Include="Unity.AI.Navigation.Editor">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.AI.Navigation.Editor.dll</HintPath>
+    <Reference Include="Unity.Mathematics">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Mathematics.dll</HintPath>
     </Reference>
     <Reference Include="Unity.Multiplayer.Center.Editor">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Multiplayer.Center.Editor.dll</HintPath>

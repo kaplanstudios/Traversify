@@ -1,22 +1,51 @@
+/*************************************************************************
+ *  Traversify – MapAnalyzer.cs                                          *
+ *  Author : David Kaplan (dkaplan73)                                    *
+ *  Created: 2025-06-27                                                  *
+ *  Updated: 2025-06-27 04:09:24 UTC                                     *
+ *  Desc   : Advanced terrain and object analysis system using YOLOv12,  *
+ *           SAM2, and Faster R-CNN for high-precision detection,        *
+ *           segmentation, and recognition of map elements with height   *
+ *           estimation and OpenAI-enhanced descriptions.                *
+ *************************************************************************/
+
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using UnityEngine;
-using Unity.AI.Inference;
+using UnityEngine.Networking;
 
-namespace Traversify.AI {
+using Traversify.Core;
 
-    [RequireComponent(typeof(Core.TraversifyDebugger))]
-    public class MapAnalyzer : MonoBehaviour {
-        // Singleton
+namespace Traversify.AI 
+{
+    /// <summary>
+    /// Core component for analyzing map images using AI models to identify terrain features 
+    /// and objects, segment them, and generate enhanced descriptions.
+    /// </summary>
+    [RequireComponent(typeof(TraversifyDebugger))]
+    public class MapAnalyzer : TraversifyComponent 
+    {
+        #region Singleton Pattern
+        
         private static MapAnalyzer _instance;
-        public static MapAnalyzer Instance {
-            get {
-                if (_instance == null) {
+        
+        /// <summary>
+        /// Singleton instance of the MapAnalyzer.
+        /// </summary>
+        public static MapAnalyzer Instance 
+        {
+            get 
+            {
+                if (_instance == null) 
+                {
                     _instance = FindObjectOfType<MapAnalyzer>();
-                    if (_instance == null) {
+                    if (_instance == null) 
+                    {
                         GameObject go = new GameObject("MapAnalyzer");
                         _instance = go.AddComponent<MapAnalyzer>();
                         DontDestroyOnLoad(go);
@@ -25,536 +54,1286 @@ namespace Traversify.AI {
                 return _instance;
             }
         }
-
+        
+        #endregion
+        
+        #region Inspector Properties
+        
         [Header("Model Assets")]
-        public ModelAsset yoloModel;
-        public ModelAsset sam2Model;
-        public ModelAsset fasterRcnnModel;
-
+        [Tooltip("YOLOv12 object detection model")]
+        [SerializeField] private Unity.InferenceEngine.ModelAsset yoloModel;
+        
+        [Tooltip("SAM2 segmentation model")]
+        [SerializeField] private Unity.InferenceEngine.ModelAsset sam2Model;
+        
+        [Tooltip("Faster R-CNN classification model")]
+        [SerializeField] private Unity.InferenceEngine.ModelAsset fasterRcnnModel;
+        
         [Header("Detection Settings")]
-        [Range(0f,1f)] public float confidenceThreshold = 0.5f;
-        [Range(0f,1f)] public float nmsThreshold = 0.45f;
-        public bool useHighQuality = true;
-        public bool useGPU = true;
-        public int maxObjectsToProcess = 100;
-
+        [Tooltip("Detection confidence threshold (0-1)")]
+        [Range(0f, 1f)] 
+        [SerializeField] private float _confidenceThreshold = 0.5f;
+        
+        [Tooltip("Non-maximum suppression threshold (0-1)")]
+        [Range(0f, 1f)] 
+        [SerializeField] private float _nmsThreshold = 0.45f;
+        
+        [Tooltip("Use higher resolution analysis for better results")]
+        [SerializeField] private bool _useHighQuality = true;
+        
+        [Tooltip("Use GPU acceleration if available")]
+        [SerializeField] private bool _useGPU = true;
+        
+        [Tooltip("Maximum objects to process in a single analysis")]
+        [SerializeField] private int _maxObjectsToProcess = 100;
+        
         [Header("OpenAI Settings")]
         [Tooltip("API key for description enhancement")]
-        public string openAIApiKey;
-
-        // Internal
-        [NonSerialized] public Core.TraversifyDebugger debugger;
-        private IInferenceSession _yoloSession;
-        private IInferenceSession _sam2Session;
-        private IInferenceSession _rcnnSession;
+        [SerializeField] private string _openAIApiKey;
+        
+        [Header("Analysis Settings")]
+        [Tooltip("Automatically classify terrain vs object")]
+        [SerializeField] private bool autoClassifyTerrainObjects = true;
+        
+        [Tooltip("Estimate height values for terrain features")]
+        [SerializeField] private bool estimateTerrainHeight = true;
+        
+        [Tooltip("Enable detailed object classification")]
+        [SerializeField] private bool enableDetailedClassification = true;
+        
+        [Tooltip("Enhance object descriptions using OpenAI")]
+        [SerializeField] private bool enhanceDescriptions = true;
+        
+        [Tooltip("Maximum height value in world units")]
+        [SerializeField] private float maxTerrainHeight = 100f;
+        
+        [Tooltip("Terrain size in world units")]
+        [SerializeField] private Vector2 terrainSize = new Vector2(500f, 500f);
+        
+        [Header("Advanced Settings")]
+        [Tooltip("Number of terrain class categories")]
+        [SerializeField] private int terrainClassCount = 10;
+        
+        [Tooltip("Number of object class categories")]
+        [SerializeField] private int objectClassCount = 80;
+        
+        [Tooltip("Height smoothing radius for terrain features")]
+        [SerializeField] private float heightSmoothingRadius = 2.0f;
+        
+        [Tooltip("Maximum batch size for concurrent processing")]
+        [SerializeField] private int processingBatchSize = 5;
+        
+        [Tooltip("Maximum API requests per frame")]
+        [SerializeField] private int maxAPIRequestsPerFrame = 3;
+        
+        #endregion
+        
+        #region Private Fields
+        
+        // Internal components & state
+        private TraversifyDebugger _debugger;
+        private IWorker _yoloSession;
+        private IWorker _sam2Session;
+        private IWorker _rcnnSession;
         private string[] _classLabels;
-
-        private void Awake() {
-            if (_instance != null && _instance != this) {
+        private IWorker _classificationWorker;
+        private IWorker _heightWorker;
+        private IWorker _fasterRcnnWorker;
+        
+        // Processing state
+        private bool _isProcessing = false;
+        private int _activeAnalyses = 0;
+        private Queue<SegmentAnalysisRequest> _analysisQueue = new Queue<SegmentAnalysisRequest>();
+        private List<AnalyzedSegment> _analyzedSegments = new List<AnalyzedSegment>();
+        private TerrainGenerator _terrainGenerator;
+        
+        // Class mappings for terrain vs non-terrain
+        private HashSet<string> _terrainClasses = new HashSet<string> {
+            "mountain", "hill", "water", "lake", "river", "ocean", "forest", 
+            "grassland", "desert", "snow", "ice", "terrain", "valley", "plateau"
+        };
+        
+        #endregion
+        
+        #region Data Structures
+        
+        /// <summary>
+        /// Represents a request to analyze a segment in detail.
+        /// </summary>
+        private class SegmentAnalysisRequest
+        {
+            public ImageSegment segment;
+            public Texture2D sourceImage;
+        }
+        
+        /// <summary>
+        /// Represents an analyzed image segment with detailed information.
+        /// </summary>
+        private class AnalyzedSegment
+        {
+            public ImageSegment originalSegment;
+            public Rect boundingBox;
+            public bool isTerrain;
+            public float classificationConfidence;
+            public string objectType;
+            public string detailedClassification;
+            public Dictionary<string, float> features;
+            public Dictionary<string, float> topologyFeatures;
+            public Texture2D heightMap;
+            public float estimatedHeight;
+            public Vector2 normalizedPosition;
+            public float estimatedRotation;
+            public float estimatedScale;
+            public float placementConfidence;
+            public string enhancedDescription;
+            public Dictionary<string, object> metadata;
+        }
+        
+        /// <summary>
+        /// Request for terrain modification based on analysis.
+        /// </summary>
+        private class TerrainModification
+        {
+            public Rect bounds;
+            public Texture2D heightMap;
+            public float baseHeight;
+            public string terrainType;
+            public string description;
+            public float blendRadius;
+            public float slope;
+            public float roughness;
+        }
+        
+        #endregion
+        
+        #region Unity Lifecycle
+        
+        private void Awake()
+        {
+            // Singleton enforcement
+            if (_instance != null && _instance != this)
+            {
                 Destroy(gameObject);
                 return;
             }
+            
             _instance = this;
             DontDestroyOnLoad(gameObject);
-
-            debugger = GetComponent<Core.TraversifyDebugger>();
-            if (debugger == null) debugger = gameObject.AddComponent<Core.TraversifyDebugger>();
-
+            
+            // Initialize components
+            _debugger = GetComponent<TraversifyDebugger>();
+            if (_debugger == null)
+            {
+                _debugger = gameObject.AddComponent<TraversifyDebugger>();
+            }
+            
+            _terrainGenerator = FindObjectOfType<TerrainGenerator>();
+            
             LoadClassLabels();
             InitializeModels();
         }
-
-        private void LoadClassLabels() {
-            // If a labels file is provided, parse it here
-            // (Could be set via inspector using a TextAsset)
-            // Placeholder: no labels loaded
-            _classLabels = new string[0];
+        
+        private void OnDestroy()
+        {
+            // Clean up resources
+            DisposeModels();
         }
-
-        private void InitializeModels() {
-            try {
-                var options = new InferenceOptions {
-                    Device = useGPU ? InferenceDevice.GPU : InferenceDevice.CPU
-                };
-                if (yoloModel != null) {
-                    _yoloSession = new ModelImporter(yoloModel).LoadSession(options);
-                    debugger.Log("YOLO session initialized", Core.LogCategory.AI);
-                } else {
-                    debugger.LogWarning("YOLO model asset not assigned", Core.LogCategory.AI);
-                }
-                if (sam2Model != null) {
-                    _sam2Session = new ModelImporter(sam2Model).LoadSession(options);
-                    debugger.Log("SAM2 session initialized", Core.LogCategory.AI);
-                }
-                if (fasterRcnnModel != null) {
-                    _rcnnSession = new ModelImporter(fasterRcnnModel).LoadSession(options);
-                    debugger.Log("Faster R-CNN session initialized", Core.LogCategory.AI);
-                }
-            } catch (Exception ex) {
-                debugger.LogError($"Failed to initialize AI sessions: {ex.Message}", Core.LogCategory.AI);
-            }
-        }
-
+        
+        #endregion
+        
+        #region Public Methods
+        
         /// <summary>
-        /// Analyze the given map texture: detect objects, segment terrain & objects, classify & enhance descriptions.
+        /// Analyzes the given map image: detect objects, segment terrain & objects, classify & enhance descriptions.
         /// Reports progress callbacks and returns AnalysisResults via onComplete.
         /// </summary>
+        /// <param name="map">The map texture to analyze</param>
+        /// <param name="onComplete">Callback when analysis is complete</param>
+        /// <param name="onError">Callback if an error occurs</param>
+        /// <param name="onProgress">Callback to report progress updates</param>
+        /// <returns>Coroutine for tracking progress</returns>
         public IEnumerator AnalyzeImage(
             Texture2D map,
             Action<AnalysisResults> onComplete,
             Action<string> onError,
-            Action<string, float> onProgress
-        ) {
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            try {
-                // Step 1: YOLO detection
-                onProgress?.Invoke("YOLO detection", 0f);
-                var detections = RunYoloDetection(map, onProgress);
-                if (detections == null || detections.Count == 0) {
-                    debugger.Log("No objects detected by YOLO", Core.LogCategory.AI);
-                }
-                onProgress?.Invoke("YOLO detection", 0.2f);
-
-                // Step 2: SAM2 segmentation
-                onProgress?.Invoke("SAM segmentation", 0.2f);
-                var segments = RunSamSegmentation(map, detections, onProgress);
-                onProgress?.Invoke("SAM segmentation", 0.4f);
-
-                // Step 3: Faster R-CNN refinement
-                onProgress?.Invoke("RCNN classification", 0.4f);
-                if (_rcnnSession != null) {
-                    // Placeholder: actual RCNN classification would go here
-                    yield return null;
-                }
-                onProgress?.Invoke("RCNN classification", 0.6f);
-
-                // Step 4: OpenAI enhancement
-                onProgress?.Invoke("Enhancing descriptions", 0.6f);
-                if (!string.IsNullOrEmpty(openAIApiKey)) {
-                    // Placeholder: call OpenAIResponse to enhance each segment's text
-                    yield return null;
-                }
-                onProgress?.Invoke("Enhancing descriptions", 0.8f);
-
-                // Step 5: Package results
-                var results = BuildResults(map, detections, segments);
-                onProgress?.Invoke("Finishing analysis", 1f);
-                onComplete?.Invoke(results);
-                debugger.Log($"Analysis completed in {stopwatch.Elapsed.TotalSeconds:F2}s", Core.LogCategory.AI);
-            } catch (Exception ex) {
-                debugger.LogError($"MapAnalyzer error: {ex.Message}", Core.LogCategory.AI);
-                onError?.Invoke(ex.Message);
-            }
-        }
-
-        private List<DetectedObject> RunYoloDetection(Texture2D map, Action<string,float> onProgress) {
-            if (_yoloSession == null) return new List<DetectedObject>();
-            // Preprocess texture to tensor
-            var input = TensorUtils.Preprocess(map, useHighQuality ? 1024 : 640);
-            _yoloSession.Run(input);
-            var output = _yoloSession.Fetch("output");
-            var detections = YoloDecoder.Decode(output, confidenceThreshold, nmsThreshold, map.width, map.height);
-            onProgress?.Invoke("YOLO detection", 0.2f);
-            input.Dispose();
-            output.Dispose();
-            return detections.Take(maxObjectsToProcess).ToList();
-        }
-
-        private List<ImageSegment> RunSamSegmentation(
-            Texture2D map,
-            List<DetectedObject> detections,
-            Action<string, float> onProgress
-        ) {
-            var segments = new List<ImageSegment>();
-            if (_sam2Session == null) {
-                // Fallback: produce rectangular masks equal to bounding boxes
-                foreach (var det in detections) {
-                    var mask = TextureUtils.CreateSolidMask(det.boundingBox, map.width, map.height);
-                    segments.Add(new ImageSegment {
-                        detectedObject = det,
-                        mask = mask,
-                        boundingBox = det.boundingBox,
-                        color = UnityEngine.Random.ColorHSV(0f,1f,0.6f,1f),
-                        area = det.boundingBox.width * det.boundingBox.height
-                    });
-                }
-                return segments;
-            }
-
-            int count = detections.Count;
-            for (int i = 0; i < count; i++) {
-                var det = detections[i];
-                onProgress?.Invoke("SAM segmentation", 0.2f + 0.2f * (i+1)/count);
-                // Build prompt tensor (center point)
-                var centerN = new Vector2(
-                    (det.boundingBox.x + det.boundingBox.width/2f) / map.width,
-                    (det.boundingBox.y + det.boundingBox.height/2f) / map.height
-                );
-                var prompt = new Tensor(new []{1,2}, new []{centerN.x, centerN.y});
-                var input = TensorUtils.Preprocess(map, useHighQuality ? 1024 : 640);
-                _sam2Session.Run(new TensorValuePair("image", input), new TensorValuePair("prompt", prompt));
-                var maskTensor = _sam2Session.Fetch("masks");
-                var maskTex = TensorUtils.DecodeMask(maskTensor);
-                input.Dispose();
-                prompt.Dispose();
-                maskTensor.Dispose();
-
-                segments.Add(new ImageSegment {
-                    detectedObject = det,
-                    mask = maskTex,
-                    boundingBox = det.boundingBox,
-                    color = UnityEngine.Random.ColorHSV(0f,1f,0.6f,1f),
-                    area = det.boundingBox.width * det.boundingBox.height
-                });
-            }
-            return segments;
-        }
-
-        private AnalysisResults BuildResults(
-            Texture2D map,
-            List<DetectedObject> detections,
-            List<ImageSegment> segments
-        ) {
-            var results = new AnalysisResults {
-                mapObjects = new List<MapObject>(),
-                terrainFeatures = new List<TerrainFeature>(),
-                objectGroups = new List<ObjectGroup>()
-            };
-
-            // Separate terrain vs objects by class prefix or other logic
-            foreach (var seg in segments) {
-                if (seg.detectedObject.className.StartsWith("terrain")) {
-                    results.terrainFeatures.Add(new TerrainFeature {
-                        label = seg.detectedObject.className,
-                        boundingBox = seg.boundingBox,
-                        segmentMask = seg.mask,
-                        segmentColor = seg.color,
-                        confidence = seg.detectedObject.confidence,
-                        elevation = seg.area / (map.width*map.height)
-                    });
-                } else {
-                    results.mapObjects.Add(new MapObject {
-                        type = seg.detectedObject.className,
-                        label = seg.detectedObject.className,
-                        enhancedDescription = seg.detectedObject.className,
-                        position = new Vector2(
-                            (seg.boundingBox.x + seg.boundingBox.width/2f)/map.width,
-                            1f - (seg.boundingBox.y + seg.boundingBox.height/2f)/map.height
-                        ),
-                        boundingBox = seg.boundingBox,
-                        segmentMask = seg.mask,
-                        segmentColor = seg.color,
-                        confidence = seg.detectedObject.confidence,
-                        scale = Vector3.one,
-                        rotation = 0f,
-                        isGrouped = false
-                    });
-                }
-            }
-
-            // Group similar objects
-            results.objectGroups = results.mapObjects
-                .GroupBy(o => o.type)
-                .Select(g => new ObjectGroup {
-                    groupId = Guid.NewGuid().ToString(),
-                    type = g.Key,
-                    objects = g.ToList()
-                })
-                .ToList();
-
-            // Build height and segmentation textures
-            results.heightMap = TextureUtils.BuildHeightMap(map.width, map.height, results.terrainFeatures);
-            results.segmentationMap = TextureUtils.BuildSegmentationMap(map.width, map.height, segments);
-
-            return results;
-        }
-    }
-}
-// --- MapAnalyzer.cs: Part 2 of 3 ---
-        public IEnumerator AnalyzeImage(Texture2D imageTexture, Action<AnalysisResults> onComplete, 
-                                        Action<string> onError, Action<string, float> onProgress)
+            Action<string, float> onProgress)
         {
-            if (isProcessing)
+            if (_isProcessing)
             {
                 onError?.Invoke("Analysis already in progress");
                 yield break;
             }
             
-            isProcessing = true;
-            analyzedSegments.Clear();
+            _isProcessing = true;
+            _analyzedSegments.Clear();
             AnalysisResults results = new AnalysisResults();
+            
+            // Start analysis process without try-catch around yield statements
+            yield return StartCoroutine(PerformAnalysis(map, results, onComplete, onError, onProgress));
+        }
+        
+        private IEnumerator PerformAnalysis(
+            Texture2D map,
+            AnalysisResults results,
+            Action<AnalysisResults> onComplete,
+            Action<string> onError,
+            Action<string, float> onProgress)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             
             // Step 1: Object Detection with YOLO
             onProgress?.Invoke("Detecting objects with YOLO...", 0.1f);
             List<DetectedObject> detectedObjects = null;
-            yield return DetectObjectsWithYOLO(imageTexture, 
-                (objects) => detectedObjects = objects,
-                (error) => Debug.LogError($"YOLO detection failed: {error}"));
+            bool yoloSuccess = false;
+            yield return RunDetectionWithYOLO(
+                map, 
+                (objects) => { detectedObjects = objects; yoloSuccess = true; },
+                (error) => { onError?.Invoke($"YOLO detection failed: {error}"); yoloSuccess = false; }
+            );
+            
+            if (!yoloSuccess || detectedObjects == null || detectedObjects.Count == 0)
+            {
+                _debugger.LogWarning("No objects detected by YOLO", LogCategory.AI);
+                results.heightMap = new Texture2D(map.width, map.height, TextureFormat.RFloat, false);
+                results.segmentationMap = new Texture2D(map.width, map.height, TextureFormat.RGBA32, false);
+                _isProcessing = false;
+                onComplete?.Invoke(results);
+                yield break;
+            }
+            
+            _debugger.Log($"Detected {detectedObjects.Count} objects", LogCategory.AI);
             
             // Step 2: Segmentation with SAM2
             onProgress?.Invoke("Segmenting image with SAM2...", 0.2f);
-            Debug.Log("[MapAnalyzer] Actively using SAM2 model for segmentation.");
             List<ImageSegment> segments = null;
-            yield return SegmentImageWithSAM2(imageTexture, detectedObjects,
-                (segs) => segments = segs,
-                (error) => Debug.LogError($"SAM2 segmentation failed: {error}"));
-            Debug.Log("[MapAnalyzer] SAM2 model segmentation finished.");
- 
-            // Step 3: Analyze each segment with WorkerFactory
-            onProgress?.Invoke("Analyzing segments...", 0.3f);
-            yield return AnalyzeSegmentsWithWorkerFactory(segments, imageTexture, onProgress);
+            bool sam2Success = false;
+            yield return RunSegmentationWithSAM2(
+                map, 
+                detectedObjects,
+                (segs) => { segments = segs; sam2Success = true; },
+                (error) => { onError?.Invoke($"SAM2 segmentation failed: {error}"); sam2Success = false; }
+            );
             
-            // Step 4: Enhance descriptions with OpenAI
-            if (!string.IsNullOrEmpty(openAIApiKey))
+            if (!sam2Success || segments == null || segments.Count == 0)
+            {
+                _debugger.LogWarning("No segments created from SAM2", LogCategory.AI);
+                
+                // Fall back to bounding boxes if segmentation failed
+                segments = CreateFallbackSegments(detectedObjects, map.width, map.height);
+                
+                if (segments.Count == 0)
+                {
+                    _isProcessing = false;
+                    onComplete?.Invoke(results);
+                    yield break;
+                }
+            }
+            
+            _debugger.Log($"Created {segments.Count} segments", LogCategory.AI);
+            
+            // Step 3: Analyze each segment in detail
+            onProgress?.Invoke("Analyzing segments...", 0.3f);
+            yield return AnalyzeSegmentsInDetail(segments, map, onProgress);
+            
+            // Step 4: Enhance descriptions with OpenAI if available
+            if (enhanceDescriptions && !string.IsNullOrEmpty(openAIApiKey))
             {
                 onProgress?.Invoke("Enhancing descriptions with AI...", 0.6f);
                 yield return EnhanceSegmentDescriptions();
             }
             
-            // Step 5: Process terrain segments
+            // Step 5: Process terrain segments (height estimation, topology)
             onProgress?.Invoke("Processing terrain topology...", 0.7f);
-            yield return ProcessTerrainSegments(imageTexture, onProgress);
+            yield return ProcessTerrainSegments(map, onProgress);
             
-            // Step 6: Process non-terrain objects
+            // Step 6: Process non-terrain objects (placement, rotation, scaling)
             onProgress?.Invoke("Processing object placements...", 0.8f);
-            yield return ProcessNonTerrainSegments();
+            yield return ProcessNonTerrainSegments(map);
             
-            // Step 7: Convert to final results
+            // Step 7: Build final results
             onProgress?.Invoke("Finalizing analysis...", 0.9f);
-            results = ConvertAnalyzedSegmentsToResults(imageTexture);
-            onProgress?.Invoke("Analysis complete", 1.0f);
-            onComplete?.Invoke(results);
-            isProcessing = false;
+            results = BuildFinalResults(map);
+            
+            // Report time taken and complete
+            try
+            {
+                stopwatch.Stop();
+                float analysisTime = (float)stopwatch.Elapsed.TotalSeconds;
+                results.analysisTime = analysisTime;
+                
+                _debugger.Log($"Analysis completed in {analysisTime:F2}s", LogCategory.AI);
+                onProgress?.Invoke("Analysis complete", 1.0f);
+                onComplete?.Invoke(results);
+            }
+            catch (Exception ex)
+            {
+                _debugger.LogError($"Map analysis error: {ex.Message}\n{ex.StackTrace}", LogCategory.AI);
+                onError?.Invoke($"Analysis failed: {ex.Message}");
+            }
+            finally
+            {
+                _isProcessing = false;
+            }
         }
         
-        private IEnumerator AnalyzeSegmentsWithWorkerFactory(List<ImageSegment> segments, Texture2D sourceImage,
-                                                              Action<string, float> onProgress)
+        /// <summary>
+        /// Sets the OpenAI API key for enhanced descriptions.
+        /// </summary>
+        /// <param name="apiKey">The OpenAI API key</param>
+        public void SetOpenAIApiKey(string apiKey)
         {
-            int totalSegments = segments.Count;
-            int processedSegments = 0;
-            
-            foreach (var segment in segments)
+            openAIApiKey = apiKey;
+        }
+        
+        /// <summary>
+        /// Sets the reference to the TerrainGenerator for direct terrain modifications.
+        /// </summary>
+        /// <param name="generator">TerrainGenerator reference</param>
+        public void SetTerrainGenerator(TerrainGenerator generator)
+        {
+            _terrainGenerator = generator;
+        }
+        
+        #endregion
+        
+        #region Model Initialization and Resource Management
+        
+        /// <summary>
+        /// Loads class labels from resource files.
+        /// </summary>
+        private void LoadClassLabels()
+        {
+            try
             {
-                // Create analysis request
-                var request = new SegmentAnalysisRequest
+                TextAsset labelsAsset = Resources.Load<TextAsset>("Traversify/labels");
+                if (labelsAsset != null)
                 {
-                    segment = segment,
-                    sourceImage = sourceImage
+                    _classLabels = labelsAsset.text.Split(
+                        new[] { '\n', '\r' }, 
+                        StringSplitOptions.RemoveEmptyEntries
+                    );
+                    _debugger.Log($"Loaded {_classLabels.Length} class labels", LogCategory.AI);
+                }
+                else
+                {
+                    // Create default class labels if resource not found
+                    _classLabels = new string[objectClassCount + terrainClassCount];
+                    
+                    // Add default terrain classes
+                    for (int i = 0; i < terrainClassCount; i++)
+                    {
+                        _classLabels[i] = $"terrain_{i}";
+                    }
+                    
+                    // Add default object classes
+                    for (int i = 0; i < objectClassCount; i++)
+                    {
+                        _classLabels[i + terrainClassCount] = $"object_{i}";
+                    }
+                    
+                    _debugger.LogWarning("Labels file not found. Using default labels.", LogCategory.AI);
+                }
+            }
+            catch (Exception ex)
+            {
+                _debugger.LogError($"Error loading class labels: {ex.Message}", LogCategory.AI);
+                _classLabels = new string[0];
+            }
+        }
+        
+        /// <summary>
+        /// Initializes AI models for inference.
+        /// </summary>
+        private void InitializeModels()
+        {
+            try
+            {
+                Unity.InferenceEngine.BackendType backendType = useGPU && SystemInfo.supportsComputeShaders
+                    ? Unity.InferenceEngine.BackendType.GPUCompute
+                    : Unity.InferenceEngine.BackendType.CPU;
+                
+                _debugger.Log($"Initializing models using {backendType}", LogCategory.AI);
+                
+                // Initialize YOLO model
+                if (yoloModel != null)
+                {
+                    _yoloSession = WorkerFactory.CreateWorker(WorkerFactory.Type.Auto, new NNModel { modelName = yoloModel.name });
+                    _debugger.Log("YOLO session initialized", LogCategory.AI);
+                }
+                else
+                {
+                    _debugger.LogWarning("YOLO model asset not assigned", LogCategory.AI);
+                }
+                
+                // Initialize SAM2 model
+                if (sam2Model != null)
+                {
+                    _sam2Session = WorkerFactory.CreateWorker(WorkerFactory.Type.Auto, new NNModel { modelName = sam2Model.name });
+                    _debugger.Log("SAM2 session initialized", LogCategory.AI);
+                }
+                else
+                {
+                    _debugger.LogWarning("SAM2 model asset not assigned", LogCategory.AI);
+                }
+                
+                // Initialize Faster R-CNN model
+                if (fasterRcnnModel != null && enableDetailedClassification)
+                {
+                    _rcnnSession = WorkerFactory.CreateWorker(WorkerFactory.Type.Auto, new NNModel { modelName = fasterRcnnModel.name });
+                    _debugger.Log("Faster R-CNN session initialized", LogCategory.AI);
+                }
+                else if (enableDetailedClassification)
+                {
+                    _debugger.LogWarning("Faster R-CNN model asset not assigned", LogCategory.AI);
+                }
+                
+                // Initialize additional workers for classification and height estimation
+                InitializeAdditionalWorkers();
+            }
+            catch (Exception ex)
+            {
+                _debugger.LogError($"Failed to initialize AI models: {ex.Message}", LogCategory.AI);
+                throw;
+            }
+        }
+        
+        /// <summary>
+        /// Initializes additional workers for specialized tasks.
+        /// </summary>
+        private void InitializeAdditionalWorkers()
+        {
+            // Add specialized workers initialization here if needed
+            // These would be lightweight models for specific tasks like terrain classification
+        }
+        
+        /// <summary>
+        /// Disposes of model resources when no longer needed.
+        /// </summary>
+        private void DisposeModels()
+        {
+            _yoloSession?.Dispose();
+            _yoloSession = null;
+            
+            _sam2Session?.Dispose();
+            _sam2Session = null;
+            
+            _rcnnSession?.Dispose();
+            _rcnnSession = null;
+            
+            _classificationWorker?.Dispose();
+            _classificationWorker = null;
+            
+            _heightWorker?.Dispose();
+            _heightWorker = null;
+            
+            _fasterRcnnWorker?.Dispose();
+            _fasterRcnnWorker = null;
+            
+            _debugger.Log("AI models disposed", LogCategory.AI);
+        }
+        
+        #endregion
+        
+        #region Object Detection and Segmentation
+        
+        /// <summary>
+        /// Runs object detection using YOLOv12.
+        /// </summary>
+        private IEnumerator RunDetectionWithYOLO(
+            Texture2D image,
+            Action<List<DetectedObject>> onComplete,
+            Action<string> onError)
+        {
+            try
+            {
+                _debugger.StartTimer("YOLODetection");
+                
+                if (_yoloSession == null)
+                {
+                    onError?.Invoke("YOLO model not initialized");
+                    yield break;
+                }
+                
+                // Determine input resolution based on quality setting
+                int inputResolution = useHighQuality ? 1024 : 640;
+                
+                // Preprocess image to tensor
+                Tensor inputTensor = TensorUtils.Preprocess(image, inputResolution);
+                
+                // Run inference
+                _debugger.Log("Running YOLO inference...", LogCategory.AI);
+                _yoloSession.Run(new Dictionary<string, Tensor> { { "images", inputTensor } });
+                
+                // Get output tensor
+                Tensor outputTensor = _yoloSession.Fetch("output");
+                
+                // Process detections
+                List<DetectedObject> detections = DecodeYOLOOutput(
+                    outputTensor, 
+                    image.width, 
+                    image.height
+                );
+                
+                // Apply non-maximum suppression
+                detections = ApplyNMS(detections, nmsThreshold);
+                
+                // Filter by confidence and limit count
+                detections = detections
+                    .Where(d => d.confidence >= confidenceThreshold)
+                    .OrderByDescending(d => d.confidence)
+                    .Take(maxObjectsToProcess)
+                    .ToList();
+                
+                // Clean up
+                inputTensor.Dispose();
+                outputTensor.Dispose();
+                
+                float detectionTime = _debugger.StopTimer("YOLODetection");
+                _debugger.Log($"YOLO detection completed in {detectionTime:F2}s, found {detections.Count} objects", LogCategory.AI);
+                
+                onComplete?.Invoke(detections);
+            }
+            catch (Exception ex)
+            {
+                _debugger.LogError($"YOLO detection error: {ex.Message}", LogCategory.AI);
+                onError?.Invoke(ex.Message);
+            }
+        }
+        
+        /// <summary>
+        /// Decodes raw output from YOLO model into DetectedObject instances.
+        /// </summary>
+        private List<DetectedObject> DecodeYOLOOutput(Tensor outputTensor, int imageWidth, int imageHeight)
+        {
+            List<DetectedObject> detections = new List<DetectedObject>();
+            
+            // Get tensor dimensions
+            int numDetections = outputTensor.shape[1];
+            int outputDim = outputTensor.shape[2];
+            
+            // Process each detection
+            for (int i = 0; i < numDetections; i++)
+            {
+                // YOLO output format: [cx, cy, width, height, confidence, class_scores...]
+                float cx = outputTensor[0, i, 0] * imageWidth;
+                float cy = outputTensor[0, i, 1] * imageHeight;
+                float width = outputTensor[0, i, 2] * imageWidth;
+                float height = outputTensor[0, i, 3] * imageHeight;
+                float confidence = outputTensor[0, i, 4];
+                
+                // Skip low confidence detections early
+                if (confidence < confidenceThreshold) continue;
+                
+                // Find class with highest score
+                int bestClassId = 0;
+                float bestClassScore = 0;
+                
+                // Start from index 5 for class scores
+                for (int c = 5; c < outputDim; c++)
+                {
+                    float classScore = outputTensor[0, i, c];
+                    if (classScore > bestClassScore)
+                    {
+                        bestClassScore = classScore;
+                        bestClassId = c - 5; // Adjust for offset
+                    }
+                }
+                
+                // Calculate bounding box coordinates (top-left format)
+                float x = cx - width / 2;
+                float y = cy - height / 2;
+                
+                // Create detection object
+                string className = bestClassId < _classLabels.Length 
+                    ? _classLabels[bestClassId] 
+                    : $"class_{bestClassId}";
+                
+                DetectedObject detection = new DetectedObject
+                {
+                    classId = bestClassId,
+                    className = className,
+                    confidence = confidence * bestClassScore, // Combined confidence
+                    boundingBox = new Rect(x, y, width, height)
                 };
                 
-                analysisQueue.Enqueue(request);
-                processedSegments++;
- 
-                // Update progress and start processing queue
-                float progress = processedSegments / (float)totalSegments * 0.6f;
-                onProgress?.Invoke($"Analyzing segment {processedSegments}/{totalSegments}...", progress);
- 
-                while (analysisQueue.Count > 0 && activeAnalyses < maxAPIRequestsPerFrame)
+                // Add class scores dictionary for more detailed analysis
+                detection.classScores = new Dictionary<string, float>();
+                for (int c = 5; c < outputDim; c++)
                 {
-                    var req = analysisQueue.Dequeue();
-                    yield return StartCoroutine(AnalyzeSegmentWithWorker(req));
+                    int classId = c - 5;
+                    if (classId < _classLabels.Length)
+                    {
+                        detection.classScores[_classLabels[classId]] = outputTensor[0, i, c];
+                    }
                 }
- 
-                // Wait one frame to throttle execution
-                yield return null;
+                
+                detections.Add(detection);
             }
             
-            // Wait for all analyses to complete
-            while (activeAnalyses > 0)
+            return detections;
+        }
+        
+        /// <summary>
+        /// Applies Non-Maximum Suppression to filter overlapping detections.
+        /// </summary>
+        private List<DetectedObject> ApplyNMS(List<DetectedObject> detections, float threshold)
+        {
+            // Sort by confidence (descending)
+            var sortedDetections = detections.OrderByDescending(d => d.confidence).ToList();
+            List<DetectedObject> results = new List<DetectedObject>();
+            HashSet<int> indicesToRemove = new HashSet<int>();
+            
+            for (int i = 0; i < sortedDetections.Count; i++)
             {
-                yield return null;
+                if (indicesToRemove.Contains(i)) continue;
+                
+                var detection = sortedDetections[i];
+                results.Add(detection);
+                
+                // Compare with remaining detections
+                for (int j = i + 1; j < sortedDetections.Count; j++)
+                {
+                    if (indicesToRemove.Contains(j)) continue;
+                    
+                    var otherDetection = sortedDetections[j];
+                    
+                    // Only apply NMS between objects of the same class
+                    if (detection.classId == otherDetection.classId)
+                    {
+                        // Calculate IoU between boxes
+                        float iou = CalculateIoU(detection.boundingBox, otherDetection.boundingBox);
+                        
+                        // If overlap exceeds threshold, mark for removal
+                        if (iou > threshold)
+                        {
+                            indicesToRemove.Add(j);
+                        }
+                    }
+                }
+            }
+            
+            return results;
+        }
+        
+        /// <summary>
+        /// Calculates Intersection over Union between two rectangles.
+        /// </summary>
+        private float CalculateIoU(Rect boxA, Rect boxB)
+        {
+            // Calculate intersection
+            float xLeft = Mathf.Max(boxA.xMin, boxB.xMin);
+            float yTop = Mathf.Max(boxA.yMin, boxB.yMin);
+            float xRight = Mathf.Min(boxA.xMax, boxB.xMax);
+            float yBottom = Mathf.Min(boxA.yMax, boxB.yMax);
+            
+            // Check if there is an intersection
+            if (xRight < xLeft || yBottom < yTop) return 0f;
+            
+            float intersectionArea = (xRight - xLeft) * (yBottom - yTop);
+            float boxAArea = boxA.width * boxA.height;
+            float boxBArea = boxB.width * boxB.height;
+            
+            // Calculate IoU
+            return intersectionArea / (boxAArea + boxBArea - intersectionArea);
+        }
+        
+        /// <summary>
+        /// Runs segmentation using SAM2 for each detected object.
+        /// </summary>
+        private IEnumerator RunSegmentationWithSAM2(
+            Texture2D image,
+            List<DetectedObject> detections,
+            Action<List<ImageSegment>> onComplete,
+            Action<string> onError)
+        {
+            try
+            {
+                _debugger.StartTimer("SAM2Segmentation");
+                
+                List<ImageSegment> segments = new List<ImageSegment>();
+                
+                if (_sam2Session == null)
+                {
+                    _debugger.LogWarning("SAM2 model not initialized, using bounding box fallback", LogCategory.AI);
+                    segments = CreateFallbackSegments(detections, image.width, image.height);
+                    onComplete?.Invoke(segments);
+                    yield break;
+                }
+                
+                // Determine batch size
+                int batchSize = processingBatchSize;
+                int totalBatches = Mathf.CeilToInt((float)detections.Count / batchSize);
+                
+                _debugger.Log($"Processing {detections.Count} detections in {totalBatches} batches", LogCategory.AI);
+                
+                // Process detections in batches
+                for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++)
+                {
+                    int startIdx = batchIndex * batchSize;
+                    int endIdx = Mathf.Min(startIdx + batchSize, detections.Count);
+                    int batchCount = endIdx - startIdx;
+                    
+                    _debugger.Log($"Processing batch {batchIndex + 1}/{totalBatches} with {batchCount} detections", LogCategory.AI);
+                    
+                    List<Task<ImageSegment>> segmentationTasks = new List<Task<ImageSegment>>();
+                    
+                    // Start all tasks in the batch
+                    for (int i = startIdx; i < endIdx; i++)
+                    {
+                        var detection = detections[i];
+                        
+                        segmentationTasks.Add(Task.Run(() => {
+                            return SegmentDetection(image, detection, i);
+                        }));
+                    }
+                    
+                    // Wait for all tasks in the batch to complete
+                    while (!segmentationTasks.All(t => t.IsCompleted))
+                    {
+                        yield return null;
+                    }
+                    
+                    // Collect results
+                    foreach (var task in segmentationTasks)
+                    {
+                        if (task.Result != null)
+                        {
+                            segments.Add(task.Result);
+                        }
+                    }
+                    
+                    // Allow a frame to process
+                    yield return null;
+                }
+                
+                float segmentationTime = _debugger.StopTimer("SAM2Segmentation");
+                _debugger.Log($"SAM2 segmentation completed in {segmentationTime:F2}s, created {segments.Count} segments", LogCategory.AI);
+                
+                onComplete?.Invoke(segments);
+            }
+            catch (Exception ex)
+            {
+                _debugger.LogError($"SAM2 segmentation error: {ex.Message}", LogCategory.AI);
+                onError?.Invoke(ex.Message);
             }
         }
         
-        private IEnumerator AnalyzeSegmentWithWorker(SegmentAnalysisRequest request)
+        /// <summary>
+        /// Segments a single detection using SAM2.
+        /// </summary>
+        private ImageSegment SegmentDetection(Texture2D image, DetectedObject detection, int index)
         {
-            activeAnalyses++;
-            
-            var analyzedSegment = new AnalyzedSegment
+            try
             {
-                originalSegment = request.segment,
-                boundingBox = request.segment.boundingBox
+                // Determine input resolution
+                int inputResolution = useHighQuality ? 1024 : 640;
+                
+                // Preprocess image
+                Tensor inputTensor = TensorUtils.Preprocess(image, inputResolution);
+                
+                // Create prompt tensor (normalized center point)
+                Vector2 centerN = new Vector2(
+                    (detection.boundingBox.center.x / image.width),
+                    (detection.boundingBox.center.y / image.height)
+                );
+                
+                Tensor promptTensor = new Tensor(new[] { 1, 2 }, new[] { centerN.x, centerN.y });
+                
+                // Run inference
+                _sam2Session.Run(
+                    new Dictionary<string, Tensor> {
+                        { "image", inputTensor },
+                        { "prompt", promptTensor }
+                    }
+                );
+                
+                // Get output mask
+                Tensor maskTensor = _sam2Session.Fetch("masks");
+                
+                // Convert to texture
+                Texture2D maskTexture = TensorUtils.DecodeMask(maskTensor);
+                
+                // Clean up tensors
+                inputTensor.Dispose();
+                promptTensor.Dispose();
+                maskTensor.Dispose();
+                
+                // Resize mask to match detection size
+                Texture2D resizedMask = ResizeMask(maskTexture, (int)detection.boundingBox.width, (int)detection.boundingBox.height);
+                UnityEngine.Object.Destroy(maskTexture);
+                
+                // Create random color with high saturation
+                Color color = UnityEngine.Random.ColorHSV(0f, 1f, 0.7f, 1f, 0.7f, 1f, 0.7f, 0.7f);
+                
+                // Create segment
+                ImageSegment segment = new ImageSegment
+                {
+                    detectedObject = detection,
+                    mask = resizedMask,
+                    boundingBox = detection.boundingBox,
+                    color = color,
+                    area = CalculateActualArea(resizedMask)
+                };
+                
+                return segment;
+            }
+            catch (Exception ex)
+            {
+                _debugger.LogWarning($"Error segmenting detection {index}: {ex.Message}", LogCategory.AI);
+                
+                // Create fallback segment from bounding box
+                return CreateFallbackSegment(detection, image.width, image.height);
+            }
+        }
+        
+        /// <summary>
+        /// Creates fallback segments based on bounding boxes when segmentation fails.
+        /// </summary>
+        private List<ImageSegment> CreateFallbackSegments(List<DetectedObject> detections, int imageWidth, int imageHeight)
+        {
+            List<ImageSegment> segments = new List<ImageSegment>();
+            
+            foreach (var detection in detections)
+            {
+                segments.Add(CreateFallbackSegment(detection, imageWidth, imageHeight));
+            }
+            
+            return segments;
+        }
+        
+        /// <summary>
+        /// Creates a fallback segment for a single detection using its bounding box.
+        /// </summary>
+        private ImageSegment CreateFallbackSegment(DetectedObject detection, int imageWidth, int imageHeight)
+        {
+            // Create a simple mask based on the bounding box
+            int width = Mathf.Max(1, Mathf.RoundToInt(detection.boundingBox.width));
+            int height = Mathf.Max(1, Mathf.RoundToInt(detection.boundingBox.height));
+            
+            Texture2D mask = new Texture2D(width, height, TextureFormat.RGBA32, false);
+            Color[] pixels = new Color[width * height];
+            
+            // Fill with white pixels (fully opaque)
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                pixels[i] = Color.white;
+            }
+            
+            mask.SetPixels(pixels);
+            mask.Apply();
+            
+            // Create random color with high saturation
+            Color color = UnityEngine.Random.ColorHSV(0f, 1f, 0.7f, 1f, 0.7f, 1f, 0.7f, 0.7f);
+            
+            // Create segment
+            ImageSegment segment = new ImageSegment
+            {
+                detectedObject = detection,
+                mask = mask,
+                boundingBox = detection.boundingBox,
+                color = color,
+                area = width * height
             };
             
-            // Step 1: Classify terrain vs non-terrain
-            yield return ClassifySegmentType(request, analyzedSegment);
-            
-            // Step 2: Detailed classification with Faster R-CNN
-            yield return ClassifySegmentDetails(request, analyzedSegment);
-            
-            // Step 3: If terrain, estimate height and topology
-            if (analyzedSegment.isTerrain)
-            {
-                yield return EstimateTerrainHeight(request, analyzedSegment);
-            }
-            else
-            {
-                // For non-terrain objects, calculate placement parameters
-                CalculateObjectPlacement(request, analyzedSegment);
-            }
-            
-            analyzedSegments.Add(analyzedSegment);
-            activeAnalyses--;
+            return segment;
         }
         
-        private IEnumerator ClassifySegmentType(SegmentAnalysisRequest request, AnalyzedSegment result)
+        /// <summary>
+        /// Resizes a mask texture to the specified dimensions.
+        /// </summary>
+        private Texture2D ResizeMask(Texture2D original, int width, int height)
         {
-            if (classificationWorker == null)
+            width = Mathf.Max(1, width);
+            height = Mathf.Max(1, height);
+            
+            // Create render texture for resizing
+            RenderTexture rt = RenderTexture.GetTemporary(width, height, 0, RenderTextureFormat.ARGB32);
+            rt.filterMode = FilterMode.Bilinear;
+            
+            // Blit to render texture
+            Graphics.Blit(original, rt);
+            
+            // Create new texture
+            Texture2D resized = new Texture2D(width, height, TextureFormat.RGBA32, false);
+            
+            // Read pixels from render texture
+            RenderTexture prevRT = RenderTexture.active;
+            RenderTexture.active = rt;
+            resized.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+            resized.Apply();
+            RenderTexture.active = prevRT;
+            
+            // Release render texture
+            RenderTexture.ReleaseTemporary(rt);
+            
+            return resized;
+        }
+        
+        /// <summary>
+        /// Calculates the actual area of a mask (counting non-transparent pixels).
+        /// </summary>
+        private float CalculateActualArea(Texture2D mask)
+        {
+            if (mask == null) return 0f;
+            
+            Color[] pixels = mask.GetPixels();
+            int count = 0;
+            
+            foreach (Color pixel in pixels)
             {
-                // Fallback classification based on detected class
-                result.isTerrain = IsTerrainClass(request.segment.detectedObject.className);
+                if (pixel.a > 0.5f)
+                {
+                    count++;
+                }
+            }
+            
+            return count;
+        }
+        
+        #endregion
+        
+        #region Detailed Analysis
+        
+        /// <summary>
+        /// Analyzes segments in detail, including classification, height estimation, etc.
+        /// </summary>
+        private IEnumerator AnalyzeSegmentsInDetail(
+            List<ImageSegment> segments,
+            Texture2D sourceImage,
+            Action<string, float> onProgress)
+        {
+            _debugger.StartTimer("DetailedAnalysis");
+            
+            int totalSegments = segments.Count;
+            int processedSegments = 0;
+            _analysisQueue.Clear();
+            _analyzedSegments.Clear();
+            _activeAnalyses = 0;
+            
+            // Create analysis requests for all segments
+            foreach (var segment in segments)
+            {
+                _analysisQueue.Enqueue(new SegmentAnalysisRequest {
+                    segment = segment,
+                    sourceImage = sourceImage
+                });
+            }
+            
+            // Process queue with limited concurrency
+            while (_analysisQueue.Count > 0 || _activeAnalyses > 0)
+            {
+                // Start new analyses up to the concurrency limit
+                while (_analysisQueue.Count > 0 && _activeAnalyses < maxAPIRequestsPerFrame)
+                {
+                    var request = _analysisQueue.Dequeue();
+                    _activeAnalyses++;
+                    
+                    StartCoroutine(AnalyzeSegment(request, () => {
+                        _activeAnalyses--;
+                        processedSegments++;
+                        
+                        // Update progress
+                        float progress = processedSegments / (float)totalSegments;
+                        onProgress?.Invoke($"Analyzing segment {processedSegments}/{totalSegments}", 0.3f + progress * 0.3f);
+                    }));
+                }
+                
+                yield return null;
+            }
+            
+            float analysisTime = _debugger.StopTimer("DetailedAnalysis");
+            _debugger.Log($"Detailed analysis completed in {analysisTime:F2}s", LogCategory.AI);
+        }
+        
+        /// <summary>
+        /// Analyzes a single segment in detail.
+        /// </summary>
+        private IEnumerator AnalyzeSegment(SegmentAnalysisRequest request, Action onComplete)
+        {
+            try
+            {
+                var segment = request.segment;
+                var sourceImage = request.sourceImage;
+                
+                // Create analyzed segment object
+                var analyzedSegment = new AnalyzedSegment
+                {
+                    originalSegment = segment,
+                    boundingBox = segment.boundingBox,
+                    metadata = new Dictionary<string, object>()
+                };
+                
+                // Step 1: Determine if this is terrain or object
+                yield return StartCoroutine(ClassifySegmentType(segment, analyzedSegment));
+                
+                // Step 2: Extract detailed classification
+                if (enableDetailedClassification)
+                {
+                    yield return StartCoroutine(ClassifySegmentDetails(segment, analyzedSegment));
+                }
+                else
+                {
+                    // Use basic classification from detection
+                    analyzedSegment.objectType = segment.detectedObject.className;
+                    analyzedSegment.detailedClassification = segment.detectedObject.className;
+                }
+                
+                // Step 3: For terrain, estimate height and analyze topology
+                if (analyzedSegment.isTerrain && estimateTerrainHeight)
+                {
+                    yield return StartCoroutine(EstimateTerrainHeight(segment, analyzedSegment));
+                }
+                else
+                {
+                    // For non-terrain objects, calculate placement parameters
+                    CalculateObjectPlacement(segment, analyzedSegment, sourceImage);
+                }
+                
+                // Add to analyzed segments
+                _analyzedSegments.Add(analyzedSegment);
+            }
+            catch (Exception ex)
+            {
+                _debugger.LogError($"Error analyzing segment: {ex.Message}", LogCategory.AI);
+            }
+            finally
+            {
+                onComplete?.Invoke();
+            }
+        }
+        
+        /// <summary>
+        /// Classifies whether a segment is terrain or object.
+        /// </summary>
+        private IEnumerator ClassifySegmentType(ImageSegment segment, AnalyzedSegment result)
+        {
+            // First try using class name heuristics
+            string className = segment.detectedObject.className.ToLowerInvariant();
+            
+            if (_terrainClasses.Any(tc => className.Contains(tc)))
+            {
+                result.isTerrain = true;
+                result.classificationConfidence = 0.9f;
                 yield break;
             }
             
-            // Extract segment region
-            var segmentTexture = ExtractSegmentTexture(request.sourceImage, request.segment);
-            var inputTensor = PrepareImageTensor(segmentTexture, 224, 224);
+            // If not clearly terrain by name, use additional heuristics
+            if (autoClassifyTerrainObjects)
+            {
+                // Large objects at the bottom of image are likely terrain
+                float relativeSize = segment.area / (segment.boundingBox.width * segment.boundingBox.height);
+                float relativeY = segment.boundingBox.y / segment.boundingBox.height;
+                
+                if (relativeSize > 0.8f && relativeY > 0.6f)
+                {
+                    result.isTerrain = true;
+                    result.classificationConfidence = 0.7f;
+                    yield break;
+                }
+            }
             
-            var inputs = new Dictionary<string, Tensor> { { "input", inputTensor } };
-            classificationWorker.Execute(inputs);
-            
-            var output = classificationWorker.PeekOutput("classification");
-            
-            // Binary classification: 0 = non-terrain, 1 = terrain
-            float terrainScore = output[0, 1];
-            float nonTerrainScore = output[0, 0];
-            
-            result.isTerrain = terrainScore > nonTerrainScore;
-            result.classificationConfidence = Mathf.Max(terrainScore, nonTerrainScore);
-            
-            // Cleanup
-            Destroy(segmentTexture);
-            inputTensor.Dispose();
-            output.Dispose();
-            
-            Debug.Log($"[MapAnalyzer] Segment classified as {(result.isTerrain ? "TERRAIN" : "NON-TERRAIN")} " +
-                      $"with confidence {result.classificationConfidence:P0}");
-            
-            yield return null;
+            // Default to object if no terrain indicators found
+            result.isTerrain = false;
+            result.classificationConfidence = 0.8f;
         }
         
-        private IEnumerator ClassifySegmentDetails(SegmentAnalysisRequest request, AnalyzedSegment result)
+        /// <summary>
+        /// Performs detailed classification of a segment.
+        /// </summary>
+        private IEnumerator ClassifySegmentDetails(ImageSegment segment, AnalyzedSegment result)
         {
-            if (fasterRcnnWorker == null)
+            if (_rcnnSession == null)
             {
-                // Use basic classification from YOLO
-                result.objectType = request.segment.detectedObject.className;
-                result.detailedClassification = request.segment.detectedObject.className;
+                // Fallback to base class
+                result.objectType = segment.detectedObject.className;
+                result.detailedClassification = segment.detectedObject.className;
                 yield break;
             }
             
-            var segmentTexture = ExtractSegmentTexture(request.sourceImage, request.segment);
-            var inputTensor = PrepareImageTensor(segmentTexture, 300, 300);
-            
-            var inputs = new Dictionary<string, Tensor> { { "input", inputTensor } };
-            fasterRcnnWorker.Execute(inputs);
-            
-            var classOutput = fasterRcnnWorker.PeekOutput("class_predictions");
-            var featureOutput = fasterRcnnWorker.PeekOutput("features");
-            
-            // Get detailed classification
-            result.detailedClassification = ProcessDetailedClassification(classOutput, result.isTerrain);
-            result.objectType = result.detailedClassification;
-            
-            // Extract features for further analysis
-            result.features = ExtractFeatures(featureOutput);
-            
-            // Cleanup
-            Destroy(segmentTexture);
-            inputTensor.Dispose();
-            classOutput.Dispose();
-            featureOutput.Dispose();
-            
-            yield return null;
-        }
-        
-        private IEnumerator EstimateTerrainHeight(SegmentAnalysisRequest request, AnalyzedSegment result)
-        {
-            if (heightWorker == null)
+            try
             {
-                // Simple height estimation based on terrain type
-                result.estimatedHeight = EstimateHeightByType(result.objectType);
-                result.heightMap = GenerateSimpleHeightMap(request.segment);
-                yield break;
+                // Extract segment region
+                Texture2D segmentTexture = ExtractSegmentTexture(segment, result.boundingBox);
+                
+                if (segmentTexture == null)
+                {
+                    result.objectType = segment.detectedObject.className;
+                    result.detailedClassification = segment.detectedObject.className;
+                    yield break;
+                }
+                
+                // Preprocess for model
+                Tensor inputTensor = TensorUtils.Preprocess(segmentTexture, 300);
+                
+                // Run inference
+                _rcnnSession.Run(new Dictionary<string, Tensor> { { "input", inputTensor } });
+                
+                // Get class predictions
+                Tensor classOutput = _rcnnSession.Fetch("class_predictions");
+                Tensor featureOutput = _rcnnSession.Fetch("features");
+                
+                // Get detailed classification
+                result.detailedClassification = GetDetailedClassification(classOutput);
+                result.objectType = result.detailedClassification;
+                
+                // Extract features for further analysis
+                result.features = ExtractFeatures(featureOutput);
+                
+                // Clean up
+                inputTensor.Dispose();
+                classOutput.Dispose();
+                featureOutput.Dispose();
+                UnityEngine.Object.Destroy(segmentTexture);
             }
-            
-            var segmentTexture = ExtractSegmentTexture(request.sourceImage, request.segment);
-            var inputTensor = PrepareImageTensor(segmentTexture, 256, 256);
-            
-            var inputs = new Dictionary<string, Tensor> { { "image", inputTensor } };
-            heightWorker.Execute(inputs);
-            
-            var heightOutput = heightWorker.PeekOutput("height_map");
-            
-            // Convert height map tensor to texture
-            result.heightMap = ConvertTensorToHeightMap(heightOutput, request.segment.boundingBox);
-            result.estimatedHeight = CalculateAverageHeight(heightOutput);
-            
-            // Calculate topology features
-            result.topologyFeatures = CalculateTopologyFeatures(heightOutput);
-            
-            // Cleanup
-            Destroy(segmentTexture);
-            inputTensor.Dispose();
-            heightOutput.Dispose();
-            
-            Debug.Log($"[MapAnalyzer] Terrain height estimated: {result.estimatedHeight:F2} with " +
-                      $"slope {result.topologyFeatures["slope"]:F2} degrees");
-            
-            yield return null;
+            catch (Exception ex)
+            {
+                _debugger.LogWarning($"Error in detailed classification: {ex.Message}", LogCategory.AI);
+                
+                // Fallback to base class
+                result.objectType = segment.detectedObject.className;
+                result.detailedClassification = segment.detectedObject.className;
+            }
         }
         
-        private void CalculateObjectPlacement(SegmentAnalysisRequest request, AnalyzedSegment result)
+        /// <summary>
+        /// Estimates height for terrain segments.
+        /// </summary>
+        private IEnumerator EstimateTerrainHeight(ImageSegment segment, AnalyzedSegment result)
         {
-            var segment = request.segment;
-            var imageWidth = request.sourceImage.width;
-            var imageHeight = request.sourceImage.height;
-            
-            // Calculate normalized position (0-1)
+            try
+            {
+                // Extract segment region
+                Texture2D segmentTexture = ExtractSegmentTexture(segment, result.boundingBox);
+                
+                if (segmentTexture == null)
+                {
+                    // Fallback to simple height estimation
+                    result.estimatedHeight = EstimateHeightFromClassName(result.objectType);
+                    result.heightMap = GenerateSimpleHeightMap(segment);
+                    result.topologyFeatures = new Dictionary<string, float> {
+                        { "slope", 0f },
+                        { "roughness", 0.5f }
+                    };
+                    yield break;
+                }
+                
+                // Convert to grayscale for height estimation
+                Texture2D grayscaleTexture = ConvertToGrayscale(segmentTexture);
+                UnityEngine.Object.Destroy(segmentTexture);
+                
+                // Use grayscale values for height estimation
+                Color[] pixels = grayscaleTexture.GetPixels();
+                float avgHeight = 0f;
+                float minHeight = 1f;
+                float maxHeight = 0f;
+                
+                foreach (Color pixel in pixels)
+                {
+                    float height = pixel.r; // Grayscale, so r=g=b
+                    avgHeight += height;
+                    minHeight = Mathf.Min(minHeight, height);
+                    maxHeight = Mathf.Max(maxHeight, height);
+                }
+                
+                avgHeight /= pixels.Length;
+                
+                // Scale based on terrain type
+                float heightMultiplier = GetHeightMultiplierForType(result.objectType);
+                result.estimatedHeight = avgHeight * heightMultiplier * maxTerrainHeight;
+                
+                // Calculate topology features
+                result.topologyFeatures = CalculateTopologyFeatures(grayscaleTexture);
+                
+                // Generate height map
+                result.heightMap = grayscaleTexture; // Use grayscale texture as height map
+                
+                _debugger.Log($"Estimated height for {result.objectType}: {result.estimatedHeight:F1}m", LogCategory.AI);
+            }
+            catch (Exception ex)
+            {
+                _debugger.LogWarning($"Error estimating terrain height: {ex.Message}", LogCategory.AI);
+                
+                // Fallback to simple height estimation
+                result.estimatedHeight = EstimateHeightFromClassName(result.objectType);
+                result.heightMap = GenerateSimpleHeightMap(segment);
+                result.topologyFeatures = new Dictionary<string, float> {
+                    { "slope", 0f },
+                    { "roughness", 0.5f }
+                };
+            }
+        }
+        
+        /// <summary>
+        /// Calculates placement parameters for non-terrain objects.
+        /// </summary>
+        private void CalculateObjectPlacement(ImageSegment segment, AnalyzedSegment result, Texture2D sourceImage)
+        {
+            // Calculate normalized position (center of bounding box)
             result.normalizedPosition = new Vector2(
-                segment.boundingBox.center.x / imageWidth,
-                segment.boundingBox.center.y / imageHeight
+                segment.boundingBox.center.x / sourceImage.width,
+                1f - (segment.boundingBox.center.y / sourceImage.height) // Flip Y for Unity coordinates
             );
             
-            // Estimate scale based on bounding box size and object type
-            float relativeSize = (segment.boundingBox.width * segment.boundingBox.height) / (imageWidth * imageHeight);
-            result.estimatedScale = CalculateObjectScale(result.objectType, relativeSize, segment.boundingBox);
+            // Estimate rotation based on shape analysis
+            result.estimatedRotation = EstimateRotation(segment);
             
-            // Estimate rotation based on bounding box aspect ratio and orientation
-            result.estimatedRotation = CalculateObjectRotation(segment.boundingBox, segment.mask);
+            // Estimate scale based on object type and size
+            result.estimatedScale = EstimateScale(segment, result.objectType, sourceImage);
             
             // Calculate placement confidence
             result.placementConfidence = segment.detectedObject.confidence * result.classificationConfidence;
             
-            Debug.Log($"[MapAnalyzer] Object placement calculated: {result.objectType} at " +
-                      $"({result.normalizedPosition.x:F3}, {result.normalizedPosition.y:F3}) " +
-                      $"scale: {result.estimatedScale}, rotation: {result.estimatedRotation:F1}°");
+            _debugger.Log($"Object placement: {result.objectType} at ({result.normalizedPosition.x:F2}, {result.normalizedPosition.y:F2}), " +
+                         $"rotation: {result.estimatedRotation:F1}°, scale: {result.estimatedScale:F2}", LogCategory.AI);
         }
         
+        /// <summary>
+        /// Enhances segment descriptions using OpenAI.
+        /// </summary>
         private IEnumerator EnhanceSegmentDescriptions()
         {
-            var terrainSegments = analyzedSegments.Where(s => s.isTerrain).ToList();
-            var objectSegments = analyzedSegments.Where(s => !s.isTerrain).ToList();
+            if (string.IsNullOrEmpty(openAIApiKey))
+            {
+                _debugger.LogWarning("OpenAI API key not set, skipping description enhancement", LogCategory.AI);
+                yield break;
+            }
             
-            // Enhance terrain descriptions
+            _debugger.StartTimer("DescriptionEnhancement");
+            
+            // Split into terrain and non-terrain segments
+            var terrainSegments = _analyzedSegments.Where(s => s.isTerrain).ToList();
+            var objectSegments = _analyzedSegments.Where(s => !s.isTerrain).ToList();
+            
+            // Process terrain segments first
+            int processedCount = 0;
+            int totalCount = terrainSegments.Count + objectSegments.Count;
+            
             foreach (var segment in terrainSegments)
             {
                 yield return EnhanceTerrainDescription(segment);
+                processedCount++;
             }
             
-            // Enhance object descriptions
+            // Then process object segments
             foreach (var segment in objectSegments)
             {
                 yield return EnhanceObjectDescription(segment);
+                processedCount++;
             }
+            
+            float enhancementTime = _debugger.StopTimer("DescriptionEnhancement");
+            _debugger.Log($"Description enhancement completed in {enhancementTime:F2}s", LogCategory.AI);
         }
         
+        /// <summary>
+        /// Enhances terrain description using OpenAI.
+        /// </summary>
         private IEnumerator EnhanceTerrainDescription(AnalyzedSegment segment)
         {
             string prompt = $@"You are analyzing a terrain segment for 3D world generation.
 Terrain type: {segment.objectType}
 Height: {segment.estimatedHeight:F1} meters
-Features: {string.Join(", ", segment.features.Select(f => f.Key + "=" + f.Value))}
+Features: {string.Join(", ", segment.topologyFeatures?.Select(f => $"{f.Key}={f.Value:F2}") ?? new string[0])}
 
 Provide a detailed description for terrain generation including:
 1. Geological characteristics
@@ -563,18 +1342,50 @@ Provide a detailed description for terrain generation including:
 4. Color palette and visual appearance
 
 Keep response under 100 words and focus on 3D terrain generation details.";
- 
-            yield return SendOpenAIRequest(prompt, (response) => {
-                segment.enhancedDescription = response;
-                Debug.Log($"[MapAnalyzer] Enhanced terrain description: {response}");
-            });
+            
+            bool completed = false;
+            string enhancedDescription = null;
+            
+            OpenAIResponse.Instance.RequestCompletion(prompt, 
+                response => {
+                    enhancedDescription = response;
+                    completed = true;
+                },
+                error => {
+                    _debugger.LogWarning($"OpenAI error: {error}", LogCategory.API);
+                    completed = true;
+                }
+            );
+            
+            // Wait for completion
+            float timeout = 10f;
+            float elapsed = 0f;
+            while (!completed && elapsed < timeout)
+            {
+                elapsed += Time.deltaTime;
+                yield return null;
+            }
+            
+            if (enhancedDescription != null)
+            {
+                segment.enhancedDescription = enhancedDescription;
+                _debugger.Log($"Enhanced terrain description: {segment.objectType}", LogCategory.AI);
+            }
+            else
+            {
+                // Fallback description
+                segment.enhancedDescription = $"A {segment.objectType} terrain feature with approximate height of {segment.estimatedHeight:F1} meters.";
+            }
         }
         
+        /// <summary>
+        /// Enhances object description using OpenAI.
+        /// </summary>
         private IEnumerator EnhanceObjectDescription(AnalyzedSegment segment)
         {
             string prompt = $@"You are analyzing a map object for 3D model generation.
 Object type: {segment.objectType}
-Scale: {segment.estimatedScale}
+Scale: {segment.estimatedScale:F2}
 Context: Located on a map for 3D world generation
 
 Provide a concise description for 3D model generation including:
@@ -583,24 +1394,56 @@ Provide a concise description for 3D model generation including:
 3. Key visual features
 4. Appropriate details for the scale
 
-Keep response under 50 words, optimized for Tripo3D model generation.";
- 
-            yield return SendOpenAIRequest(prompt, (response) => {
-                segment.enhancedDescription = response;
-                Debug.Log($"[MapAnalyzer] Enhanced object description: {response}");
-            });
+Keep response under 50 words, optimized for 3D model generation.";
+            
+            bool completed = false;
+            string enhancedDescription = null;
+            
+            OpenAIResponse.Instance.RequestCompletion(prompt, 
+                response => {
+                    enhancedDescription = response;
+                    completed = true;
+                },
+                error => {
+                    _debugger.LogWarning($"OpenAI error: {error}", LogCategory.API);
+                    completed = true;
+                }
+            );
+            
+            // Wait for completion
+            float timeout = 10f;
+            float elapsed = 0f;
+            while (!completed && elapsed < timeout)
+            {
+                elapsed += Time.deltaTime;
+                yield return null;
+            }
+            
+            if (enhancedDescription != null)
+            {
+                segment.enhancedDescription = enhancedDescription;
+                _debugger.Log($"Enhanced object description: {segment.objectType}", LogCategory.AI);
+            }
+            else
+            {
+                // Fallback description
+                segment.enhancedDescription = $"A {segment.objectType} with approximate scale of {segment.estimatedScale:F2}.";
+            }
         }
         
+        /// <summary>
+        /// Processes terrain segments for terrain generation.
+        /// </summary>
         private IEnumerator ProcessTerrainSegments(Texture2D sourceImage, Action<string, float> onProgress)
         {
-            if (terrainGenerator == null)
+            if (_terrainGenerator == null)
             {
-                Debug.LogWarning("[MapAnalyzer] TerrainGenerator not found, skipping terrain processing");
+                _debugger.LogWarning("TerrainGenerator not found, skipping terrain processing", LogCategory.AI);
                 yield break;
             }
             
-            var terrainSegments = analyzedSegments.Where(s => s.isTerrain).ToList();
-            Debug.Log($"[MapAnalyzer] Processing {terrainSegments.Count} terrain segments");
+            var terrainSegments = _analyzedSegments.Where(s => s.isTerrain).ToList();
+            _debugger.Log($"Processing {terrainSegments.Count} terrain segments", LogCategory.AI);
             
             // Group terrain segments by type for batch processing
             var terrainGroups = terrainSegments.GroupBy(s => s.objectType);
@@ -635,205 +1478,86 @@ Keep response under 50 words, optimized for Tripo3D model generation.";
                 }
                 
                 onProgress?.Invoke($"Applying terrain modifications for {group.Key}...", 0.75f);
-                // Send to terrain generator
-                yield return terrainGenerator.ApplyTerrainModifications(terrainMods, sourceImage);
+                
+                // Send to terrain generator (modified to match your actual API)
+                _terrainGenerator.ApplyTerrainModifications(terrainMods, sourceImage);
+                
+                // Allow a frame to process
+                yield return null;
             }
         }
-// --- MapAnalyzer.cs: Part 3 of 3 ---
-
-        #region Helpers & Utilities
-
-        private Texture2D ExtractSegmentTexture(Texture2D source, ImageSegment segment)
+        
+        /// <summary>
+        /// Processes non-terrain objects for placement.
+        /// </summary>
+        private IEnumerator ProcessNonTerrainSegments(Texture2D sourceImage)
         {
-            var bb = segment.boundingBox;
-            var tex = new Texture2D((int)bb.width, (int)bb.height, TextureFormat.RGBA32, false);
-            tex.SetPixels(source.GetPixels((int)bb.x, (int)bb.y, (int)bb.width, (int)bb.height));
-            tex.Apply();
-            return tex;
-        }
-
-        private Tensor PrepareImageTensor(Texture2D tex, int targetW, int targetH)
-        {
-            // Resize to target dimensions
-            RenderTexture rt = RenderTexture.GetTemporary(targetW, targetH, 0, RenderTextureFormat.ARGB32);
-            Graphics.Blit(tex, rt);
-            RenderTexture prev = RenderTexture.active;
-            RenderTexture.active = rt;
-            Texture2D scaled = new Texture2D(targetW, targetH, TextureFormat.RGBA32, false);
-            scaled.ReadPixels(new Rect(0, 0, targetW, targetH), 0, 0);
-            scaled.Apply();
-            RenderTexture.active = prev;
-            RenderTexture.ReleaseTemporary(rt);
-
-            // Convert to Tensor (NHWC)
-            var floatVals = new float[targetW * targetH * 3];
-            Color32[] pix = scaled.GetPixels32();
-            for (int i = 0; i < pix.Length; i++)
+            var objectSegments = _analyzedSegments.Where(s => !s.isTerrain).ToList();
+            _debugger.Log($"Processing {objectSegments.Count} object segments", LogCategory.AI);
+            
+            // For each object type, calculate grouping and variations
+            var objectGroups = objectSegments.GroupBy(s => s.objectType);
+            
+            foreach (var group in objectGroups)
             {
-                floatVals[i * 3 + 0] = pix[i].r / 255f;
-                floatVals[i * 3 + 1] = pix[i].g / 255f;
-                floatVals[i * 3 + 2] = pix[i].b / 255f;
+                var segments = group.ToList();
+                
+                // Calculate similarity between objects of same type
+                CalculateSimilarityWithinGroup(segments, sourceImage);
+                
+                // Allow a frame to process
+                yield return null;
             }
-            Destroy(scaled);
-            return new Tensor(1, targetH, targetW, 3, floatVals);
         }
-
-        private bool IsTerrainClass(string className)
+        
+        /// <summary>
+        /// Calculates similarity between objects in the same group.
+        /// </summary>
+        private void CalculateSimilarityWithinGroup(List<AnalyzedSegment> segments, Texture2D sourceImage)
         {
-            string lower = className.ToLowerInvariant();
-            return lower.Contains("terrain") || lower.Contains("grass") || lower.Contains("water") || lower.Contains("mountain");
-        }
-
-        private float EstimateHeightByType(string type)
-        {
-            // Simple mapping by type
-            if (type.Contains("mountain")) return 50f;
-            if (type.Contains("hill")) return 20f;
-            if (type.Contains("valley")) return 5f;
-            return 10f;
-        }
-
-        private Texture2D GenerateSimpleHeightMap(ImageSegment segment)
-        {
-            int w = (int)segment.boundingBox.width;
-            int h = (int)segment.boundingBox.height;
-            var map = new Texture2D(w, h, TextureFormat.RFloat, false);
-            float baseHeight = EstimateHeightByType(segment.detectedObject.className) / maxTerrainHeight;
-            Color fill = new Color(baseHeight, 0, 0, 0);
-            var cols = Enumerable.Repeat(fill, w * h).ToArray();
-            map.SetPixels(cols);
-            map.Apply();
-            return map;
-        }
-
-        private float CalculateAverageHeight(Tensor heightTensor)
-        {
-            float sum = 0f;
-            int count = heightTensor.length;
-            for (int i = 0; i < count; i++) sum += heightTensor[i];
-            return sum / count * maxTerrainHeight;
-        }
-
-        private Dictionary<string, float> CalculateTopologyFeatures(Tensor heightTensor)
-        {
-            // Compute simple slope and roughness metrics
-            int w = heightTensor.shape[2];
-            int h = heightTensor.shape[1];
-            float totalSlope = 0f, totalDiff = 0f;
-            int count = 0;
-            for (int y = 0; y < h - 1; y++)
+            if (segments.Count <= 1) return;
+            
+            string objectType = segments[0].objectType;
+            _debugger.Log($"Calculating similarity for {segments.Count} {objectType} objects", LogCategory.AI);
+            
+            // For each segment, compare with others to determine similarity
+            for (int i = 0; i < segments.Count; i++)
             {
-                for (int x = 0; x < w - 1; x++)
+                var segA = segments[i];
+                
+                // Create metadata entry for similar objects
+                if (segA.metadata == null)
                 {
-                    float a = heightTensor[0, y, x, 0];
-                    float b = heightTensor[0, y + 1, x, 0];
-                    float c = heightTensor[0, y, x + 1, 0];
-                    float slope = Mathf.Atan(Mathf.Abs(b - a) * terrainSize.y / terrainSize.x) * Mathf.Rad2Deg;
-                    totalSlope += slope;
-                    totalDiff += Mathf.Abs(c - a);
-                    count++;
+                    segA.metadata = new Dictionary<string, object>();
                 }
-            }
-            return new Dictionary<string, float>
-            {
-                ["slope"] = totalSlope / count,
-                ["roughness"] = totalDiff / count * terrainSize.y
-            };
-        }
-
-        private string ProcessDetailedClassification(Tensor classTensor, bool isTerrain)
-        {
-            // Simple argmax on first N classes
-            int numClasses = isTerrain ? terrainClassCount : objectClassCount;
-            float maxVal = float.MinValue;
-            int maxIdx = 0;
-            for (int i = 0; i < numClasses; i++)
-            {
-                if (classTensor[0, i] > maxVal)
+                
+                var similarObjects = new List<string>();
+                
+                for (int j = 0; j < segments.Count; j++)
                 {
-                    maxVal = classTensor[0, i];
-                    maxIdx = i;
+                    if (i == j) continue;
+                    
+                    var segB = segments[j];
+                    
+                    // Calculate similarity based on features and appearance
+                    float similarity = CalculateObjectSimilarity(segA, segB);
+                    
+                    // If similarity exceeds threshold, mark as similar
+                    if (similarity > 0.8f)
+                    {
+                        similarObjects.Add(segB.originalSegment.id);
+                    }
                 }
+                
+                // Store similar objects
+                segA.metadata["similarObjects"] = similarObjects;
             }
-            if (_classLabels != null && maxIdx < _classLabels.Length)
-                return _classLabels[maxIdx];
-            return isTerrain ? "terrain_feature" : "object";
         }
-
-        private Dictionary<string, float> ExtractFeatures(Tensor featureTensor)
-        {
-            // Flatten top-K features
-            var dict = new Dictionary<string, float>();
-            int dims = featureTensor.length;
-            for (int i = 0; i < Mathf.Min(10, dims); i++)
-            {
-                dict[$"f{i}"] = featureTensor[i];
-            }
-            return dict;
-        }
-
-        private float CalculateObjectScale(string type, float areaRatio, Rect bb)
-        {
-            // Heuristic: larger bounding boxes => larger scale
-            return Mathf.Lerp(0.5f, 3f, Mathf.Clamp01(areaRatio * 10f));
-        }
-
-        private float CalculateObjectRotation(Rect bb, Texture2D mask)
-        {
-            // Estimate major axis angle via PCA on mask pixels
-            var pts = new List<Vector2>();
-            var pixels = mask.GetPixels32();
-            int w = mask.width;
-            int h = mask.height;
-            for (int y = 0; y < h; y++)
-                for (int x = 0; x < w; x++)
-                    if (pixels[y * w + x].a > 128)
-                        pts.Add(new Vector2(x, y));
-            if (pts.Count < 2) return 0f;
-            // Compute covariance
-            Vector2 mean = Vector2.zero;
-            foreach (var p in pts) mean += p;
-            mean /= pts.Count;
-            float xx=0, xy=0, yy=0;
-            foreach (var p in pts)
-            {
-                var d = p - mean;
-                xx += d.x * d.x;
-                xy += d.x * d.y;
-                yy += d.y * d.y;
-            }
-            float theta = 0.5f * Mathf.Atan2(2f * xy, xx - yy);
-            return theta * Mathf.Rad2Deg;
-        }
-
-        private Texture2D ConvertTensorToHeightMap(Tensor tensor, Rect bb)
-        {
-            int w = tensor.shape[2], h = tensor.shape[1];
-            var tex = new Texture2D((int)bb.width, (int)bb.height, TextureFormat.RFloat, false);
-            var pixels = new Color[(int)bb.width * (int)bb.height];
-            for (int y = 0; y < (int)bb.height; y++)
-                for (int x = 0; x < (int)bb.width; x++)
-                    pixels[y * (int)bb.width + x] = new Color(tensor[0, y, x, 0], 0, 0, 0);
-            tex.SetPixels(pixels);
-            tex.Apply();
-            return tex;
-        }
-
-        private IEnumerator SendOpenAIRequest(string prompt, Action<string> onResponse)
-        {
-            // Delegate to singleton OpenAIResponse
-            bool done = false;
-            OpenAIResponse.Instance.SendPrompt(prompt, response => {
-                onResponse?.Invoke(response);
-                done = true;
-            }, error => {
-                Debug.LogError($"OpenAI error: {error}");
-                done = true;
-            });
-            while (!done) yield return null;
-        }
-
-        private AnalysisResults ConvertAnalyzedSegmentsToResults(Texture2D map)
+        
+        /// <summary>
+        /// Builds final results from analyzed segments.
+        /// </summary>
+        private AnalysisResults BuildFinalResults(Texture2D sourceImage)
         {
             var results = new AnalysisResults
             {
@@ -841,35 +1565,74 @@ Keep response under 50 words, optimized for Tripo3D model generation.";
                 terrainFeatures = new List<TerrainFeature>(),
                 objectGroups = new List<ObjectGroup>()
             };
-
-            foreach (var seg in analyzedSegments)
+            
+            // Convert analyzed segments to results format
+            foreach (var segment in _analyzedSegments)
             {
-                if (seg.isTerrain)
+                if (segment.isTerrain)
                 {
-                    results.terrainFeatures.Add(new TerrainFeature
+                    // Add as terrain feature
+                    var feature = new TerrainFeature
                     {
-                        label = seg.objectType,
-                        segmentMask = seg.originalSegment.mask,
-                        boundingBox = seg.boundingBox,
-                        elevation = seg.estimatedHeight,
-                        description = seg.enhancedDescription
-                    });
+                        label = segment.objectType,
+                        boundingBox = segment.boundingBox,
+                        segmentMask = segment.originalSegment.mask,
+                        segmentColor = segment.originalSegment.color,
+                        elevation = segment.estimatedHeight,
+                        metadata = new Dictionary<string, object>()
+                    };
+                    
+                    // Add topology data as metadata
+                    if (segment.topologyFeatures != null)
+                    {
+                        foreach (var kvp in segment.topologyFeatures)
+                        {
+                            feature.metadata[kvp.Key] = kvp.Value;
+                        }
+                    }
+                    
+                    // Add description
+                    feature.metadata["description"] = segment.enhancedDescription;
+                    
+                    results.terrainFeatures.Add(feature);
                 }
                 else
                 {
-                    results.mapObjects.Add(new MapObject
+                    // Add as map object
+                    var mapObject = new MapObject
                     {
-                        type = seg.objectType,
-                        label = seg.detailedClassification,
-                        description = seg.enhancedDescription,
-                        position = seg.normalizedPosition,
-                        scale = Vector3.one * seg.estimatedScale,
-                        rotation = seg.estimatedRotation,
-                        boundingBox = seg.boundingBox
-                    });
+                        type = segment.objectType,
+                        label = segment.detailedClassification,
+                        enhancedDescription = segment.enhancedDescription,
+                        position = segment.normalizedPosition,
+                        boundingBox = segment.boundingBox,
+                        segmentMask = segment.originalSegment.mask,
+                        segmentColor = segment.originalSegment.color,
+                        scale = Vector3.one * segment.estimatedScale,
+                        rotation = segment.estimatedRotation,
+                        confidence = segment.placementConfidence,
+                        metadata = new Dictionary<string, object>()
+                    };
+                    
+                    // Add features as metadata
+                    if (segment.features != null)
+                    {
+                        mapObject.metadata["features"] = segment.features;
+                    }
+                    
+                    // Copy over other metadata
+                    if (segment.metadata != null)
+                    {
+                        foreach (var kvp in segment.metadata)
+                        {
+                            mapObject.metadata[kvp.Key] = kvp.Value;
+                        }
+                    }
+                    
+                    results.mapObjects.Add(mapObject);
                 }
             }
-
+            
             // Group similar objects
             results.objectGroups = results.mapObjects
                 .GroupBy(o => o.type)
@@ -880,122 +1643,616 @@ Keep response under 50 words, optimized for Tripo3D model generation.";
                     objects = g.ToList()
                 })
                 .ToList();
-
+            
+            // Generate height map and segmentation map
+            results.heightMap = BuildGlobalHeightMap(sourceImage, results.terrainFeatures);
+            results.segmentationMap = BuildSegmentationMap(sourceImage, _analyzedSegments);
+            
             return results;
         }
-
+        
         #endregion
-        #region Private Methods
-        private float CalculateObjectRotation(Rect bb, Texture2D mask)
+        
+        #region Utility Methods
+        
+        /// <summary>
+        /// Extracts segment texture from source image.
+        /// </summary>
+        private Texture2D ExtractSegmentTexture(ImageSegment segment, Rect boundingBox)
         {
-            // Estimate major axis angle via PCA on mask pixels
-            var pts = new List<Vector2>();
-            Color32[] pixels = mask.GetPixels32();
-            int w = mask.width, h = mask.height;
-            for (int y = 0; y < h; y++)
+            try
             {
-                for (int x = 0; x < w; x++)
+                // Get segment bounds
+                int x = Mathf.FloorToInt(boundingBox.x);
+                int y = Mathf.FloorToInt(boundingBox.y);
+                int width = Mathf.FloorToInt(boundingBox.width);
+                int height = Mathf.FloorToInt(boundingBox.height);
+                
+                // Ensure bounds are valid
+                width = Mathf.Max(1, width);
+                height = Mathf.Max(1, height);
+                
+                // Create texture
+                Texture2D tex = new Texture2D(width, height, TextureFormat.RGBA32, false);
+                
+                // Get pixels from segment mask
+                Color[] pixelsMask = segment.mask.GetPixels();
+                
+                // Get pixels from source image
+                Color[] pixelsSource = segment.detectedObject.mask.GetPixels(x, y, width, height);
+                
+                // Create masked pixels
+                Color[] pixelsMasked = new Color[width * height];
+                for (int i = 0; i < pixelsMasked.Length; i++)
                 {
-                    if (pixels[y * w + x].a > 128)
-                        pts.Add(new Vector2(x, y));
+                    if (i < pixelsMask.Length && i < pixelsSource.Length)
+                    {
+                        pixelsMasked[i] = pixelsSource[i] * pixelsMask[i].a;
+                    }
+                }
+                
+                // Set pixels
+                tex.SetPixels(pixelsMasked);
+                tex.Apply();
+                
+                return tex;
+            }
+            catch (Exception ex)
+            {
+                _debugger.LogWarning($"Error extracting segment texture: {ex.Message}", LogCategory.AI);
+                return null;
+            }
+        }
+        
+        /// <summary>
+        /// Converts a texture to grayscale.
+        /// </summary>
+        private Texture2D ConvertToGrayscale(Texture2D source)
+        {
+            Texture2D result = new Texture2D(source.width, source.height, TextureFormat.RGBA32, false);
+            Color[] pixels = source.GetPixels();
+            Color[] grayscale = new Color[pixels.Length];
+            
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                // Standard grayscale conversion formula
+                float gray = pixels[i].r * 0.299f + pixels[i].g * 0.587f + pixels[i].b * 0.114f;
+                grayscale[i] = new Color(gray, gray, gray, pixels[i].a);
+            }
+            
+            result.SetPixels(grayscale);
+            result.Apply();
+            
+            return result;
+        }
+        
+        /// <summary>
+        /// Estimates terrain height from class name.
+        /// </summary>
+        private float EstimateHeightFromClassName(string className)
+        {
+            // Map common terrain types to heights
+            string lowerName = className.ToLowerInvariant();
+            
+            if (lowerName.Contains("mountain"))
+                return 0.8f * maxTerrainHeight;
+            if (lowerName.Contains("hill"))
+                return 0.4f * maxTerrainHeight;
+            if (lowerName.Contains("valley"))
+                return 0.1f * maxTerrainHeight;
+            if (lowerName.Contains("plateau"))
+                return 0.5f * maxTerrainHeight;
+            if (lowerName.Contains("plain"))
+                return 0.05f * maxTerrainHeight;
+            if (lowerName.Contains("desert"))
+                return 0.1f * maxTerrainHeight;
+            if (lowerName.Contains("canyon"))
+                return 0.6f * maxTerrainHeight;
+            if (lowerName.Contains("ridge"))
+                return 0.6f * maxTerrainHeight;
+            
+            // Default height for unknown terrain types
+            return 0.2f * maxTerrainHeight;
+        }
+        
+        /// <summary>
+        /// Gets height multiplier for terrain type.
+        /// </summary>
+        private float GetHeightMultiplierForType(string terrainType)
+        {
+            string lowerType = terrainType.ToLowerInvariant();
+            
+            if (lowerType.Contains("mountain"))
+                return 1.0f;
+            if (lowerType.Contains("hill"))
+                return 0.5f;
+            if (lowerType.Contains("valley"))
+                return 0.2f;
+            if (lowerType.Contains("plateau"))
+                return 0.6f;
+            if (lowerType.Contains("plain"))
+                return 0.1f;
+            if (lowerType.Contains("desert"))
+                return 0.15f;
+            if (lowerType.Contains("canyon"))
+                return 0.7f;
+            if (lowerType.Contains("ridge"))
+                return 0.7f;
+            
+            return 0.3f; // Default multiplier
+        }
+        
+        /// <summary>
+        /// Generates a simple height map for a segment.
+        /// </summary>
+        private Texture2D GenerateSimpleHeightMap(ImageSegment segment)
+        {
+            int width = Mathf.Max(1, (int)segment.boundingBox.width);
+            int height = Mathf.Max(1, (int)segment.boundingBox.height);
+            
+            Texture2D heightMap = new Texture2D(width, height, TextureFormat.RFloat, false);
+            Color[] colors = new Color[width * height];
+            
+            // Simple gradient from center to edges
+            Vector2 center = new Vector2(width / 2f, height / 2f);
+            float maxDist = Vector2.Distance(center, Vector2.zero);
+            
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    float dist = Vector2.Distance(new Vector2(x, y), center);
+                    float normalizedDist = dist / maxDist;
+                    float height01 = 1f - normalizedDist * 0.7f; // Higher in center
+                    
+                    colors[y * width + x] = new Color(height01, 0f, 0f, 1f);
                 }
             }
-            if (pts.Count < 2) return 0f;
-
-            // Compute covariance matrix
-            Vector2 mean = Vector2.zero;
-            foreach (var p in pts) mean += p;
-            mean /= pts.Count;
-
-            float mxx = 0f, mxy = 0f, myy = 0f;
-            foreach (var p in pts)
-            {
-                var d = p - mean;
-                mxx += d.x * d.x;
-                mxy += d.x * d.y;
-                myy += d.y * d.y;
-            }
-            // Solve for principal axis
-            float theta = 0.5f * Mathf.Atan2(2f * mxy, mxx - myy);
-            return theta * Mathf.Rad2Deg;
+            
+            heightMap.SetPixels(colors);
+            heightMap.Apply();
+            
+            return heightMap;
         }
-
-        private IEnumerator SendOpenAIRequest(string prompt, Action<string> onResponse)
+        
+        /// <summary>
+        /// Calculates topology features from a height map.
+        /// </summary>
+        private Dictionary<string, float> CalculateTopologyFeatures(Texture2D heightMap)
         {
-            // Uses singleton OpenAIResponse to send and receive completion
-            bool done = false;
-            string result = null;
-            Traversify.AI.OpenAIResponse.Instance.RequestCompletion(prompt, 
-                response => { result = response; done = true; }, 
-                error => { Debug.LogError($"OpenAI error: {error}"); done = true; });
-            while (!done) yield return null;
-            onResponse?.Invoke(result);
-        }
-
-        private AnalysisResults ConvertAnalyzedSegmentsToResults(Texture2D sourceImage)
-        {
-            var results = new AnalysisResults();
-            results.mapObjects = new List<MapObject>();
-            results.terrainFeatures = new List<TerrainFeature>();
-            results.objectGroups = new List<ObjectGroup>();
-
-            // Split analyzed segments
-            foreach (var seg in analyzedSegments)
+            Dictionary<string, float> features = new Dictionary<string, float>();
+            
+            try
             {
-                if (seg.isTerrain)
+                Color[] pixels = heightMap.GetPixels();
+                int width = heightMap.width;
+                int height = heightMap.height;
+                
+                float totalSlope = 0f;
+                float maxSlope = 0f;
+                float minHeight = 1f;
+                float maxHeight = 0f;
+                float roughness = 0f;
+                int sampleCount = 0;
+                
+                // Skip edges to avoid out of bounds
+                for (int y = 1; y < height - 1; y++)
                 {
-                    results.terrainFeatures.Add(new TerrainFeature
+                    for (int x = 1; x < width - 1; x++)
                     {
-                        label = seg.objectType,
-                        boundingBox = seg.boundingBox,
-                        segmentMask = seg.heightMap,  // using heightMap as mask placeholder
-                        elevation = seg.estimatedHeight,
-                        metadata = new Dictionary<string, object>
+                        int idx = y * width + x;
+                        float h = pixels[idx].r; // Height at current pixel
+                        
+                        // Update min/max heights
+                        minHeight = Mathf.Min(minHeight, h);
+                        maxHeight = Mathf.Max(maxHeight, h);
+                        
+                        // Calculate local slopes in X and Z directions
+                        float hLeft = pixels[y * width + (x - 1)].r;
+                        float hRight = pixels[y * width + (x + 1)].r;
+                        float hDown = pixels[(y - 1) * width + x].r;
+                        float hUp = pixels[(y + 1) * width + x].r;
+                        
+                        float slopeX = Mathf.Abs(hRight - hLeft) / 2f;
+                        float slopeZ = Mathf.Abs(hUp - hDown) / 2f;
+                        
+                        // Combined slope (approx. gradient magnitude)
+                        float slope = Mathf.Sqrt(slopeX * slopeX + slopeZ * slopeZ);
+                        
+                        // Convert to degrees (rough approximation)
+                        float slopeDegrees = Mathf.Atan(slope * terrainSize.x / 2f) * Mathf.Rad2Deg;
+                        
+                        totalSlope += slopeDegrees;
+                        maxSlope = Mathf.Max(maxSlope, slopeDegrees);
+                        
+                        // Calculate local roughness (Laplacian)
+                        float laplacian = (hLeft + hRight + hDown + hUp - 4f * h);
+                        roughness += Mathf.Abs(laplacian);
+                        
+                        sampleCount++;
+                    }
+                }
+                
+                // Compute averages
+                float avgSlope = sampleCount > 0 ? totalSlope / sampleCount : 0f;
+                float avgRoughness = sampleCount > 0 ? roughness / sampleCount : 0f;
+                float heightRange = maxHeight - minHeight;
+                
+                // Store results
+                features["slope"] = avgSlope;
+                features["maxSlope"] = maxSlope;
+                features["roughness"] = avgRoughness * 100f; // Scale up for readability
+                features["heightRange"] = heightRange;
+                features["minHeight"] = minHeight;
+                features["maxHeight"] = maxHeight;
+            }
+            catch (Exception ex)
+            {
+                _debugger.LogWarning($"Error calculating topology: {ex.Message}", LogCategory.AI);
+                
+                // Default values
+                features["slope"] = 0f;
+                features["maxSlope"] = 0f;
+                features["roughness"] = 0.5f;
+                features["heightRange"] = 0.2f;
+                features["minHeight"] = 0.4f;
+                features["maxHeight"] = 0.6f;
+            }
+            
+            return features;
+        }
+        
+        /// <summary>
+        /// Gets detailed classification from model output.
+        /// </summary>
+        private string GetDetailedClassification(Tensor classTensor)
+        {
+            // Find class with highest score
+            int classCount = Mathf.Min(classTensor.shape[1], _classLabels.Length);
+            int bestClassId = 0;
+            float bestScore = float.MinValue;
+            
+            for (int i = 0; i < classCount; i++)
+            {
+                float score = classTensor[0, i];
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestClassId = i;
+                }
+            }
+            
+            // Return class name
+            return bestClassId < _classLabels.Length ? _classLabels[bestClassId] : $"class_{bestClassId}";
+        }
+        
+        /// <summary>
+        /// Extracts features from model output.
+        /// </summary>
+        private Dictionary<string, float> ExtractFeatures(Tensor featureTensor)
+        {
+            Dictionary<string, float> features = new Dictionary<string, float>();
+            
+            // Extract top features
+            int featureCount = Mathf.Min(featureTensor.shape[1], 20);
+            
+            for (int i = 0; i < featureCount; i++)
+            {
+                features[$"f{i}"] = featureTensor[0, i];
+            }
+            
+            return features;
+        }
+        
+        /// <summary>
+        /// Estimates rotation of an object based on segment shape.
+        /// </summary>
+        private float EstimateRotation(ImageSegment segment)
+        {
+            try
+            {
+                // Use PCA to find principal axis
+                if (segment.mask == null) return 0f;
+                
+                Color[] pixels = segment.mask.GetPixels();
+                List<Vector2> points = new List<Vector2>();
+                
+                for (int y = 0; y < segment.mask.height; y++)
+                {
+                    for (int x = 0; x < segment.mask.width; x++)
+                    {
+                        int idx = y * segment.mask.width + x;
+                        if (idx < pixels.Length && pixels[idx].a > 0.5f)
                         {
-                            { "slope", seg.topologyFeatures?["slope"] ?? 0f },
-                            { "description", seg.enhancedDescription }
+                            points.Add(new Vector2(x, y));
                         }
-                    });
+                    }
+                }
+                
+                if (points.Count < 10)
+                {
+                    return 0f; // Not enough points for reliable estimation
+                }
+                
+                // Calculate center of mass
+                Vector2 center = Vector2.zero;
+                foreach (var p in points) center += p;
+                center /= points.Count;
+                
+                // Calculate covariance matrix
+                float xx = 0f, xy = 0f, yy = 0f;
+                foreach (var p in points)
+                {
+                    Vector2 d = p - center;
+                    xx += d.x * d.x;
+                    xy += d.x * d.y;
+                    yy += d.y * d.y;
+                }
+                xx /= points.Count;
+                xy /= points.Count;
+                yy /= points.Count;
+                
+                // Calculate principal axis angle
+                float angle;
+                if (xx == yy)
+                {
+                    angle = 0f; // Circle or square
                 }
                 else
                 {
-                    results.mapObjects.Add(new MapObject
-                    {
-                        type = seg.objectType,
-                        position = seg.normalizedPosition,
-                        scale = Vector3.one * seg.estimatedScale,
-                        rotation = seg.estimatedRotation,
-                        label = seg.objectType,
-                        enhancedDescription = seg.enhancedDescription,
-                        confidence = seg.placementConfidence,
-                        metadata = new Dictionary<string, object>
-                        {
-                            { "features", seg.features },
-                            { "description", seg.enhancedDescription }
-                        }
-                    });
+                    angle = 0.5f * Mathf.Atan2(2f * xy, xx - yy);
+                }
+                
+                // Convert to degrees
+                float degrees = angle * Mathf.Rad2Deg;
+                
+                // Adjust for Unity's coordinate system
+                return degrees;
+            }
+            catch (Exception ex)
+            {
+                _debugger.LogWarning($"Error estimating rotation: {ex.Message}", LogCategory.AI);
+                return 0f;
+            }
+        }
+        
+        /// <summary>
+        /// Estimates object scale based on type and relative size.
+        /// </summary>
+        private float EstimateScale(ImageSegment segment, string objectType, Texture2D sourceImage)
+        {
+            try
+            {
+                // Base scale on object type and relative size in image
+                float relativeArea = segment.area / (sourceImage.width * sourceImage.height);
+                
+                // Scale different object types differently
+                string lowerType = objectType.ToLowerInvariant();
+                float baseScale = 1.0f;
+                
+                if (lowerType.Contains("building") || lowerType.Contains("structure"))
+                {
+                    baseScale = 1.5f;
+                }
+                else if (lowerType.Contains("vehicle") || lowerType.Contains("car"))
+                {
+                    baseScale = 0.8f;
+                }
+                else if (lowerType.Contains("tree") || lowerType.Contains("vegetation"))
+                {
+                    baseScale = 1.2f;
+                }
+                else if (lowerType.Contains("person") || lowerType.Contains("human"))
+                {
+                    baseScale = 0.6f;
+                }
+                
+                // Adjust based on relative area in the image
+                // Larger objects should have smaller adjustment to avoid massive scaling
+                float sizeAdjustment = Mathf.Lerp(0.5f, 2.0f, relativeArea * 100f);
+                
+                return baseScale * sizeAdjustment;
+            }
+            catch (Exception ex)
+            {
+                _debugger.LogWarning($"Error estimating scale: {ex.Message}", LogCategory.AI);
+                return 1.0f;
+            }
+        }
+        
+        /// <summary>
+        /// Calculates similarity between two objects.
+        /// </summary>
+        private float CalculateObjectSimilarity(AnalyzedSegment a, AnalyzedSegment b)
+        {
+            // Start with base similarity score
+            float similarity = 0.0f;
+            
+            // Same type gives a base similarity
+            if (a.objectType == b.objectType)
+            {
+                similarity += 0.5f;
+            }
+            
+            // Compare features if available
+            if (a.features != null && b.features != null)
+            {
+                // Compute cosine similarity of feature vectors
+                float dotProduct = 0f;
+                float aMagnitude = 0f;
+                float bMagnitude = 0f;
+                
+                foreach (var key in a.features.Keys.Intersect(b.features.Keys))
+                {
+                    dotProduct += a.features[key] * b.features[key];
+                    aMagnitude += a.features[key] * a.features[key];
+                    bMagnitude += b.features[key] * b.features[key];
+                }
+                
+                aMagnitude = Mathf.Sqrt(aMagnitude);
+                bMagnitude = Mathf.Sqrt(bMagnitude);
+                
+                if (aMagnitude > 0 && bMagnitude > 0)
+                {
+                    float featureSimilarity = dotProduct / (aMagnitude * bMagnitude);
+                    similarity += featureSimilarity * 0.3f;
                 }
             }
-
-            // Create object groups by type
-            var groups = results.mapObjects
-                .GroupBy(o => o.type)
-                .Select(g => new ObjectGroup
-                {
-                    groupId = Guid.NewGuid().ToString(),
-                    type = g.Key,
-                    objects = g.ToList()
-                })
-                .ToList();
-            results.objectGroups = groups;
-
-            // Attach final textures
-            results.heightMap = TextureUtils.BuildGlobalHeightMap(sourceImage.width, sourceImage.height, results.terrainFeatures);
-            results.segmentationMap = TextureUtils.BuildGlobalSegmentationMap(sourceImage.width, sourceImage.height, analyzedSegments);
-
-            return results;
+            
+            // Compare size and scale
+            float scaleDiff = Mathf.Abs(a.estimatedScale - b.estimatedScale);
+            float scaleSimilarity = Mathf.Clamp01(1f - scaleDiff);
+            similarity += scaleSimilarity * 0.2f;
+            
+            return Mathf.Clamp01(similarity);
         }
-
+        
+        /// <summary>
+        /// Builds a global height map from terrain features.
+        /// </summary>
+        private Texture2D BuildGlobalHeightMap(Texture2D sourceImage, List<TerrainFeature> features)
+        {
+            int width = sourceImage.width;
+            int height = sourceImage.height;
+            
+            // Create empty height map
+            Texture2D heightMap = new Texture2D(width, height, TextureFormat.RFloat, false);
+            Color[] pixels = new Color[width * height];
+            
+            // Initialize with zero height
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                pixels[i] = new Color(0f, 0f, 0f, 1f);
+            }
+            
+            // Apply each terrain feature
+            foreach (var feature in features)
+            {
+                if (feature.segmentMask == null) continue;
+                
+                // Get mask pixels
+                Color[] maskPixels = feature.segmentMask.GetPixels();
+                
+                // Calculate normalized height
+                float normalizedHeight = feature.elevation / maxTerrainHeight;
+                
+                // Apply to global height map
+                int x = Mathf.FloorToInt(feature.boundingBox.x);
+                int y = Mathf.FloorToInt(feature.boundingBox.y);
+                int w = Mathf.FloorToInt(feature.boundingBox.width);
+                int h = Mathf.FloorToInt(feature.boundingBox.height);
+                
+                for (int fy = 0; fy < h && fy < feature.segmentMask.height; fy++)
+                {
+                    for (int fx = 0; fx < w && fx < feature.segmentMask.width; fx++)
+                    {
+                        int sourceX = x + fx;
+                        int sourceY = y + fy;
+                        
+                        // Skip if out of bounds
+                        if (sourceX < 0 || sourceX >= width || sourceY < 0 || sourceY >= height)
+                            continue;
+                        
+                        int sourceIdx = sourceY * width + sourceX;
+                        int maskIdx = fy * feature.segmentMask.width + fx;
+                        
+                        if (maskIdx < maskPixels.Length)
+                        {
+                            float mask = maskPixels[maskIdx].a;
+                            
+                            // Blend heights with mask as weight
+                            float currentHeight = pixels[sourceIdx].r;
+                            float newHeight = Mathf.Lerp(currentHeight, normalizedHeight, mask);
+                            
+                            pixels[sourceIdx] = new Color(newHeight, 0f, 0f, 1f);
+                        }
+                    }
+                }
+            }
+            
+            // Apply final pixels
+            heightMap.SetPixels(pixels);
+            heightMap.Apply();
+            
+            return heightMap;
+        }
+        
+        /// <summary>
+        /// Builds a segmentation map for visualization.
+        /// </summary>
+        private Texture2D BuildSegmentationMap(Texture2D sourceImage, List<AnalyzedSegment> segments)
+        {
+            int width = sourceImage.width;
+            int height = sourceImage.height;
+            
+            // Create empty segmentation map
+            Texture2D segMap = new Texture2D(width, height, TextureFormat.RGBA32, false);
+            Color[] pixels = new Color[width * height];
+            
+            // Initialize with transparent black
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                pixels[i] = new Color(0f, 0f, 0f, 0f);
+            }
+            
+            // Sort segments by size (smaller on top)
+            var sortedSegments = segments
+                .OrderByDescending(s => s.originalSegment.area)
+                .ToList();
+            
+            // Apply each segment
+            foreach (var segment in sortedSegments)
+            {
+                var original = segment.originalSegment;
+                if (original.mask == null) continue;
+                
+                // Get mask pixels
+                Color[] maskPixels = original.mask.GetPixels();
+                
+                // Apply to segmentation map
+                int x = Mathf.FloorToInt(original.boundingBox.x);
+                int y = Mathf.FloorToInt(original.boundingBox.y);
+                int w = Mathf.FloorToInt(original.boundingBox.width);
+                int h = Mathf.FloorToInt(original.boundingBox.height);
+                
+                for (int fy = 0; fy < h && fy < original.mask.height; fy++)
+                {
+                    for (int fx = 0; fx < w && fx < original.mask.width; fx++)
+                    {
+                        int sourceX = x + fx;
+                        int sourceY = y + fy;
+                        
+                        // Skip if out of bounds
+                        if (sourceX < 0 || sourceX >= width || sourceY < 0 || sourceY >= height)
+                            continue;
+                        
+                        int sourceIdx = sourceY * width + sourceX;
+                        int maskIdx = fy * original.mask.width + fx;
+                        
+                        if (maskIdx < maskPixels.Length)
+                        {
+                            float mask = maskPixels[maskIdx].a;
+                            
+                            if (mask > 0.5f)
+                            {
+                                // Use segment color with semi-transparency
+                                Color segColor = original.color;
+                                segColor.a = 0.6f;
+                                
+                                pixels[sourceIdx] = segColor;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Apply final pixels
+            segMap.SetPixels(pixels);
+            segMap.Apply();
+            
+            return segMap;
+        }
+        
         #endregion
     }
 }
