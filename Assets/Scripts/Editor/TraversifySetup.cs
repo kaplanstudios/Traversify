@@ -1,2129 +1,1457 @@
-using UnityEngine;
-using UnityEditor;
-using UnityEngine.UI;
-using System.IO;
+/*************************************************************************
+ *  Traversify – TraversifyAutoSetup.cs                                 *
+ *  Author : David Kaplan (dkaplan73)                                    *
+ *  Created: 2025-06-27                                                  *
+ *  Updated: 2025-06-27 23:11:40 UTC                                     *
+ *  Desc   : Comprehensive automatic setup and integration script for    *
+ *           configuring all Traversify components, UI elements, and     *
+ *           scene hierarchy with proper inspector parameters.           *
+ *************************************************************************/
+
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using UnityEngine.Networking;
+using System.IO;
 using System.Linq;
-using Unity.EditorCoroutines.Editor;
-using UnityEditor.SceneManagement;
+using UnityEngine;
+using UnityEngine.UI;
+using UnityEngine.EventSystems;
+using UnityEngine.AI;
+using UnityEngine.Rendering;
+using TMPro;
 using Traversify;
+using Traversify.AI;
 using Traversify.Core;
-using Traversify.AI;  // Add this namespace to access MapAnalyzer class
 
 #if UNITY_EDITOR
-[InitializeOnLoad]
-public class TraversifySetup : EditorWindow
-{
-    private const string VERSION = "2.0.0";
-    private const string MODELS_VERSION = "v2.0";
-    
-    // Model download URLs
-    private const string YOLOV8_MODEL_URL = "https://kaplanstudios.com/models/yolov10m_model.onnx";
-    private const string FASTER_RCNN_MODEL_URL = "https://kaplanstudios.com/models/FasterRCNN-10.onnx";
-    private const string SAM2_MODEL_URL = "https://kaplanstudios.com/models/sam2_tiny_preprocess.onnx";
-    
-    // Alternative mirror URLs for redundancy
-    private readonly Dictionary<string, string[]> modelMirrors = new Dictionary<string, string[]>
-    {
-        ["yolov8"] = new string[] {
-            "https://kaplanstudios.com/models/yolov10m_model.onnx",
-            "https://kaplanstudios.com/models/backup/yolov10m_model.onnx"
-        },
-        ["fasterrcnn"] = new string[] {
-            "https://kaplanstudios.com/models/FasterRCNN-10.onnx",
-            "https://kaplanstudios.com/models/backup/FasterRCNN-10.onnx"
-        },
-        ["sam2"] = new string[] {
-            "https://kaplanstudios.com/models/sam2_tiny_preprocess.onnx",
-            "https://kaplanstudios.com/models/backup/sam2_tiny_preprocess.onnx"
-        }
-    };
-    
-    // Model file sizes (approximate, in MB)
-    private readonly Dictionary<string, float> modelSizes = new Dictionary<string, float>
-    {
-        ["yolov8"] = 6.2f,
-        ["fasterrcnn"] = 167.7f,
-        ["sam2"] = 89.3f
-    };
-    
-    private bool setupUI = true;
-    private bool setupAIModels = true;
-    private bool setupTerrain = true;
-    private bool downloadModels = true;
-    private bool createSampleScene = true;
-    private bool installDependencies = true;
-    
-    private string openAIKey = "";
-    private string tripo3DApiKey = "";
-    private Vector2 scrollPosition;
-    
-    private GUIStyle headerStyle;
-    private GUIStyle subHeaderStyle;
-    private GUIStyle paragraphStyle;
-    private GUIStyle boxStyle;
-    private GUIStyle progressBarStyle;
-    private GUIStyle progressBarFillStyle;
-    
-    private Color successColor = new Color(0.4f, 0.8f, 0.4f);
-    private Color warningColor = new Color(0.9f, 0.7f, 0.2f);
-    private Color errorColor = new Color(0.9f, 0.3f, 0.3f);
-    private Color progressColor = new Color(0.2f, 0.7f, 1f);
-    
-    private bool isDownloading = false;
-    private string currentDownloadName = "";
-    private float currentDownloadProgress = 0f;
-    private string downloadStatus = "";
-    private EditorCoroutine downloadCoroutine;
-    
-    private readonly string[] requiredFolders = new string[] {
-        "Assets/Scripts",
-        "Assets/Scripts/Core",
-        "Assets/Scripts/AI",
-        "Assets/Scripts/Terrain",
-        "Assets/Scripts/UI",
-        "Assets/Scripts/Utils",
-        "Assets/Scripts/Editor",
-        "Assets/StreamingAssets/Traversify",
-        "Assets/StreamingAssets/Traversify/Models",
-        "Assets/Materials",
-        "Assets/Prefabs",
-        "Assets/Traversify",
-        "Assets/Traversify/Scenes",
-        "Assets/Traversify/Materials",
-        "Assets/Traversify/Terrain"
-    };
-    
-    private Dictionary<string, bool> dependencyStatus = new Dictionary<string, bool>();
-    
-    // Track created objects for verification
-    private List<GameObject> createdGameObjects = new List<GameObject>();
-    private Dictionary<string, Component> createdComponents = new Dictionary<string, Component>();
-    
-    [MenuItem("Tools/Traversify/Setup Wizard")]
-    public static void ShowWindow()
-    {
-        var window = GetWindow<TraversifySetup>("Traversify Setup Wizard");
-        window.minSize = new Vector2(700, 800);
-        window.position = new Rect(100, 100, 700, 800);
-    }
-    
-    private void OnEnable()
-    {
-        Debug.Log("[TraversifySetup] Initializing setup wizard...");
-        
-        // Try to load saved API keys
-        openAIKey = EditorPrefs.GetString("TraversifyOpenAIKey", "");
-        tripo3DApiKey = EditorPrefs.GetString("TraversifyTripo3DKey", "");
-        
-        // Check dependencies
-        CheckDependencies();
-    }
-    
-    private void OnDisable()
-    {
-        if (downloadCoroutine != null)
-        {
-            EditorCoroutineUtility.StopCoroutine(downloadCoroutine);
-        }
-        
-        // Clear tracked objects
-        createdGameObjects.Clear();
-        createdComponents.Clear();
-    }
-    
-    private void InitializeStyles()
-    {
-        if (headerStyle == null)
-        {
-            headerStyle = new GUIStyle(EditorStyles.label)
-            {
-                fontSize = 24,
-                fontStyle = FontStyle.Bold,
-                alignment = TextAnchor.MiddleCenter,
-                normal = { textColor = new Color(0.9f, 0.9f, 0.9f) }
-            };
-        }
-        
-        if (subHeaderStyle == null)
-        {
-            subHeaderStyle = new GUIStyle(EditorStyles.label)
-            {
-                fontSize = 16,
-                fontStyle = FontStyle.Bold,
-                normal = { textColor = new Color(0.85f, 0.85f, 0.85f) }
-            };
-        }
-        
-        if (paragraphStyle == null)
-        {
-            paragraphStyle = new GUIStyle(EditorStyles.label)
-            {
-                wordWrap = true,
-                fontSize = 12,
-                normal = { textColor = new Color(0.8f, 0.8f, 0.8f) }
-            };
-        }
-        
-        if (boxStyle == null)
-        {
-            boxStyle = new GUIStyle(EditorStyles.helpBox)
-            {
-                padding = new RectOffset(10, 10, 10, 10),
-                margin = new RectOffset(5, 5, 5, 5)
-            };
-        }
-        
-        if (progressBarStyle == null)
-        {
-            progressBarStyle = new GUIStyle()
-            {
-                normal = { background = EditorGUIUtility.whiteTexture }
-            };
-        }
-        
-        if (progressBarFillStyle == null)
-        {
-            progressBarFillStyle = new GUIStyle()
-            {
-                normal = { background = EditorGUIUtility.whiteTexture }
-            };
-        }
-    }
-    
-    private void CheckDependencies()
-    {
-        Debug.Log("[TraversifySetup] Checking dependencies...");
-        
-        // Check for required packages
-        dependencyStatus["AI.Inference"] = IsPackageInstalled("com.unity.ai.inference");
-        dependencyStatus["TextMeshPro"] = IsPackageInstalled("com.unity.textmeshpro");
-        dependencyStatus["UI"] = IsPackageInstalled("com.unity.ugui");
-        dependencyStatus["EditorCoroutines"] = IsPackageInstalled("com.unity.editorcoroutines");
-        
-        // Check for required Unity modules
-        dependencyStatus["TerrainModule"] = true; // Always available in Unity
-        dependencyStatus["UIModule"] = true; // Always available in Unity
-        
-        Debug.Log($"[TraversifySetup] Dependencies checked. Missing: {dependencyStatus.Count(d => !d.Value)}");
-    }
-    
-    private bool IsPackageInstalled(string packageId)
-    {
-        try {
-            // Log that we're checking for this specific package
-            Debug.Log($"[TraversifySetup] Checking for package: {packageId}");
-            
-            var listRequest = UnityEditor.PackageManager.Client.List(true); // Include all packages, including built-in
-            while (!listRequest.IsCompleted) { 
-                // Wait for request to complete
-                System.Threading.Thread.Sleep(100);
-            }
-            
-            if (listRequest.Status == UnityEditor.PackageManager.StatusCode.Success)
-            {
-                // Log all found packages for debugging
-                Debug.Log($"[TraversifySetup] Total packages found: {listRequest.Result.Count()}");
-                
-                foreach (var package in listRequest.Result)
-                {
-                    // More detailed logging of package information
-                    Debug.Log($"[TraversifySetup] Found package: {package.name} (ID: {package.packageId}) {package.version}");
-                    
-                    // Check by name or packageId
-                    if (package.packageId.StartsWith(packageId) || package.name == packageId)
-                    {
-                        Debug.Log($"[TraversifySetup] ✓ Package found: {package.name} {package.version}");
-                        return true;
-                    }
-                }
-                
-                // Alternative check for TextMeshPro specifically (might be loaded differently)
-                if (packageId == "com.unity.textmeshpro")
-                {
-                    // Check if TMP assembly exists
-                    var tmpAssembly = System.AppDomain.CurrentDomain.GetAssemblies()
-                        .FirstOrDefault(a => a.GetName().Name == "Unity.TextMeshPro");
-                    
-                    if (tmpAssembly != null)
-                    {
-                        Debug.Log("[TraversifySetup] ✓ TextMeshPro found through assembly check");
-                        return true;
-                    }
-                    
-                    // Check if TMP types are available
-                    var tmpType = System.Type.GetType("TMPro.TextMeshProUGUI, Unity.TextMeshPro");
-                    if (tmpType != null)
-                    {
-                        Debug.Log("[TraversifySetup] ✓ TextMeshPro found through type check");
-                        return true;
-                    }
-                    
-                    // Check for TMP assets
-                    if (UnityEditor.AssetDatabase.FindAssets("t:asmdef Unity.TextMeshPro").Length > 0)
-                    {
-                        Debug.Log("[TraversifySetup] ✓ TextMeshPro found through asset database check");
-                        return true;
-                    }
-                }
-            }
-            else
-            {
-                Debug.LogWarning($"[TraversifySetup] Package list request failed with status: {listRequest.Status}");
-            }
-            
-            Debug.LogWarning($"[TraversifySetup] Package not found: {packageId}");
-            return false;
-        }
-        catch (Exception e) {
-            Debug.LogError($"[TraversifySetup] Error checking for package {packageId}: {e.Message}");
-            return false;
-        }
-    }
-    
-    private void OnGUI()
-    {
-        if (headerStyle == null)
-        {
-            InitializeStyles();
-        }
-        
-        scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
-        
-        try
-        {
-            // Header
-            EditorGUILayout.Space(20);
-            GUILayout.Label("TRAVERSIFY", headerStyle);
-            GUILayout.Label($"Version {VERSION}", new GUIStyle(EditorStyles.label) { alignment = TextAnchor.MiddleCenter });
-            EditorGUILayout.Space(10);
-            
-            // Description
-            EditorGUILayout.BeginVertical(boxStyle);
-            EditorGUILayout.LabelField("Advanced Map-to-Terrain AI System", subHeaderStyle);
-            EditorGUILayout.Space(5);
-            EditorGUILayout.LabelField("Traversify uses state-of-the-art AI models to analyze map images and generate detailed 3D terrains with accurately placed objects.", paragraphStyle);
-            EditorGUILayout.EndVertical();
-            
-            EditorGUILayout.Space(20);
-            
-            // Dependencies Section
-            DrawDependenciesSection();
-            
-            EditorGUILayout.Space(20);
-            
-            // Setup Options
-            DrawSetupOptions();
-            
-            EditorGUILayout.Space(20);
-            
-            // API Configuration
-            DrawAPIConfiguration();
-            
-            EditorGUILayout.Space(20);
-            
-            // Model Status
-            DrawModelStatus();
-            
-            EditorGUILayout.Space(20);
-            
-            // Project Structure
-            DrawProjectStructure();
-            
-            EditorGUILayout.Space(20);
-            
-            // Action Buttons
-            DrawActionButtons();
-            
-            EditorGUILayout.Space(20);
-            
-            // Download Progress
-            if (isDownloading)
-            {
-                DrawDownloadProgress();
-            }
-        }
-        catch (Exception e)
-        {
-            Debug.LogError($"[TraversifySetup] Error in GUI: {e.Message}\n{e.StackTrace}");
-            EditorGUILayout.HelpBox("An error occurred while rendering the UI. Check the console for details.", MessageType.Error);
-        }
-        
-        EditorGUILayout.EndScrollView();
-    }
-    
-    private void DrawDependenciesSection()
-    {
-        EditorGUILayout.BeginVertical(boxStyle);
-        GUILayout.Label("Dependencies", subHeaderStyle);
-        EditorGUILayout.Space(10);
-        
-        foreach (var dep in dependencyStatus)
-        {
-            EditorGUILayout.BeginHorizontal();
-            
-            if (dep.Value)
-            {
-                GUI.color = successColor;
-                EditorGUILayout.LabelField($"✓ {dep.Key}", GUILayout.Width(200));
-                EditorGUILayout.LabelField("Installed");
-            }
-            else
-            {
-                GUI.color = errorColor;
-                EditorGUILayout.LabelField($"✗ {dep.Key}", GUILayout.Width(200));
-                EditorGUILayout.LabelField("Missing");
-                
-                GUI.color = Color.white;
-                if (GUILayout.Button("Install", GUILayout.Width(70)))
-                {
-                    InstallPackage(dep.Key);
-                }
-            }
-            
-            GUI.color = Color.white;
-            EditorGUILayout.EndHorizontal();
-        }
-        
-        if (dependencyStatus.Values.Any(v => !v))
-        {
-            EditorGUILayout.Space(10);
-            EditorGUILayout.HelpBox("Some dependencies are missing. Click Install to add them via Package Manager.", MessageType.Warning);
-        }
-        
-        EditorGUILayout.EndVertical();
-    }
-    
-    private void DrawSetupOptions()
-    {
-        EditorGUILayout.BeginVertical(boxStyle);
-        GUILayout.Label("Setup Options", subHeaderStyle);
-        EditorGUILayout.Space(10);
-        
-        setupUI = EditorGUILayout.ToggleLeft("Set up user interface components", setupUI);
-        setupAIModels = EditorGUILayout.ToggleLeft("Configure AI model integration", setupAIModels);
-        setupTerrain = EditorGUILayout.ToggleLeft("Set up terrain generation system", setupTerrain);
-        downloadModels = EditorGUILayout.ToggleLeft("Download AI models (263 MB total)", downloadModels);
-        createSampleScene = EditorGUILayout.ToggleLeft("Create sample scene with demo content", createSampleScene);
-        installDependencies = EditorGUILayout.ToggleLeft("Install missing dependencies automatically", installDependencies);
-        
-        EditorGUILayout.EndVertical();
-    }
-    
-    private void DrawAPIConfiguration()
-    {
-        EditorGUILayout.BeginVertical(boxStyle);
-        GUILayout.Label("API Configuration", subHeaderStyle);
-        EditorGUILayout.Space(10);
-        
-        EditorGUILayout.LabelField("API keys are required for enhanced features.", paragraphStyle);
-        EditorGUILayout.Space(5);
-        
-        // OpenAI API Key
-        EditorGUILayout.BeginHorizontal();
-        EditorGUILayout.LabelField("OpenAI API Key:", GUILayout.Width(150));
-        openAIKey = EditorGUILayout.PasswordField(openAIKey);
-        EditorGUILayout.EndHorizontal();
-        
-        // Tripo3D API Key
-        EditorGUILayout.BeginHorizontal();
-        EditorGUILayout.LabelField("Tripo3D API Key:", GUILayout.Width(150));
-        tripo3DApiKey = EditorGUILayout.PasswordField(tripo3DApiKey);
-        EditorGUILayout.EndHorizontal();
-        
-        EditorGUILayout.Space(5);
-        
-        if (string.IsNullOrEmpty(openAIKey))
-        {
-            EditorGUILayout.HelpBox("OpenAI API key is needed for enhanced object descriptions.", MessageType.Info);
-        }
-        
-        if (string.IsNullOrEmpty(tripo3DApiKey))
-        {
-            EditorGUILayout.HelpBox("Tripo3D API key is needed for AI-generated 3D models.", MessageType.Info);
-        }
-        
-        EditorGUILayout.BeginHorizontal();
-        if (GUILayout.Button("Get OpenAI API Key", GUILayout.Width(150)))
-        {
-            Application.OpenURL("https://platform.openai.com/api-keys");
-        }
-        if (GUILayout.Button("Get Tripo3D API Key", GUILayout.Width(150)))
-        {
-            Application.OpenURL("https://www.tripo3d.ai/");
-        }
-        EditorGUILayout.EndHorizontal();
-        
-        EditorGUILayout.EndVertical();
-    }
-    
-    private void DrawModelStatus()
-    {
-        EditorGUILayout.BeginVertical(boxStyle);
-        GUILayout.Label("AI Models", subHeaderStyle);
-        EditorGUILayout.Space(10);
-        
-        // Check model files
-        string yoloPath = GetModelPath("yolov8n.onnx");
-        string fasterRcnnPath = GetModelPath("FasterRCNN-12.onnx");
-        string sam2Path = GetModelPath("sam2_hiera_base.onnx");
-        
-        bool yoloExists = File.Exists(yoloPath);
-        bool fasterRcnnExists = File.Exists(fasterRcnnPath);
-        bool sam2Exists = File.Exists(sam2Path);
-        
-        // YOLOv8
-        DrawModelStatusRow("YOLOv8", "Object detection", yoloExists, modelSizes["yolov8"]);
-        
-        // Faster R-CNN
-        DrawModelStatusRow("Faster R-CNN", "Advanced object classification", fasterRcnnExists, modelSizes["fasterrcnn"]);
-        
-        // SAM2
-        DrawModelStatusRow("SAM2", "Precise segmentation", sam2Exists, modelSizes["sam2"]);
-        
-        EditorGUILayout.Space(10);
-        
-        float totalSize = modelSizes.Values.Sum();
-        EditorGUILayout.LabelField($"Total download size: {totalSize:F1} MB", EditorStyles.boldLabel);
-        
-        // Add reimport models button
-        EditorGUILayout.Space(5);
-        
-        EditorGUILayout.BeginHorizontal();
-        GUILayout.FlexibleSpace();
-        
-        GUI.enabled = yoloExists || fasterRcnnExists || sam2Exists;
-        if (GUILayout.Button("Reimport AI Models", GUILayout.Width(150), GUILayout.Height(30)))
-        {
-            ReimportAIModels();
-        }
-        GUI.enabled = true;
-        
-        GUILayout.FlexibleSpace();
-        EditorGUILayout.EndHorizontal();
-        
-        EditorGUILayout.EndVertical();
-    }
-    
-    private void DrawModelStatusRow(string modelName, string description, bool exists, float sizeMB)
-    {
-        EditorGUILayout.BeginHorizontal();
-        
-        if (exists)
-        {
-            GUI.color = successColor;
-            EditorGUILayout.LabelField($"✓ {modelName}", GUILayout.Width(150));
-            GUI.color = Color.white;
-            EditorGUILayout.LabelField(description, GUILayout.Width(250));
-            EditorGUILayout.LabelField("Installed", GUILayout.Width(100));
-        }
-        else
-        {
-            GUI.color = warningColor;
-            EditorGUILayout.LabelField($"○ {modelName}", GUILayout.Width(150));
-            GUI.color = Color.white;
-            EditorGUILayout.LabelField(description, GUILayout.Width(250));
-            EditorGUILayout.LabelField($"{sizeMB:F1} MB", GUILayout.Width(100));
-        }
-        
-        EditorGUILayout.EndHorizontal();
-    }
-    
-    private void DrawProjectStructure()
-    {
-        EditorGUILayout.BeginVertical(boxStyle);
-        GUILayout.Label("Project Structure", subHeaderStyle);
-        EditorGUILayout.Space(10);
-        
-        int existingFolders = 0;
-        foreach (string folder in requiredFolders)
-        {
-            if (Directory.Exists(folder))
-            {
-                existingFolders++;
-            }
-        }
-        
-        float structureProgress = (float)existingFolders / requiredFolders.Length;
-        
-        // Progress bar
-        Rect progressRect = GUILayoutUtility.GetRect(18, 18, "TextField");
-        DrawProgressBar(progressRect, structureProgress, $"{existingFolders}/{requiredFolders.Length} folders");
-        
-        EditorGUILayout.Space(5);
-        
-        if (structureProgress < 1.0f)
-        {
-            EditorGUILayout.HelpBox($"{requiredFolders.Length - existingFolders} folders will be created during setup.", MessageType.Info);
-        }
-        else
-        {
-            GUI.color = successColor;
-            EditorGUILayout.LabelField("✓ All project folders exist");
-            GUI.color = Color.white;
-        }
-        
-        EditorGUILayout.EndVertical();
-    }
-    
-    private void DrawActionButtons()
-    {
-        EditorGUILayout.BeginHorizontal();
-        EditorGUILayout.Space();
-        
-        GUI.enabled = !isDownloading && dependencyStatus.Values.All(v => v);
-        
-        if (GUILayout.Button("Set Up Traversify", GUILayout.Height(40), GUILayout.Width(200)))
-        {
-            RunSetup();
-        }
-        
-        GUI.enabled = true;
-        
-        if (GUILayout.Button("Refresh", GUILayout.Height(40), GUILayout.Width(100)))
-        {
-            CheckDependencies();
-            Repaint();
-        }
-        
-        EditorGUILayout.Space();
-        EditorGUILayout.EndHorizontal();
-        
-        if (!dependencyStatus.Values.All(v => v))
-        {
-            EditorGUILayout.HelpBox("Please install all dependencies before running setup.", MessageType.Warning);
-        }
-    }
-    
-    private void DrawDownloadProgress()
-    {
-        EditorGUILayout.BeginVertical(boxStyle);
-        GUILayout.Label("Download Progress", subHeaderStyle);
-        EditorGUILayout.Space(10);
-        
-        EditorGUILayout.LabelField($"Downloading: {currentDownloadName}");
-        EditorGUILayout.LabelField(downloadStatus);
-        
-        Rect progressRect = GUILayoutUtility.GetRect(18, 20, "TextField");
-        DrawProgressBar(progressRect, currentDownloadProgress, $"{(currentDownloadProgress * 100):F1}%");
-        
-        EditorGUILayout.Space(5);
-        
-        if (GUILayout.Button("Cancel Download"))
-        {
-            CancelDownload();
-        }
-        
-        EditorGUILayout.EndVertical();
-    }
-    
-    private void DrawProgressBar(Rect rect, float progress, string label)
-    {
-        // Background
-        GUI.color = new Color(0.2f, 0.2f, 0.2f);
-        GUI.Box(rect, GUIContent.none, progressBarStyle);
-        
-        // Fill
-        if (progress > 0)
-        {
-            Rect fillRect = new Rect(rect.x, rect.y, rect.width * progress, rect.height);
-            GUI.color = progressColor;
-            GUI.Box(fillRect, GUIContent.none, progressBarFillStyle);
-        }
-        
-        // Label
-        GUI.color = Color.white;
-        GUI.Label(rect, label, new GUIStyle(EditorStyles.label) { alignment = TextAnchor.MiddleCenter });
-    }
-    
-    private void InstallPackage(string packageName)
-    {
-        string packageId = "";
-        
-        switch (packageName)
-        {
-            case "AI.Inference":
-                packageId = "com.unity.ai.inference@1.0.0-exp.2";
-                break;
-            case "TextMeshPro":
-                packageId = "com.unity.textmeshpro@3.0.6";
-                break;
-            case "UI":
-                packageId = "com.unity.ugui@1.0.0";
-                break;
-            case "EditorCoroutines":
-                packageId = "com.unity.editorcoroutines@1.0.0";
-                break;
-        }
-        
-        if (!string.IsNullOrEmpty(packageId))
-        {
-            UnityEditor.PackageManager.Client.Add(packageId);
-            EditorUtility.DisplayDialog("Package Installation", 
-                $"Installing {packageName}. Please wait for the Package Manager to complete the installation.", 
-                "OK");
-        }
-    }
-    
-    private string GetModelPath(string modelFileName)
-    {
-        // Standardize on single location: Assets/StreamingAssets/Traversify/Models
-        string standardPath = Path.Combine(Application.dataPath, "StreamingAssets", "Traversify", "Models", modelFileName);
-        
-        // If searching for a specific file and it doesn't exist in the standard location,
-        // check legacy locations as fallback
-        if (!string.IsNullOrEmpty(modelFileName) && !File.Exists(standardPath))
-        {
-            string[] legacyPaths = new string[]
-            {
-                Path.Combine(Application.dataPath, "Scripts", "AI", "Models", modelFileName),
-                Path.Combine(Application.streamingAssetsPath, "Traversify", "Models", modelFileName)
-            };
-            
-            foreach (string path in legacyPaths)
-            {
-                if (File.Exists(path))
-                {
-                    // Found in legacy location, inform in log
-                    Debug.LogWarning($"[TraversifySetup] Model found in legacy location: {path}. Consider moving to: {standardPath}");
-                    return path;
-                }
-            }
-        }
-        
-        // Return the standard path even if file doesn't exist yet
-        return standardPath;
-    }
-    
-    private void RunSetup()
-    {
-        try
-        {
-            Debug.Log("[TraversifySetup] Starting setup process...");
-            
-            // Clear tracking lists
-            createdGameObjects.Clear();
-            createdComponents.Clear();
-            
-            // Save API keys
-            EditorPrefs.SetString("TraversifyOpenAIKey", openAIKey);
-            EditorPrefs.SetString("TraversifyTripo3DKey", tripo3DApiKey);
-            
-            // Create required folders
-            CreateRequiredFolders();
-            
-            // Create sample scene first if requested
-            if (createSampleScene)
-            {
-                CreateSampleScene();
-            }
-            
-            // Download models if requested
-            if (downloadModels)
-            {
-                downloadCoroutine = EditorCoroutineUtility.StartCoroutine(DownloadAllModels(), this);
-            }
-            else
-            {
-                CompleteSetup();
-            }
-        }
-        catch (Exception e)
-        {
-            EditorUtility.DisplayDialog("Setup Error", 
-                $"An error occurred during setup: {e.Message}\n\nCheck the console for details.", 
-                "OK");
-            Debug.LogError($"[TraversifySetup] Setup error: {e.Message}\n{e.StackTrace}");
-        }
-    }
-    
-    private void CreateRequiredFolders()
-    {
-        Debug.Log("[TraversifySetup] Creating required folders...");
-        
-        foreach (string folder in requiredFolders)
-        {
-            if (!Directory.Exists(folder))
-            {
-                Directory.CreateDirectory(folder);
-                Debug.Log($"[TraversifySetup] Created directory: {folder}");
-            }
-        }
-        
-        AssetDatabase.Refresh();
-    }
-    
-    private void CreateSampleScene()
-    {
-        Debug.Log("[TraversifySetup] Creating sample scene...");
-        
-        try
-        {
-            // Create new scene
-            UnityEngine.SceneManagement.Scene scene = EditorSceneManager.NewScene(
-                NewSceneSetup.DefaultGameObjects, 
-                NewSceneMode.Single);
-            
-            // Set up lighting
-            SetupSceneLighting();
-            
-            // Set up camera
-            SetupSceneCamera();
-            
-            // Create Traversify core objects
-            CreateTraversifyCore();
-            
-            // Create UI system
-            CreateUISystem();
-            
-            // Set up environment
-            SetupEnvironment();
-            
-            // Save the scene
-            string scenePath = "Assets/Traversify/Scenes/TraversifyScene.unity";
-            EditorSceneManager.SaveScene(scene, scenePath);
-            
-            Debug.Log($"[TraversifySetup] Scene created at: {scenePath}");
-            
-            // Verify all components
-            VerifySetup();
-        }
-        catch (Exception e)
-        {
-            Debug.LogError($"[TraversifySetup] Failed to create scene: {e.Message}\n{e.StackTrace}");
-            throw;
-        }
-    }
-    
-    private void SetupSceneLighting()
-    {
-        Debug.Log("[TraversifySetup] Setting up scene lighting...");
-        
-        GameObject lightObj = GameObject.Find("Directional Light");
-        if (lightObj != null)
-        {
-            Light light = lightObj.GetComponent<Light>();
-            light.intensity = 1.5f;
-            light.color = new Color(1f, 0.98f, 0.92f);
-            light.transform.rotation = Quaternion.Euler(50f, -30f, 0);
-            light.shadows = LightShadows.Soft;
-            light.shadowStrength = 0.8f;
-            light.shadowBias = 0.05f;
-            light.shadowNormalBias = 0.4f;
-            light.shadowNearPlane = 0.2f;
-        }
-    }
-    
-    private void SetupSceneCamera()
-    {
-        Debug.Log("[TraversifySetup] Setting up scene camera...");
-        
-        GameObject cameraObj = GameObject.Find("Main Camera");
-        if (cameraObj != null)
-        {
-            Camera camera = cameraObj.GetComponent<Camera>();
-            camera.transform.position = new Vector3(250, 180, -150);
-            camera.transform.rotation = Quaternion.Euler(35, 15, 0);
-            camera.farClipPlane = 3000;
-            camera.nearClipPlane = 0.3f;
-            camera.fieldOfView = 60;
-            camera.clearFlags = CameraClearFlags.Skybox;
-            camera.allowHDR = true;
-            camera.allowMSAA = true;
-            
-            // Add camera controller
-            FreeCameraController cameraController = cameraObj.AddComponent<FreeCameraController>();
-            cameraController.moveSpeed = 75f;
-            cameraController.fastMoveSpeed = 200f;
-            cameraController.rotationSpeed = 2f;
-            cameraController.smoothTime = 0.1f;
-            
-            createdComponents["CameraController"] = cameraController;
-        }
-    }
-    
-    private void CreateTraversifyCore()
-    {
-        Debug.Log("[TraversifySetup] Creating Traversify core components...");
-        
-        // Create main manager object
-        GameObject traversifyManager = new GameObject("TraversifyManager");
-        traversifyManager.transform.position = Vector3.zero;
-        createdGameObjects.Add(traversifyManager);
-        
-        // Add TraversifyManager component
-        TraversifyManager manager = traversifyManager.AddComponent<TraversifyManager>();
-        createdComponents["TraversifyManager"] = manager;
-        
-        // Create components container
-        GameObject componentsObj = new GameObject("TraversifyComponents");
-        componentsObj.transform.SetParent(traversifyManager.transform);
-        createdGameObjects.Add(componentsObj);
-        
-        // Add core components
-        MapAnalyzer mapAnalyzer = componentsObj.AddComponent<MapAnalyzer>();
-        Traversify.TerrainGenerator terrainGenerator = componentsObj.AddComponent<Traversify.TerrainGenerator>();
-        SegmentationVisualizer segmentationVisualizer = componentsObj.AddComponent<SegmentationVisualizer>();
-        Traversify.AI.ModelGenerator modelGenerator = componentsObj.AddComponent<Traversify.AI.ModelGenerator>();
-        
-        // Track components
-        createdComponents["MapAnalyzer"] = mapAnalyzer;
-        createdComponents["TerrainGenerator"] = terrainGenerator;
-        createdComponents["SegmentationVisualizer"] = segmentationVisualizer;
-        createdComponents["ModelGenerator"] = modelGenerator;
-        
-        // Configure components
-        ConfigureMapAnalyzer(mapAnalyzer);
-        ConfigureTerrainGenerator(terrainGenerator);
-        ConfigureModelGenerator(modelGenerator);
-        
-        // Add debugger
-        TraversifyDebugger debugger = traversifyManager.AddComponent<TraversifyDebugger>();
-        createdComponents["Debugger"] = debugger;
-        
-        Debug.Log("[TraversifySetup] Core components created successfully");
-    }
-    
-    private void ConfigureMapAnalyzer(MapAnalyzer analyzer)
-    {
-        if (analyzer == null) return;
-        
-        analyzer.openAIApiKey = openAIKey;
-        analyzer.yoloModelPath = GetModelPath("yolov8n.onnx");
-        analyzer.fasterRcnnModelPath = GetModelPath("FasterRCNN-12.onnx");
-        analyzer.sam2ModelPath = GetModelPath("sam2_hiera_base.onnx");
-        analyzer.maxObjectsToProcess = 100;
-        analyzer.groupingThreshold = 0.1f;
-        analyzer.useHighQuality = true;
-        analyzer.maxAPIRequestsPerFrame = 5;
-        analyzer.useGPU = false; // Explicitly disable GPU usage
-        
-        Debug.Log("[TraversifySetup] MapAnalyzer configured with GPU disabled");
-    }
-    
-    private void ConfigureTerrainGenerator(Traversify.TerrainGenerator generator)
-    {
-        if (generator == null) return;
-        
-        generator.heightMapMultiplier = 30f;
-        generator.generateWaterPlane = true;
-        generator.waterHeight = 0.1f;
-        
-        Debug.Log("[TraversifySetup] TerrainGenerator configured");
-    }
-    
-    private void ConfigureModelGenerator(Traversify.AI.ModelGenerator generator)
-    {
-        if (generator == null) return;
-        
-        generator.openAIApiKey = openAIKey;
-        generator.tripo3DApiKey = tripo3DApiKey;
-        generator.groupSimilarObjects = true;
-        generator.maxConcurrentGenerations = 3;
-        generator.useAIGeneration = !string.IsNullOrEmpty(openAIKey) && !string.IsNullOrEmpty(tripo3DApiKey);
-        
-        Debug.Log("[TraversifySetup] ModelGenerator configured");
-    }
-    
-    private void CreateUISystem()
-    {
-        Debug.Log("[TraversifySetup] Creating UI system...");
-        
-        // Create canvas
-        GameObject canvasObj = new GameObject("TraversifyCanvas");
-        Canvas canvas = canvasObj.AddComponent<Canvas>();
-        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-        canvas.sortingOrder = 0;
-        createdGameObjects.Add(canvasObj);
-        
-        // Add canvas scaler
-        CanvasScaler scaler = canvasObj.AddComponent<CanvasScaler>();
-        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-        scaler.referenceResolution = new Vector2(1920, 1080);
-        scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
-        scaler.matchWidthOrHeight = 0.5f;
-        
-        // Add graphic raycaster
-        GraphicRaycaster raycaster = canvasObj.AddComponent<GraphicRaycaster>();
-        
-        // Create UI root
-        GameObject uiRoot = new GameObject("TraversifyUI");
-        uiRoot.transform.SetParent(canvasObj.transform, false);
-        RectTransform uiRootRect = uiRoot.AddComponent<RectTransform>();
-        uiRootRect.anchorMin = Vector2.zero;
-        uiRootRect.anchorMax = Vector2.one;
-        uiRootRect.offsetMin = Vector2.zero;
-        uiRootRect.offsetMax = Vector2.zero;
-        createdGameObjects.Add(uiRoot);
-        
-        // Create UI panels
-        GameObject mainPanel = CreateMainPanel(uiRoot.transform);
-        GameObject loadingPanel = CreateLoadingPanel(uiRoot.transform);
-        GameObject settingsPanel = CreateSettingsPanel(uiRoot.transform);
-        
-        // Connect UI references to TraversifyManager
-        ConnectUIToManager(mainPanel, loadingPanel, settingsPanel);
-        
-        Debug.Log("[TraversifySetup] UI system created successfully");
-    }
-    
-    private GameObject CreateMainPanel(Transform parent)
-    {
-        GameObject mainPanel = CreateUIPanel("MainPanel", parent, Vector2.zero, Vector2.one);
-        
-        // Background
-        Image bgImage = mainPanel.AddComponent<Image>();
-        bgImage.color = new Color(0.05f, 0.05f, 0.05f, 0.95f);
-        
-        // Create side panel
-        GameObject sidePanel = CreateUIPanel("SidePanel", mainPanel.transform, 
-            new Vector2(0, 0), new Vector2(0.25f, 1));
-        
-        Image sidePanelBg = sidePanel.AddComponent<Image>();
-        sidePanelBg.color = new Color(0.1f, 0.1f, 0.1f, 1f);
-        
-        // Add vertical layout
-        VerticalLayoutGroup sideLayout = sidePanel.AddComponent<VerticalLayoutGroup>();
-        sideLayout.padding = new RectOffset(20, 20, 20, 20);
-        sideLayout.spacing = 15;
-        sideLayout.childForceExpandWidth = true;
-        sideLayout.childForceExpandHeight = false;
-        sideLayout.childControlHeight = false;
-        sideLayout.childScaleHeight = false;
-        
-        // Create UI elements
-        CreateTitleSection(sidePanel.transform);
-        CreateMapPreviewSection(sidePanel.transform);
-        CreateButtonSection(sidePanel.transform);
-        CreateStatusSection(sidePanel.transform);
-        
-        // Create content area
-        GameObject contentArea = CreateUIPanel("ContentArea", mainPanel.transform, 
-            new Vector2(0.25f, 0), new Vector2(1, 1));
-        
-        return mainPanel;
-    }
-    
-    private void CreateTitleSection(Transform parent)
-    {
-        // Title
-        GameObject titleObj = CreateUIText("Title", parent, "TRAVERSIFY");
-        Text titleText = titleObj.GetComponent<Text>();
-        titleText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-        titleText.fontSize = 32;
-        titleText.alignment = TextAnchor.MiddleCenter;
-        titleText.fontStyle = FontStyle.Bold;
-        titleText.color = new Color(0.9f, 0.9f, 0.9f);
-        
-        LayoutElement titleLayout = titleObj.AddComponent<LayoutElement>();
-        titleLayout.preferredHeight = 60;
-        
-        // Subtitle
-        GameObject subtitleObj = CreateUIText("Subtitle", parent, "AI-Powered Terrain Generation");
-        Text subtitleText = subtitleObj.GetComponent<Text>();
-        subtitleText.fontSize = 14;
-        subtitleText.alignment = TextAnchor.MiddleCenter;
-        subtitleText.color = new Color(0.7f, 0.7f, 0.7f);
-        
-        LayoutElement subtitleLayout = subtitleObj.AddComponent<LayoutElement>();
-        subtitleLayout.preferredHeight = 30;
-        
-        // Separator
-        CreateUISeparator(parent);
-    }
-    
-    private void CreateMapPreviewSection(Transform parent)
-    {
-        // Preview container
-        GameObject previewContainer = CreateUIPanel("PreviewContainer", parent);
-        LayoutElement previewLayout = previewContainer.AddComponent<LayoutElement>();
-        previewLayout.preferredHeight = 300;
-        
-        Image previewBg = previewContainer.AddComponent<Image>();
-        previewBg.color = new Color(0.15f, 0.15f, 0.15f, 1f);
-        
-        // Map preview
-        GameObject mapPreviewObj = new GameObject("MapPreview");
-        mapPreviewObj.transform.SetParent(previewContainer.transform, false);
-        
-        RectTransform previewRect = mapPreviewObj.AddComponent<RectTransform>();
-        previewRect.anchorMin = new Vector2(0.05f, 0.05f);
-        previewRect.anchorMax = new Vector2(0.95f, 0.95f);
-        previewRect.offsetMin = Vector2.zero;
-        previewRect.offsetMax = Vector2.zero;
-        
-        RawImage mapPreview = mapPreviewObj.AddComponent<RawImage>();
-        mapPreview.color = new Color(0.3f, 0.3f, 0.3f, 1);
-        
-        AspectRatioFitter aspectFitter = mapPreviewObj.AddComponent<AspectRatioFitter>();
-        aspectFitter.aspectMode = AspectRatioFitter.AspectMode.FitInParent;
-        
-        // Initially hide the preview
-        mapPreviewObj.SetActive(false);
-    }
-    
-    private void CreateButtonSection(Transform parent)
-    {
-        // Upload button
-        GameObject uploadBtn = CreateUIButton("UploadButton", parent, "UPLOAD MAP");
-        Button uploadButton = uploadBtn.GetComponent<Button>();
-        Image uploadBtnImage = uploadBtn.GetComponent<Image>();
-        uploadBtnImage.color = new Color(0.2f, 0.5f, 0.9f);
-        
-        LayoutElement uploadLayout = uploadBtn.AddComponent<LayoutElement>();
-        uploadLayout.preferredHeight = 50;
-        
-        // Generate button
-        GameObject generateBtn = CreateUIButton("GenerateButton", parent, "GENERATE TERRAIN");
-        Button generateButton = generateBtn.GetComponent<Button>();
-        Image generateBtnImage = generateBtn.GetComponent<Image>();
-        generateBtnImage.color = new Color(0.2f, 0.8f, 0.4f);
-        generateButton.interactable = false;
-        
-        LayoutElement generateLayout = generateBtn.AddComponent<LayoutElement>();
-        generateLayout.preferredHeight = 50;
-        
-        // Settings button
-        GameObject settingsBtn = CreateUIButton("SettingsButton", parent, "SETTINGS");
-        Button settingsButton = settingsBtn.GetComponent<Button>();
-        Image settingsBtnImage = settingsBtn.GetComponent<Image>();
-        settingsBtnImage.color = new Color(0.6f, 0.6f, 0.6f);
-        
-        LayoutElement settingsLayout = settingsBtn.AddComponent<LayoutElement>();
-        settingsLayout.preferredHeight = 40;
-        
-        // Separator
-        CreateUISeparator(parent);
-    }
-    
-    private void CreateStatusSection(Transform parent)
-    {
-        // Status container
-        GameObject statusContainer = CreateUIPanel("StatusContainer", parent);
-        LayoutElement statusLayout = statusContainer.AddComponent<LayoutElement>();
-        statusLayout.preferredHeight = 100;
-        statusLayout.flexibleHeight = 1;
-        
-        Image statusBg = statusContainer.AddComponent<Image>();
-        statusBg.color = new Color(0.05f, 0.05f, 0.05f, 0.5f);
-        
-        // Status text
-        GameObject statusObj = CreateUIText("StatusText", statusContainer.transform, "Ready to process map images");
-        Text statusText = statusObj.GetComponent<Text>();
-        statusText.fontSize = 14;
-        statusText.alignment = TextAnchor.UpperLeft;
-        statusText.color = new Color(0.8f, 0.8f, 0.8f);
-        
-        RectTransform statusRect = statusObj.GetComponent<RectTransform>();
-        statusRect.anchorMin = new Vector2(0.05f, 0.05f);
-        statusRect.anchorMax = new Vector2(0.95f, 0.95f);
-        statusRect.offsetMin = Vector2.zero;
-        statusRect.offsetMax = Vector2.zero;
-    }
-    
-    private GameObject CreateLoadingPanel(Transform parent)
-    {
-        GameObject loadingPanel = CreateUIPanel("LoadingPanel", parent, Vector2.zero, Vector2.one);
-        loadingPanel.SetActive(false);
-        
-        // Dark overlay
-        Image overlay = loadingPanel.AddComponent<Image>();
-        overlay.color = new Color(0, 0, 0, 0.9f);
-        
-        // Loading container
-        GameObject container = CreateUIPanel("LoadingContainer", loadingPanel.transform, 
-            new Vector2(0.3f, 0.3f), new Vector2(0.7f, 0.7f));
-        
-        Image containerBg = container.AddComponent<Image>();
-        containerBg.color = new Color(0.15f, 0.15f, 0.15f, 0.98f);
-        
-        // Add layout
-        VerticalLayoutGroup layout = container.AddComponent<VerticalLayoutGroup>();
-        layout.padding = new RectOffset(40, 40, 40, 40);
-        layout.spacing = 20;
-        layout.childForceExpandWidth = true;
-        layout.childForceExpandHeight = false;
-        layout.childAlignment = TextAnchor.MiddleCenter;
-        
-        // Create loading UI elements
-        CreateLoadingTitle(container.transform);
-        CreateStageText(container.transform);
-        CreateProgressBar(container.transform);
-        CreateProgressText(container.transform);
-        CreateDetailsText(container.transform);
-        CreateCancelButton(container.transform);
-        
-        return loadingPanel;
-    }
-    
-    private void CreateLoadingTitle(Transform parent)
-    {
-        GameObject titleObj = CreateUIText("LoadingTitle", parent, "PROCESSING");
-        Text titleText = titleObj.GetComponent<Text>();
-        titleText.fontSize = 28;
-        titleText.fontStyle = FontStyle.Bold;
-        titleText.alignment = TextAnchor.MiddleCenter;
-        
-        LayoutElement titleLayout = titleObj.AddComponent<LayoutElement>();
-        titleLayout.preferredHeight = 40;
-    }
-    
-    private void CreateStageText(Transform parent)
-    {
-        GameObject stageObj = CreateUIText("StageText", parent, "Initializing...");
-        Text stageText = stageObj.GetComponent<Text>();
-        stageText.fontSize = 18;
-        stageText.alignment = TextAnchor.MiddleCenter;
-        stageText.color = new Color(0.8f, 0.8f, 0.8f);
-        
-        LayoutElement stageLayout = stageObj.AddComponent<LayoutElement>();
-        stageLayout.preferredHeight = 30;
-    }
-    
-    private void CreateProgressBar(Transform parent)
-    {
-        GameObject progressContainer = CreateUIPanel("ProgressContainer", parent);
-        LayoutElement progressLayout = progressContainer.AddComponent<LayoutElement>();
-        progressLayout.preferredHeight = 30;
-        
-        Image progressBg = progressContainer.AddComponent<Image>();
-        progressBg.color = new Color(0.1f, 0.1f, 0.1f, 1f);
-        
-        GameObject progressFill = CreateUIPanel("ProgressFill", progressContainer.transform, 
-            Vector2.zero, new Vector2(0, 1));
-        
-        Image fillImage = progressFill.AddComponent<Image>();
-        fillImage.color = new Color(0.2f, 0.7f, 1f);
-        
-        Slider progressBar = progressContainer.AddComponent<Slider>();
-        progressBar.fillRect = progressFill.GetComponent<RectTransform>();
-        progressBar.targetGraphic = progressBg;
-        progressBar.minValue = 0;
-        progressBar.maxValue = 1;
-        progressBar.value = 0;
-    }
-    
-    private void CreateProgressText(Transform parent)
-    {
-        GameObject progressTextObj = CreateUIText("ProgressText", parent, "0%");
-        Text progressText = progressTextObj.GetComponent<Text>();
-        progressText.fontSize = 16;
-        progressText.alignment = TextAnchor.MiddleCenter;
-        
-        LayoutElement progressTextLayout = progressTextObj.AddComponent<LayoutElement>();
-        progressTextLayout.preferredHeight = 25;
-    }
-    
-    private void CreateDetailsText(Transform parent)
-    {
-        GameObject detailsObj = CreateUIText("DetailsText", parent, "");
-        Text detailsText = detailsObj.GetComponent<Text>();
-        detailsText.fontSize = 14;
-        detailsText.alignment = TextAnchor.MiddleCenter;
-        detailsText.color = new Color(0.6f, 0.6f, 0.6f);
-        
-        LayoutElement detailsLayout = detailsObj.AddComponent<LayoutElement>();
-        detailsLayout.preferredHeight = 60;
-        detailsLayout.flexibleHeight = 1;
-    }
-    
-    private void CreateCancelButton(Transform parent)
-    {
-        GameObject cancelBtn = CreateUIButton("CancelButton", parent, "CANCEL");
-        Button cancelButton = cancelBtn.GetComponent<Button>();
-        Image cancelBtnImage = cancelBtn.GetComponent<Image>();
-        cancelBtnImage.color = new Color(0.8f, 0.3f, 0.3f);
-        
-        LayoutElement cancelLayout = cancelBtn.AddComponent<LayoutElement>();
-        cancelLayout.preferredHeight = 40;
-        cancelLayout.preferredWidth = 150;
-    }
-    
-    private GameObject CreateSettingsPanel(Transform parent)
-    {
-        GameObject settingsPanel = CreateUIPanel("SettingsPanel", parent, Vector2.zero, Vector2.one);
-        settingsPanel.SetActive(false);
-        
-        // Dark overlay
-        Image overlay = settingsPanel.AddComponent<Image>();
-        overlay.color = new Color(0, 0, 0, 0.8f);
-        
-        // Add button to close on overlay click
-        Button overlayButton = settingsPanel.AddComponent<Button>();
-        overlayButton.transition = Selectable.Transition.None;
-        
-        // Settings window
-        GameObject window = CreateUIPanel("SettingsWindow", settingsPanel.transform, 
-            new Vector2(0.2f, 0.1f), new Vector2(0.8f, 0.9f));
-        
-        Image windowBg = window.AddComponent<Image>();
-        windowBg.color = new Color(0.15f, 0.15f, 0.15f, 0.98f);
-        
-        // Window layout
-        VerticalLayoutGroup windowLayout = window.AddComponent<VerticalLayoutGroup>();
-        windowLayout.padding = new RectOffset(30, 30, 30, 30);
-        windowLayout.spacing = 20;
-        
-        // Header
-        GameObject headerObj = CreateUIText("SettingsHeader", window.transform, "SETTINGS");
-        Text headerText = headerObj.GetComponent<Text>();
-        headerText.fontSize = 24;
-        headerText.fontStyle = FontStyle.Bold;
-        headerText.alignment = TextAnchor.MiddleCenter;
-        
-        LayoutElement headerLayout = headerObj.AddComponent<LayoutElement>();
-        headerLayout.preferredHeight = 40;
-        
-        // Separator
-        CreateUISeparator(window.transform);
-        
-        // Scrollable content
-        GameObject scrollView = CreateScrollView("SettingsScroll", window.transform);
-        LayoutElement scrollLayout = scrollView.AddComponent<LayoutElement>();
-        scrollLayout.flexibleHeight = 1;
-        
-        // Close button
-        GameObject closeBtn = CreateUIButton("CloseButton", window.transform, "CLOSE");
-        Button closeButton = closeBtn.GetComponent<Button>();
-        Image closeBtnImage = closeBtn.GetComponent<Image>();
-        closeBtnImage.color = new Color(0.6f, 0.6f, 0.6f);
-        
-        LayoutElement closeLayout = closeBtn.AddComponent<LayoutElement>();
-        closeLayout.preferredHeight = 40;
-        closeLayout.preferredWidth = 150;
-        
-        return settingsPanel;
-    }
-    
-    private GameObject CreateUIPanel(string name, Transform parent, Vector2 anchorMin = default, Vector2 anchorMax = default)
-    {
-        GameObject panel = new GameObject(name);
-        panel.transform.SetParent(parent, false);
-        
-        RectTransform rect = panel.AddComponent<RectTransform>();
-        if (anchorMin != default || anchorMax != default)
-        {
-            rect.anchorMin = anchorMin;
-            rect.anchorMax = anchorMax;
-            rect.offsetMin = Vector2.zero;
-            rect.offsetMax = Vector2.zero;
-        }
-        
-        return panel;
-    }
-    
-    private GameObject CreateUIText(string name, Transform parent, string text)
-    {
-        GameObject textObj = new GameObject(name);
-        textObj.transform.SetParent(parent, false);
-        
-        Text textComponent = textObj.AddComponent<Text>();
-        textComponent.text = text;
-        textComponent.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-        textComponent.color = Color.white;
-        
-        return textObj;
-    }
-    
-    private GameObject CreateUIButton(string name, Transform parent, string text)
-    {
-        GameObject buttonObj = new GameObject(name);
-        buttonObj.transform.SetParent(parent, false);
-        
-        Image image = buttonObj.AddComponent<Image>();
-        image.color = new Color(0.3f, 0.3f, 0.3f);
-        
-        Button button = buttonObj.AddComponent<Button>();
-        button.targetGraphic = image;
-        
-        // Add text
-        GameObject textObj = CreateUIText("Text", buttonObj.transform, text);
-        Text buttonText = textObj.GetComponent<Text>();
-        buttonText.alignment = TextAnchor.MiddleCenter;
-        buttonText.fontSize = 16;
-        buttonText.fontStyle = FontStyle.Bold;
-        
-        RectTransform textRect = textObj.GetComponent<RectTransform>();
-        textRect.anchorMin = Vector2.zero;
-        textRect.anchorMax = Vector2.one;
-        textRect.offsetMin = Vector2.zero;
-        textRect.offsetMax = Vector2.zero;
-        
-        return buttonObj;
-    }
-    
-    private GameObject CreateUISeparator(Transform parent)
-    {
-        GameObject separator = new GameObject("Separator");
-        separator.transform.SetParent(parent, false);
-        
-        Image image = separator.AddComponent<Image>();
-        image.color = new Color(0.3f, 0.3f, 0.3f, 0.5f);
-        
-        LayoutElement layout = separator.AddComponent<LayoutElement>();
-        layout.preferredHeight = 2;
-        
-        return separator;
-    }
-    
-    private GameObject CreateScrollView(string name, Transform parent)
-    {
-        GameObject scrollView = new GameObject(name);
-        scrollView.transform.SetParent(parent, false);
-        
-        RectTransform scrollRect = scrollView.AddComponent<RectTransform>();
-        scrollRect.anchorMin = Vector2.zero;
-        scrollRect.anchorMax = Vector2.one;
-        scrollRect.offsetMin = Vector2.zero;
-        scrollRect.offsetMax = Vector2.zero;
-        
-        ScrollRect scrollRectComponent = scrollView.AddComponent<ScrollRect>();
-        Image scrollBg = scrollView.AddComponent<Image>();
-        scrollBg.color = new Color(0.1f, 0.1f, 0.1f, 0.3f);
-        
-        // Viewport
-        GameObject viewport = new GameObject("Viewport");
-        viewport.transform.SetParent(scrollView.transform, false);
-        
-        RectTransform viewportRect = viewport.AddComponent<RectTransform>();
-        viewportRect.anchorMin = Vector2.zero;
-        viewportRect.anchorMax = Vector2.one;
-        viewportRect.offsetMin = new Vector2(10, 10);
-        viewportRect.offsetMax = new Vector2(-10, -10);
-        
-        Image viewportImage = viewport.AddComponent<Image>();
-        viewportImage.color = new Color(1, 1, 1, 0);
-        Mask viewportMask = viewport.AddComponent<Mask>();
-        viewportMask.showMaskGraphic = false;
-        
-        // Content
-        GameObject content = new GameObject("Content");
-        content.transform.SetParent(viewport.transform, false);
-        
-        RectTransform contentRect = content.AddComponent<RectTransform>();
-        contentRect.anchorMin = new Vector2(0, 1);
-        contentRect.anchorMax = new Vector2(1, 1);
-        contentRect.pivot = new Vector2(0.5f, 1);
-        contentRect.offsetMin = Vector2.zero;
-        contentRect.offsetMax = new Vector2(0, 0);
-        
-        VerticalLayoutGroup contentLayout = content.AddComponent<VerticalLayoutGroup>();
-        contentLayout.padding = new RectOffset(0, 0, 0, 0);
-        contentLayout.spacing = 15;
-        contentLayout.childForceExpandWidth = true;
-        contentLayout.childForceExpandHeight = false;
-        
-        ContentSizeFitter contentFitter = content.AddComponent<ContentSizeFitter>();
-        contentFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-        
-        // Configure scroll rect
-        scrollRectComponent.viewport = viewportRect;
-        scrollRectComponent.content = contentRect;
-        scrollRectComponent.horizontal = false;
-        scrollRectComponent.vertical = true;
-        scrollRectComponent.movementType = ScrollRect.MovementType.Elastic;
-        scrollRectComponent.elasticity = 0.1f;
-        scrollRectComponent.inertia = true;
-        scrollRectComponent.scrollSensitivity = 20;
-        
-        return scrollView;
-    }
-    
-    private void ConnectUIToManager(GameObject mainPanel, GameObject loadingPanel, GameObject settingsPanel)
-    {
-        Debug.Log("[TraversifySetup] Connecting UI to TraversifyManager...");
-        
-        TraversifyManager manager = createdComponents["TraversifyManager"] as TraversifyManager;
-        if (manager == null)
-        {
-            Debug.LogError("[TraversifySetup] TraversifyManager not found!");
-            return;
-        }
-        
-        // Find UI elements
-        Transform sidePanel = mainPanel.transform.Find("SidePanel");
-        Transform loadingContainer = loadingPanel.transform.Find("LoadingContainer");
-        
-        // Assign references
-        manager.uploadButton = sidePanel.Find("UploadButton")?.GetComponent<Button>();
-        manager.generateButton = sidePanel.Find("GenerateButton")?.GetComponent<Button>();
-        manager.mapPreviewImage = sidePanel.Find("PreviewContainer/MapPreview")?.GetComponent<RawImage>();
-        manager.statusText = sidePanel.Find("StatusContainer/StatusText")?.GetComponent<Text>();
-        manager.loadingPanel = loadingPanel;
-        manager.progressBar = loadingContainer.Find("ProgressContainer")?.GetComponent<Slider>();
-        manager.progressText = loadingContainer.Find("ProgressText")?.GetComponent<Text>();
-        manager.stageText = loadingContainer.Find("StageText")?.GetComponent<Text>();
-        manager.detailsText = loadingContainer.Find("DetailsText")?.GetComponent<Text>();
-        manager.cancelButton = loadingContainer.Find("CancelButton")?.GetComponent<Button>();
-        manager.settingsPanel = settingsPanel;
-        
-        // Configure settings
-        manager.terrainSize = new Vector3(500, 100, 500);
-        manager.terrainResolution = 513;
-        
-        // Setup button events
-        Button settingsButton = sidePanel.Find("SettingsButton")?.GetComponent<Button>();
-        Button settingsCloseButton = settingsPanel.transform.Find("SettingsWindow/CloseButton")?.GetComponent<Button>();
-        Button settingsOverlayButton = settingsPanel.GetComponent<Button>();
-        
-        if (settingsButton != null && settingsCloseButton != null)
-        {
-            settingsButton.onClick.AddListener(() => settingsPanel.SetActive(true));
-            settingsCloseButton.onClick.AddListener(() => settingsPanel.SetActive(false));
-            settingsOverlayButton.onClick.AddListener(() => settingsPanel.SetActive(false));
-        }
-        
-        // Mark as dirty to save changes
-        EditorUtility.SetDirty(manager);
-        
-        Debug.Log("[TraversifySetup] UI successfully connected to TraversifyManager");
-    }
-    
-    private void SetupEnvironment()
-    {
-        Debug.Log("[TraversifySetup] Setting up environment...");
-        
-        // Configure render settings
-        RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Skybox;
-        RenderSettings.ambientIntensity = 1.2f;
-        RenderSettings.fog = true;
-        RenderSettings.fogColor = new Color(0.9f, 0.95f, 1.0f, 1.0f);
-        RenderSettings.fogMode = FogMode.ExponentialSquared;
-        RenderSettings.fogDensity = 0.0005f;
-        
-        // Create initial terrain
-        GameObject terrainObj = new GameObject("Terrain");
-        Terrain terrain = terrainObj.AddComponent<Terrain>();
-        TerrainCollider terrainCollider = terrainObj.AddComponent<TerrainCollider>();
-        
-        // Configure terrain data
-        TerrainData terrainData = new TerrainData();
-        terrainData.heightmapResolution = 513;
-        terrainData.size = new Vector3(1000, 100, 1000);
-        terrainData.SetDetailResolution(1024, 16);
-        
-        terrain.terrainData = terrainData;
-        terrainCollider.terrainData = terrainData;
-        
-        // Save terrain data asset
-        string terrainDataPath = "Assets/Traversify/Terrain/DefaultTerrainData.asset";
-        AssetDatabase.CreateAsset(terrainData, terrainDataPath);
-        
-        createdGameObjects.Add(terrainObj);
-        
-        Debug.Log("[TraversifySetup] Environment setup complete");
-    }
-    
-    private void VerifySetup()
-    {
-        Debug.Log("[TraversifySetup] Verifying setup...");
-        
-        int errors = 0;
-        int warnings = 0;
-        
-        // Check core components
-        if (!createdComponents.ContainsKey("TraversifyManager"))
-        {
-            Debug.LogError("[TraversifySetup] TraversifyManager component missing!");
-            errors++;
-        }
-        
-        if (!createdComponents.ContainsKey("MapAnalyzer"))
-        {
-            Debug.LogError("[TraversifySetup] MapAnalyzer component missing!");
-            errors++;
-        }
-        
-        if (!createdComponents.ContainsKey("TerrainGenerator"))
-        {
-            Debug.LogError("[TraversifySetup] TerrainGenerator component missing!");
-            errors++;
-        }
-        
-        if (!createdComponents.ContainsKey("ModelGenerator"))
-        {
-            Debug.LogError("[TraversifySetup] ModelGenerator component missing!");
-            errors++;
-        }
-        
-        // Check UI connections
-        TraversifyManager manager = createdComponents["TraversifyManager"] as TraversifyManager;
-        if (manager != null)
-        {
-            if (manager.uploadButton == null) warnings++;
-            if (manager.generateButton == null) warnings++;
-            if (manager.mapPreviewImage == null) warnings++;
-            if (manager.statusText == null) warnings++;
-            if (manager.loadingPanel == null) warnings++;
-            if (manager.progressBar == null) warnings++;
-        }
-        
-        // Check API keys
-        if (string.IsNullOrEmpty(openAIKey))
-        {
-            Debug.LogWarning("[TraversifySetup] OpenAI API key not configured");
-            warnings++;
-        }
-        
-        if (string.IsNullOrEmpty(tripo3DApiKey))
-        {
-            Debug.LogWarning("[TraversifySetup] Tripo3D API key not configured");
-            warnings++;
-        }
-        
-        // Check model files
-        string[] modelFiles = { "yolov8n.onnx", "FasterRCNN-12.onnx", "sam2_hiera_base.onnx" };
-        foreach (string modelFile in modelFiles)
-        {
-            if (!File.Exists(GetModelPath(modelFile)))
-            {
-                Debug.LogWarning($"[TraversifySetup] Model file missing: {modelFile}");
-                warnings++;
-            }
-        }
-        
-        // Summary
-        if (errors == 0 && warnings == 0)
-        {
-            Debug.Log("[TraversifySetup] ✓ All components verified successfully!");
-        }
-        else
-        {
-            Debug.Log($"[TraversifySetup] Verification complete: {errors} errors, {warnings} warnings");
-        }
-    }
-    
-    private IEnumerator DownloadAllModels()
-    {
-        Debug.Log("[TraversifySetup] Starting model downloads...");
-        isDownloading = true;
-        
-        List<ModelDownloadInfo> modelsToDownload = new List<ModelDownloadInfo>();
-        
-        // Check which models need downloading
-        if (!File.Exists(GetModelPath("yolov8n.onnx")))
-        {
-            modelsToDownload.Add(new ModelDownloadInfo {
-                name = "YOLOv8",
-                fileName = "yolov8n.onnx",
-                urls = modelMirrors["yolov8"],
-                size = modelSizes["yolov8"]
-            });
-        }
-        
-        if (!File.Exists(GetModelPath("FasterRCNN-12.onnx")))
-        {
-            modelsToDownload.Add(new ModelDownloadInfo {
-                name = "Faster R-CNN",
-                fileName = "FasterRCNN-12.onnx",
-                urls = modelMirrors["fasterrcnn"],
-                size = modelSizes["fasterrcnn"]
-            });
-        }
-        
-        if (!File.Exists(GetModelPath("sam2_hiera_base.onnx")))
-        {
-            modelsToDownload.Add(new ModelDownloadInfo {
-                name = "SAM2",
-                fileName = "sam2_hiera_base.onnx",
-                urls = modelMirrors["sam2"],
-                size = modelSizes["sam2"]
-            });
-        }
-        
-        if (modelsToDownload.Count == 0)
-        {
-            Debug.Log("[TraversifySetup] All models already downloaded");
-            CompleteSetup();
-            yield break;
-        }
-        
-        float totalSize = modelsToDownload.Sum(m => m.size);
-        float downloadedSize = 0;
-        
-        foreach (var modelInfo in modelsToDownload)
-        {
-            bool success = false;
-            
-            // Try each mirror URL
-            foreach (string url in modelInfo.urls)
-            {
-                currentDownloadName = modelInfo.name;
-                downloadStatus = $"Downloading from {new Uri(url).Host}...";
-                
-                yield return DownloadModel(url, modelInfo.fileName, modelInfo.size,
-                    (progress) => {
-                        float modelProgress = downloadedSize + (progress * modelInfo.size);
-                        currentDownloadProgress = modelProgress / totalSize;
-                        Repaint();
-                    },
-                    (succeeded) => {
-                        success = succeeded;
-                    });
-                
-                if (success)
-                {
-                    Debug.Log($"[TraversifySetup] Successfully downloaded {modelInfo.name}");
-                    break;
-                }
-                else
-                {
-                    Debug.LogWarning($"[TraversifySetup] Failed to download {modelInfo.name} from {url}");
-                }
-            }
-            
-            if (!success)
-            {
-                EditorUtility.DisplayDialog("Download Failed", 
-                    $"Failed to download {modelInfo.name}. Please check your internet connection and try again.", 
-                    "OK");
-                isDownloading = false;
-                yield break;
-            }
-            
-            downloadedSize += modelInfo.size;
-        }
-        
-        isDownloading = false;
-        CompleteSetup();
-    }
-    
-    private IEnumerator DownloadModel(string url, string fileName, float sizeMB, 
-        System.Action<float> onProgress, System.Action<bool> onComplete)
-    {
-        string downloadPath = GetModelPath(fileName);
-        string tempPath = downloadPath + ".tmp";
-        
-        // Ensure directory exists
-        string directory = Path.GetDirectoryName(downloadPath);
-        if (!Directory.Exists(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
-        
-        Debug.Log($"[TraversifySetup] Downloading {fileName} from {url}...");
-        
-        using (UnityWebRequest request = UnityWebRequest.Get(url))
-        {
-            request.downloadHandler = new DownloadHandlerFile(tempPath);
-            request.timeout = 300; // 5 minute timeout for large files
-            
-            UnityWebRequestAsyncOperation operation = request.SendWebRequest();
-            
-            float lastProgress = 0f;
-            while (!operation.isDone)
-            {
-                float progress = request.downloadProgress;
-                if (progress != lastProgress)
-                {
-                    onProgress?.Invoke(progress);
-                    lastProgress = progress;
-                }
-                yield return new WaitForSeconds(0.1f);
-            }
-            
-            if (request.result == UnityWebRequest.Result.Success)
-            {
-                // Verify file size
-                FileInfo fileInfo = new FileInfo(tempPath);
-                float downloadedSizeMB = fileInfo.Length / (1024f * 1024f);
-                
-                if (downloadedSizeMB < sizeMB * 0.9f) // Allow 10% variance
-                {
-                    Debug.LogError($"[TraversifySetup] Downloaded file size mismatch. Expected ~{sizeMB}MB, got {downloadedSizeMB}MB");
-                    if (File.Exists(tempPath)) File.Delete(tempPath);
-                    onComplete?.Invoke(false);
-                    yield break;
-                }
-                
-                // Move temp file to final location
-                if (File.Exists(downloadPath))
-                {
-                    File.Delete(downloadPath);
-                }
-                File.Move(tempPath, downloadPath);
-                
-                Debug.Log($"[TraversifySetup] Successfully downloaded {fileName} ({downloadedSizeMB:F1} MB)");
-                onComplete?.Invoke(true);
-            }
-            else
-            {
-                // Clean up temp file
-                if (File.Exists(tempPath))
-                {
-                    File.Delete(tempPath);
-                }
-                
-                Debug.LogError($"[TraversifySetup] Download failed: {request.error}");
-                onComplete?.Invoke(false);
-            }
-        }
-    }
-    
-    private void CancelDownload()
-    {
-        Debug.Log("[TraversifySetup] Cancelling downloads...");
-        
-        if (downloadCoroutine != null)
-        {
-            EditorCoroutineUtility.StopCoroutine(downloadCoroutine);
-            downloadCoroutine = null;
-        }
-        
-        isDownloading = false;
-        currentDownloadProgress = 0;
-        downloadStatus = "Download cancelled";
-        
-        // Clean up any temp files
-        string modelsPath = Path.GetDirectoryName(GetModelPath(""));
-        if (Directory.Exists(modelsPath))
-        {
-            string[] tempFiles = Directory.GetFiles(modelsPath, "*.tmp", SearchOption.AllDirectories);
-            foreach (string tempFile in tempFiles)
-            {
-                try
-                {
-                    File.Delete(tempFile);
-                    Debug.Log($"[TraversifySetup] Cleaned up temp file: {tempFile}");
-                }
-                catch (Exception e)
-                {
-                    Debug.LogWarning($"[TraversifySetup] Failed to delete temp file: {e.Message}");
-                }
-            }
-        }
-        
-        Repaint();
-    }
-    
-    private void CompleteSetup()
-    {
-        Debug.Log("[TraversifySetup] Completing setup...");
-        
-        try
-        {
-            // Final verification
-            VerifySetup();
-            
-            // Refresh asset database
-            AssetDatabase.Refresh();
-            
-            // Save project
-            AssetDatabase.SaveAssets();
-            
-            // Show completion dialog
-            string message = "Traversify has been successfully set up!\n\n";
-            message += "✓ All components configured\n";
-            message += "✓ UI system created\n";
-            
-            if (File.Exists(GetModelPath("yolov8n.onnx")) && 
-                File.Exists(GetModelPath("FasterRCNN-12.onnx")) && 
-                File.Exists(GetModelPath("sam2_hiera_base.onnx")))
-            {
-                message += "✓ AI models downloaded\n";
-            }
-            
-            if (createSampleScene)
-            {
-                message += "✓ Sample scene created\n";
-            }
-            
-            message += "\nYou can now use Traversify to generate terrains from map images.";
-            
-            if (string.IsNullOrEmpty(openAIKey))
-            {
-                message += "\n\nNote: OpenAI API key not configured. Enhanced descriptions will be limited.";
-            }
-            
-            if (string.IsNullOrEmpty(tripo3DApiKey))
-            {
-                message += "\nNote: Tripo3D API key not configured. AI model generation will be disabled.";
-            }
-            
-            EditorUtility.DisplayDialog("Setup Complete", message, "OK");
-            
-            // Open the scene if created
-            if (createSampleScene)
-            {
-                string scenePath = "Assets/Traversify/Scenes/TraversifyScene.unity";
-                if (File.Exists(scenePath))
-                {
-                    EditorSceneManager.OpenScene(scenePath);
-                }
-            }
-            
-            Debug.Log("[TraversifySetup] Setup completed successfully!");
-            
-            // Close the setup window
-            this.Close();
-        }
-        catch (Exception e)
-        {
-            Debug.LogError($"[TraversifySetup] Error during completion: {e.Message}\n{e.StackTrace}");
-            EditorUtility.DisplayDialog("Setup Error", 
-                "Setup completed with errors. Check the console for details.", 
-                "OK");
-        }
-    }
-    
-    // Add new method to reimport models for OnnxModelAsset conversion
-    private void ReimportAIModels()
-    {
-        try
-        {
-            Debug.Log("[TraversifySetup] Reimporting AI models...");
-            
-            string modelsPath = Path.Combine(Application.dataPath, "StreamingAssets", "Traversify", "Models");
-            
-            // Ensure directory exists
-            if (!Directory.Exists(modelsPath))
-            {
-                Directory.CreateDirectory(modelsPath);
-                Debug.Log($"[TraversifySetup] Created models directory at {modelsPath}");
-            }
-            
-            // Process each model file
-            ProcessModelReimport("yolov8n.onnx");
-            ProcessModelReimport("FasterRCNN-12.onnx");
-            ProcessModelReimport("sam2_hiera_base.onnx");
-            
-            // Refresh asset database to detect changes
-            AssetDatabase.Refresh();
-            
-            // Import models as OnnxModelAsset
-            ImportModelsAsOnnxAssets();
-            
-            Debug.Log("[TraversifySetup] AI models reimported successfully");
-            
-            EditorUtility.DisplayDialog("Models Reimported", 
-                "AI models have been reimported and prepared for use with Unity's AI.Inference package.",
-                "OK");
-        }
-        catch (Exception e)
-        {
-            Debug.LogError($"[TraversifySetup] Error reimporting models: {e.Message}\n{e.StackTrace}");
-            EditorUtility.DisplayDialog("Reimport Error", 
-                $"An error occurred while reimporting models: {e.Message}",
-                "OK");
-        }
-    }
-    
-    private void ProcessModelReimport(string modelFileName)
-    {
-        string modelPath = GetModelPath(modelFileName);
-        
-        if (File.Exists(modelPath))
-        {
-            Debug.Log($"[TraversifySetup] Processing model: {modelFileName}");
-            
-            // Convert the path to a relative asset path
-            string assetsPath = "Assets" + modelPath.Substring(Application.dataPath.Length);
-            
-            // Reimport the asset
-            AssetDatabase.ImportAsset(assetsPath, ImportAssetOptions.ForceUpdate);
-            Debug.Log($"[TraversifySetup] Reimported {assetsPath}");
-        }
-        else
-        {
-            Debug.LogWarning($"[TraversifySetup] Model file not found: {modelPath}");
-        }
-    }
-    
-    private void ImportModelsAsOnnxAssets()
-    {
-        try
-        {
-            // This method would use the new Unity.AI.Inference API to create OnnxModelAssets
-            // Actual implementation depends on specific Unity.AI.Inference API
-            // This is a placeholder for the actual implementation
-            
-            // Example implementation (may need to be adjusted based on AI.Inference API):
-            string modelsDir = Path.Combine(Application.dataPath, "StreamingAssets", "Traversify", "Models");
-            
-            // Create a folder to store OnnxModelAssets if it doesn't exist
-            string onnxAssetsDir = "Assets/Scripts/AI/Models";
-            if (!Directory.Exists(Path.Combine(Application.dataPath, "Scripts/AI/Models")))
-            {
-                Directory.CreateDirectory(Path.Combine(Application.dataPath, "Scripts/AI/Models"));
-                AssetDatabase.Refresh();
-            }
-            
-            // For each model file, create an OnnxModelAsset
-            // Note: This part would need to be updated with actual AI.Inference API calls
-            // Currently this is just copying the files to the assets folder
-            
-            foreach (string modelFile in new string[] {"yolov8n.onnx", "FasterRCNN-12.onnx", "sam2_hiera_base.onnx"})
-            {
-                string sourceFile = Path.Combine(modelsDir, modelFile);
-                string destFile = Path.Combine(Application.dataPath, "Scripts/AI/Models", modelFile);
-                
-                if (File.Exists(sourceFile))
-                {
-                    File.Copy(sourceFile, destFile, true);
-                    Debug.Log($"[TraversifySetup] Copied {modelFile} to {destFile}");
-                }
-            }
-            
-            AssetDatabase.Refresh();
-            
-            // Additional steps to convert .onnx files to OnnxModelAsset would go here
-            // This would typically involve using the Unity.AI.Inference API
-        }
-        catch (Exception e)
-        {
-            Debug.LogError($"[TraversifySetup] Error creating OnnxModelAssets: {e.Message}\n{e.StackTrace}");
-            throw;
-        }
-    }
-    
-    private class ModelDownloadInfo
-    {
-        public string name;
-        public string fileName;
-        public string[] urls;
-        public float size;
-    }
-}
-
-// Enhanced free camera controller with better controls
-public class FreeCameraController : MonoBehaviour
-{
-    [Header("Movement Settings")]
-    public float moveSpeed = 50f;
-    public float fastMoveSpeed = 150f;
-    public float rotationSpeed = 2f;
-    public float smoothTime = 0.1f;
-    
-    [Header("Input Settings")]
-    public bool invertY = false;
-    public bool requireRightClick = true;
-    
-    [Header("Bounds")]
-    public bool limitBounds = false;
-    public Bounds movementBounds = new Bounds(Vector3.zero, Vector3.one * 1000f);
-    
-    private Vector3 velocity = Vector3.zero;
-    private float rotationX = 0f;
-    private float rotationY = 0f;
-    private bool isControlling = false;
-    
-    void Start()
-    {
-        // Initialize rotation from current transform
-        Vector3 rotation = transform.eulerAngles;
-        rotationX = rotation.y;
-        rotationY = rotation.x;
-    }
-    
-    void Update()
-    {
-        HandleInput();
-        HandleMovement();
-        HandleRotation();
-    }
-    
-    private void HandleInput()
-    {
-        if (requireRightClick)
-        {
-            if (Input.GetMouseButtonDown(1))
-            {
-                isControlling = true;
-                Cursor.lockState = CursorLockMode.Locked;
-            }
-            else if (Input.GetMouseButtonUp(1))
-            {
-                isControlling = false;
-                Cursor.lockState = CursorLockMode.None;
-            }
-        }
-        else
-        {
-            isControlling = true;
-        }
-    }
-    
-    private void HandleMovement()
-    {
-        float currentSpeed = Input.GetKey(KeyCode.LeftShift) ? fastMoveSpeed : moveSpeed;
-        Vector3 targetVelocity = Vector3.zero;
-        
-        // Forward/Backward
-        if (Input.GetKey(KeyCode.W)) targetVelocity += transform.forward;
-        if (Input.GetKey(KeyCode.S)) targetVelocity -= transform.forward;
-        
-        // Left/Right
-        if (Input.GetKey(KeyCode.A)) targetVelocity -= transform.right;
-        if (Input.GetKey(KeyCode.D)) targetVelocity += transform.right;
-        
-        // Up/Down
-        if (Input.GetKey(KeyCode.Q) || Input.GetKey(KeyCode.PageDown)) targetVelocity -= transform.up;
-        if (Input.GetKey(KeyCode.E) || Input.GetKey(KeyCode.PageUp)) targetVelocity += transform.up;
-        
-        // Normalize and apply speed
-        targetVelocity = targetVelocity.normalized * currentSpeed;
-        
-        // Smooth movement
-        velocity = Vector3.Lerp(velocity, targetVelocity, smoothTime);
-        Vector3 newPosition = transform.position + velocity * Time.deltaTime;
-        
-        // Apply bounds if enabled
-        if (limitBounds)
-        {
-            newPosition = new Vector3(
-                Mathf.Clamp(newPosition.x, movementBounds.min.x, movementBounds.max.x),
-                Mathf.Clamp(newPosition.y, movementBounds.min.y, movementBounds.max.y),
-                Mathf.Clamp(newPosition.z, movementBounds.min.z, movementBounds.max.z)
-            );
-        }
-        
-        transform.position = newPosition;
-    }
-    
-    private void HandleRotation()
-    {
-        if (!isControlling) return;
-        
-        // Get mouse input
-        float mouseX = Input.GetAxis("Mouse X") * rotationSpeed;
-        float mouseY = Input.GetAxis("Mouse Y") * rotationSpeed;
-        
-        if (invertY) mouseY = -mouseY;
-        
-        // Apply rotation
-        rotationX += mouseX;
-        rotationY -= mouseY;
-        rotationY = Mathf.Clamp(rotationY, -90f, 90f);
-        
-        transform.rotation = Quaternion.Euler(rotationY, rotationX, 0);
-    }
-    
-    // Public methods for external control
-    public void SetPosition(Vector3 position)
-    {
-        transform.position = position;
-        velocity = Vector3.zero;
-    }
-    
-    public void LookAt(Vector3 target)
-    {
-        transform.LookAt(target);
-        Vector3 rotation = transform.eulerAngles;
-        rotationX = rotation.y;
-        rotationY = rotation.x;
-    }
-    
-    public void ResetCamera()
-    {
-        transform.position = new Vector3(250, 180, -150);
-        transform.rotation = Quaternion.Euler (35, 15, 0);
-        velocity = Vector3.zero;
-        rotationX = 15f;
-        rotationY = 35f;
-    }
-}
+using UnityEditor;
+using UnityEditor.SceneManagement;
 #endif
 
+namespace Traversify.Setup {
+    /// <summary>
+    /// Automatic setup and configuration tool for Traversify framework.
+    /// Creates and configures all necessary GameObjects, components, and UI elements.
+    /// </summary>
+    public class TraversifyAutoSetup : MonoBehaviour {
+        #region Constants
+        
+        // Scene hierarchy paths
+        private const string ROOT_NAME = "Traversify System";
+        private const string CORE_NAME = "Core Systems";
+        private const string AI_NAME = "AI Processing";
+        private const string TERRAIN_NAME = "Terrain Generation";
+        private const string UI_NAME = "UI Canvas";
+        private const string ENVIRONMENT_NAME = "Environment";
+        private const string GENERATED_NAME = "Generated Objects";
+        
+        // Default paths
+        private const string MODELS_PATH = "Assets/StreamingAssets/Traversify/Models";
+        private const string RESOURCES_PATH = "Assets/Resources/Traversify";
+        private const string MATERIALS_PATH = "Assets/Materials/Traversify";
+        private const string PREFABS_PATH = "Assets/Prefabs/Traversify";
+        private const string GENERATED_PATH = "Assets/Generated/Traversify";
+        
+        // UI Layout constants
+        private const float UI_PANEL_WIDTH = 400f;
+        private const float UI_HEADER_HEIGHT = 60f;
+        private const float UI_BUTTON_HEIGHT = 40f;
+        private const float UI_PADDING = 10f;
+        
+        #endregion
+        
+        #region Setup Entry Points
+        
+        #if UNITY_EDITOR
+        [MenuItem("Traversify/Setup/Complete Setup", false, 0)]
+        public static void SetupCompleteSystem() {
+            Debug.Log("Starting Traversify complete system setup...");
+            
+            // Create setup instance
+            GameObject setupObj = new GameObject("_TraversifySetup");
+            TraversifyAutoSetup setup = setupObj.AddComponent<TraversifyAutoSetup>();
+            
+            // Run setup
+            setup.PerformCompleteSetup();
+            
+            // Clean up
+            DestroyImmediate(setupObj);
+        }
+        
+        [MenuItem("Traversify/Setup/Validate Setup", false, 20)]
+        public static void ValidateSetup() {
+            GameObject setupObj = new GameObject("_TraversifyValidator");
+            TraversifyAutoSetup setup = setupObj.AddComponent<TraversifyAutoSetup>();
+            
+            if (setup.ValidateSystemSetup()) {
+                EditorUtility.DisplayDialog("Traversify Setup", 
+                    "System setup is valid and complete!", "OK");
+            } else {
+                if (EditorUtility.DisplayDialog("Traversify Setup", 
+                    "System setup is incomplete or invalid. Would you like to run auto-setup?", 
+                    "Yes", "No")) {
+                    setup.PerformCompleteSetup();
+                }
+            }
+            
+            DestroyImmediate(setupObj);
+        }
+        
+        [MenuItem("Traversify/Setup/Reset to Defaults", false, 40)]
+        public static void ResetToDefaults() {
+            if (EditorUtility.DisplayDialog("Reset Traversify", 
+                "This will remove all Traversify objects and recreate the system. Continue?", 
+                "Yes", "Cancel")) {
+                CleanupExistingSystem();
+                SetupCompleteSystem();
+            }
+        }
+        #endif
+        
+        /// <summary>
+        /// Performs complete system setup.
+        /// </summary>
+        public void PerformCompleteSetup() {
+            try {
+                // Phase 1: Prepare environment
+                Debug.Log("Phase 1: Preparing environment...");
+                PrepareDirectoryStructure();
+                CleanupExistingSystem();
+                
+                // Phase 2: Create hierarchy
+                Debug.Log("Phase 2: Creating scene hierarchy...");
+                GameObject rootObject = CreateSceneHierarchy();
+                
+                // Phase 3: Setup core systems
+                Debug.Log("Phase 3: Setting up core systems...");
+                SetupCoreComponents(rootObject);
+                
+                // Phase 4: Setup AI components
+                Debug.Log("Phase 4: Setting up AI components...");
+                SetupAIComponents(rootObject);
+                
+                // Phase 5: Setup terrain systems
+                Debug.Log("Phase 5: Setting up terrain systems...");
+                SetupTerrainComponents(rootObject);
+                
+                // Phase 6: Setup UI
+                Debug.Log("Phase 6: Creating UI...");
+                SetupUISystem(rootObject);
+                
+                // Phase 7: Configure scene settings
+                Debug.Log("Phase 7: Configuring scene settings...");
+                ConfigureSceneSettings();
+                
+                // Phase 8: Link components
+                Debug.Log("Phase 8: Linking components...");
+                LinkComponents(rootObject);
+                
+                // Phase 9: Apply default settings
+                Debug.Log("Phase 9: Applying default settings...");
+                ApplyDefaultSettings(rootObject);
+                
+                // Phase 10: Validate setup
+                Debug.Log("Phase 10: Validating setup...");
+                if (ValidateSystemSetup()) {
+                    Debug.Log("Traversify setup completed successfully!");
+                    #if UNITY_EDITOR
+                    EditorUtility.DisplayDialog("Setup Complete", 
+                        "Traversify has been successfully set up!\n\n" +
+                        "Next steps:\n" +
+                        "1. Configure your OpenAI API key in the Manager\n" +
+                        "2. Ensure model files are in StreamingAssets/Traversify/Models\n" +
+                        "3. Test with a sample map image", "OK");
+                    
+                    // Save scene
+                    EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+                    #endif
+                } else {
+                    Debug.LogError("Setup validation failed!");
+                }
+            }
+            catch (Exception ex) {
+                Debug.LogError($"Setup failed: {ex.Message}\n{ex.StackTrace}");
+                #if UNITY_EDITOR
+                EditorUtility.DisplayDialog("Setup Error", 
+                    $"An error occurred during setup:\n{ex.Message}", "OK");
+                #endif
+            }
+        }
+        
+        #endregion
+        
+        #region Directory Structure
+        
+        private void PrepareDirectoryStructure() {
+            #if UNITY_EDITOR
+            // Create necessary directories
+            string[] directories = {
+                MODELS_PATH,
+                RESOURCES_PATH,
+                MATERIALS_PATH,
+                PREFABS_PATH,
+                GENERATED_PATH,
+                Path.Combine(RESOURCES_PATH, "Shaders"),
+                Path.Combine(RESOURCES_PATH, "Materials"),
+                Path.Combine(RESOURCES_PATH, "Textures"),
+                Path.Combine(RESOURCES_PATH, "UI"),
+                Path.Combine(PREFABS_PATH, "Objects"),
+                Path.Combine(PREFABS_PATH, "UI"),
+                Path.Combine(GENERATED_PATH, "Terrains"),
+                Path.Combine(GENERATED_PATH, "Models"),
+                Path.Combine(GENERATED_PATH, "Textures")
+            };
+            
+            foreach (string dir in directories) {
+                if (!Directory.Exists(dir)) {
+                    Directory.CreateDirectory(dir);
+                    Debug.Log($"Created directory: {dir}");
+                }
+            }
+            
+            AssetDatabase.Refresh();
+            #endif
+        }
+        
+        #endregion
+        
+        #region Scene Hierarchy Creation
+        
+        private static void CleanupExistingSystem() {
+            // Remove existing Traversify objects
+            GameObject existingRoot = GameObject.Find(ROOT_NAME);
+            if (existingRoot != null) {
+                DestroyImmediate(existingRoot);
+            }
+            
+            // Remove any orphaned Traversify components
+            TraversifyComponent[] orphanedComponents = FindObjectsOfType<TraversifyComponent>();
+            foreach (var comp in orphanedComponents) {
+                DestroyImmediate(comp.gameObject);
+            }
+        }
+        
+        private GameObject CreateSceneHierarchy() {
+            // Create root object
+            GameObject root = new GameObject(ROOT_NAME);
+            root.transform.position = Vector3.zero;
+            
+            // Create main sections
+            GameObject core = new GameObject(CORE_NAME);
+            core.transform.SetParent(root.transform);
+            
+            GameObject ai = new GameObject(AI_NAME);
+            ai.transform.SetParent(root.transform);
+            
+            GameObject terrain = new GameObject(TERRAIN_NAME);
+            terrain.transform.SetParent(root.transform);
+            
+            GameObject ui = new GameObject(UI_NAME);
+            ui.transform.SetParent(root.transform);
+            
+            GameObject environment = new GameObject(ENVIRONMENT_NAME);
+            environment.transform.SetParent(root.transform);
+            
+            GameObject generated = new GameObject(GENERATED_NAME);
+            generated.transform.SetParent(environment.transform);
+            
+            return root;
+        }
+        
+        #endregion
+        
+        #region Core Components Setup
+        
+        private void SetupCoreComponents(GameObject root) {
+            GameObject coreParent = root.transform.Find(CORE_NAME).gameObject;
+            
+            // 1. Traversify Main Component
+            GameObject traversifyObj = new GameObject("Traversify");
+            traversifyObj.transform.SetParent(coreParent.transform);
+            
+            Traversify mainComponent = traversifyObj.AddComponent<Traversify>();
+            TraversifyDebugger debugger = traversifyObj.AddComponent<TraversifyDebugger>();
+            
+            // Configure debugger
+            debugger.enableLogging = true;
+            debugger.logToFile = true;
+            debugger.maxLogEntries = 1000;
+            debugger.showTimestamps = true;
+            debugger.showCategory = true;
+            
+            // 2. Traversify Manager
+            GameObject managerObj = new GameObject("TraversifyManager");
+            managerObj.transform.SetParent(coreParent.transform);
+            
+            TraversifyManager manager = managerObj.AddComponent<TraversifyManager>();
+            managerObj.AddComponent<TraversifyDebugger>();
+            
+            // Configure manager defaults
+            ConfigureManagerDefaults(manager);
+            
+            // 3. Asset Cache
+            GameObject cacheObj = new GameObject("AssetCache");
+            cacheObj.transform.SetParent(coreParent.transform);
+            
+            AssetCache cache = cacheObj.AddComponent<AssetCache>();
+            cacheObj.AddComponent<TraversifyDebugger>();
+            
+            // 4. Environment Manager
+            GameObject envManagerObj = new GameObject("EnvironmentManager");
+            envManagerObj.transform.SetParent(coreParent.transform);
+            
+            // Add EnvironmentManager component if it exists
+            // Note: Component definition not provided in the files
+        }
+        
+        private void ConfigureManagerDefaults(TraversifyManager manager) {
+            // Terrain settings
+            manager.terrainSize = new Vector3(1000, 100, 1000);
+            manager.terrainResolution = 513;
+            manager.generateWater = true;
+            manager.waterHeight = 20f;
+            
+            // AI settings
+            manager.useHighQualityAnalysis = true;
+            manager.detectionThreshold = 0.5f;
+            manager.useFasterRCNN = true;
+            manager.useSAM = true;
+            manager.maxObjectsToProcess = 100;
+            manager.groupSimilarObjects = true;
+            manager.instancingSimilarity = 0.85f;
+            
+            // Performance settings
+            manager.maxConcurrentAPIRequests = 3;
+            manager.processingBatchSize = 10;
+            manager.processingTimeout = 300f;
+            manager.apiRateLimitDelay = 0.5f;
+            manager.useGPUAcceleration = true;
+            
+            // Advanced settings
+            manager.enableDebugVisualization = true;
+            manager.saveGeneratedAssets = true;
+            manager.generateMetadata = true;
+            manager.assetSavePath = GENERATED_PATH;
+        }
+        
+        #endregion
+        
+        #region AI Components Setup
+        
+        private void SetupAIComponents(GameObject root) {
+            GameObject aiParent = root.transform.Find(AI_NAME).gameObject;
+            
+            // 1. Map Analyzer
+            GameObject analyzerObj = new GameObject("MapAnalyzer");
+            analyzerObj.transform.SetParent(aiParent.transform);
+            
+            MapAnalyzer analyzer = analyzerObj.AddComponent<MapAnalyzer>();
+            analyzerObj.AddComponent<TraversifyDebugger>();
+            
+            // Configure analyzer
+            ConfigureMapAnalyzer(analyzer);
+            
+            // 2. Model Generator
+            GameObject modelGenObj = new GameObject("ModelGenerator");
+            modelGenObj.transform.SetParent(aiParent.transform);
+            
+            ModelGenerator modelGen = modelGenObj.AddComponent<ModelGenerator>();
+            modelGenObj.AddComponent<TraversifyDebugger>();
+            
+            // Configure model generator
+            ConfigureModelGenerator(modelGen);
+            
+            // 3. OpenAI Response Handler
+            GameObject openAIObj = new GameObject("OpenAIHandler");
+            openAIObj.transform.SetParent(aiParent.transform);
+            
+            // Add OpenAIResponse component if it exists
+            // Note: Component definition not provided in the files
+        }
+        
+        private void ConfigureMapAnalyzer(MapAnalyzer analyzer) {
+            // Set model paths
+            analyzer.yoloModelPath = Path.Combine(MODELS_PATH, "yolov12_map_objects.onnx");
+            analyzer.sam2ModelPath = Path.Combine(MODELS_PATH, "sam2_segmentation.onnx");
+            analyzer.fasterRCNNModelPath = Path.Combine(MODELS_PATH, "faster_rcnn_features.onnx");
+            
+            // Detection settings
+            analyzer.detectionConfidenceThreshold = 0.5f;
+            analyzer.nmsThreshold = 0.45f;
+            analyzer.maxDetections = 100;
+            
+            // Segmentation settings
+            analyzer.segmentationQuality = 0.9f;
+            analyzer.minSegmentArea = 0.001f;
+            
+            // Processing settings
+            analyzer.useGPUProcessing = true;
+            analyzer.batchSize = 8;
+            analyzer.enableDetailedAnalysis = true;
+            
+            // Height estimation
+            analyzer.heightEstimationEnabled = true;
+            analyzer.baseHeightScale = 1.0f;
+            analyzer.heightSmoothingFactor = 0.3f;
+        }
+        
+        private void ConfigureModelGenerator(ModelGenerator modelGen) {
+            // API configuration
+            modelGen.tripoApiUrl = "https://api.tripo3d.ai/v1/generate";
+            modelGen.apiRequestTimeout = 60f;
+            modelGen.maxRetries = 3;
+            modelGen.retryDelay = 2f;
+            
+            // Generation settings
+            modelGen.modelQuality = ModelGenerator.ModelQuality.High;
+            modelGen.generateLODs = true;
+            modelGen.maxLODLevels = 3;
+            modelGen.usePBRMaterials = true;
+            
+            // Optimization settings
+            modelGen.optimizeMeshes = true;
+            modelGen.combineStaticMeshes = true;
+            modelGen.maxVerticesPerMesh = 65000;
+            
+            // Placement settings
+            modelGen.adaptToTerrain = true;
+            modelGen.avoidCollisions = true;
+            modelGen.collisionCheckRadius = 2f;
+            modelGen.maxPlacementAttempts = 10;
+        }
+        
+        #endregion
+        
+        #region Terrain Components Setup
+        
+        private void SetupTerrainComponents(GameObject root) {
+            GameObject terrainParent = root.transform.Find(TERRAIN_NAME).gameObject;
+            
+            // 1. Create Unity Terrain
+            GameObject terrainObj = CreateUnityTerrain(terrainParent);
+            
+            // 2. Terrain Generator
+            TerrainGenerator terrainGen = terrainObj.AddComponent<TerrainGenerator>();
+            terrainObj.AddComponent<TraversifyDebugger>();
+            
+            // Configure terrain generator
+            ConfigureTerrainGenerator(terrainGen);
+            
+            // 3. Segmentation Visualizer
+            GameObject segVisObj = new GameObject("SegmentationVisualizer");
+            segVisObj.transform.SetParent(terrainParent.transform);
+            
+            SegmentationVisualizer segVis = segVisObj.AddComponent<SegmentationVisualizer>();
+            segVisObj.AddComponent<TraversifyDebugger>();
+            
+            // Configure segmentation visualizer
+            ConfigureSegmentationVisualizer(segVis);
+            
+            // 4. Terrain Analyzer
+            GameObject terrainAnalyzerObj = new GameObject("TerrainAnalyzer");
+            terrainAnalyzerObj.transform.SetParent(terrainParent.transform);
+            
+            TerrainAnalyzer terrainAnalyzer = terrainAnalyzerObj.AddComponent<TerrainAnalyzer>();
+            terrainAnalyzerObj.AddComponent<TraversifyDebugger>();
+        }
+        
+        private GameObject CreateUnityTerrain(GameObject parent) {
+            // Create terrain data
+            TerrainData terrainData = new TerrainData();
+            terrainData.heightmapResolution = 513;
+            terrainData.size = new Vector3(1000, 100, 1000);
+            terrainData.name = "TraversifyTerrainData";
+            
+            #if UNITY_EDITOR
+            // Save terrain data asset
+            string terrainDataPath = Path.Combine(GENERATED_PATH, "Terrains", "DefaultTerrainData.asset");
+            AssetDatabase.CreateAsset(terrainData, terrainDataPath);
+            #endif
+            
+            // Create terrain GameObject
+            GameObject terrainObj = Terrain.CreateTerrainGameObject(terrainData);
+            terrainObj.name = "Generated Terrain";
+            terrainObj.transform.SetParent(parent.transform);
+            terrainObj.transform.position = Vector3.zero;
+            
+            // Configure terrain settings
+            Terrain terrain = terrainObj.GetComponent<Terrain>();
+            terrain.materialTemplate = CreateDefaultTerrainMaterial();
+            terrain.detailObjectDistance = 200f;
+            terrain.detailObjectDensity = 1f;
+            terrain.treeDistance = 2000f;
+            terrain.treeBillboardDistance = 200f;
+            terrain.treeCrossFadeLength = 20f;
+            terrain.treeMaximumFullLODCount = 100;
+            
+            return terrainObj;
+        }
+        
+        private Material CreateDefaultTerrainMaterial() {
+            // Try to find built-in terrain material
+            Material terrainMat = Resources.Load<Material>("TerrainMaterial");
+            
+            if (terrainMat == null) {
+                // Create basic terrain material
+                Shader terrainShader = Shader.Find("Nature/Terrain/Standard");
+                if (terrainShader != null) {
+                    terrainMat = new Material(terrainShader);
+                    terrainMat.name = "TraversifyTerrainMaterial";
+                    
+                    #if UNITY_EDITOR
+                    string matPath = Path.Combine(MATERIALS_PATH, "TraversifyTerrainMaterial.mat");
+                    AssetDatabase.CreateAsset(terrainMat, matPath);
+                    #endif
+                }
+            }
+            
+            return terrainMat;
+        }
+        
+        private void ConfigureTerrainGenerator(TerrainGenerator generator) {
+            // Generation mode
+            generator.generationMode = TerrainGenerator.TerrainGenerationMode.Hybrid;
+            
+            // Noise settings
+            generator.noiseType = TerrainGenerator.NoiseType.Simplex;
+            generator.baseFrequency = 0.002f;
+            generator.amplitude = 30f;
+            generator.octaves = 6;
+            generator.persistence = 0.5f;
+            generator.lacunarity = 2f;
+            generator.seed = 12345;
+            
+            // Height settings
+            generator.minHeight = 0f;
+            generator.maxHeight = 100f;
+            generator.heightCurve = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
+            
+            // Erosion settings
+            generator.enableErosion = true;
+            generator.erosionIterations = 5;
+            generator.erosionStrength = 0.3f;
+            
+            // Water settings
+            generator.generateWater = true;
+            generator.waterLevel = 20f;
+            generator.waterColor = new Color(0.2f, 0.4f, 0.6f, 0.8f);
+            
+            // Performance settings
+            generator.useGPU = true;
+            generator.useMultithreading = true;
+            generator.workerThreads = SystemInfo.processorCount - 1;
+        }
+        
+        private void ConfigureSegmentationVisualizer(SegmentationVisualizer visualizer) {
+            // Visualization settings
+            visualizer.visualizationMode = SegmentationVisualizer.VisualizationMode.Overlay;
+            visualizer.animationStyle = SegmentationVisualizer.AnimationStyle.Pulse;
+            visualizer.infoDisplayMode = SegmentationVisualizer.InfoDisplayMode.Detailed;
+            
+            // Visual properties
+            visualizer.overlayOpacity = 0.3f;
+            visualizer.outlineWidth = 2f;
+            visualizer.labelScale = 1f;
+            visualizer.enableShadows = true;
+            
+            // Animation settings
+            visualizer.animationSpeed = 1f;
+            visualizer.pulseFrequency = 0.5f;
+            visualizer.waveSpeed = 2f;
+            
+            // Interaction settings
+            visualizer.enableInteraction = true;
+            visualizer.highlightOnHover = true;
+            visualizer.showTooltips = true;
+            
+            // Performance settings
+            visualizer.useLOD = true;
+            visualizer.maxVisibleSegments = 100;
+            visualizer.cullingDistance = 500f;
+        }
+        
+        #endregion
+        
+        #region UI System Setup
+        
+        private void SetupUISystem(GameObject root) {
+            GameObject uiParent = root.transform.Find(UI_NAME).gameObject;
+            
+            // Create Canvas
+            GameObject canvasObj = CreateMainCanvas(uiParent);
+            Canvas canvas = canvasObj.GetComponent<Canvas>();
+            
+            // Create main UI panels
+            CreateControlPanel(canvas);
+            CreateProgressPanel(canvas);
+            CreateInfoPanel(canvas);
+            CreateDebugPanel(canvas);
+            
+            // Create event system if needed
+            if (FindObjectOfType<EventSystem>() == null) {
+                GameObject eventSystemObj = new GameObject("EventSystem");
+                eventSystemObj.transform.SetParent(uiParent.transform);
+                eventSystemObj.AddComponent<EventSystem>();
+                eventSystemObj.AddComponent<StandaloneInputModule>();
+            }
+        }
+        
+        private GameObject CreateMainCanvas(GameObject parent) {
+            GameObject canvasObj = new GameObject("Main Canvas");
+            canvasObj.transform.SetParent(parent.transform);
+            
+            // Canvas component
+            Canvas canvas = canvasObj.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 0;
+            
+            // Canvas Scaler
+            CanvasScaler scaler = canvasObj.AddComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920, 1080);
+            scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
+            scaler.matchWidthOrHeight = 0.5f;
+            
+            // Graphic Raycaster
+            canvasObj.AddComponent<GraphicRaycaster>();
+            
+            return canvasObj;
+        }
+        
+        private void CreateControlPanel(Canvas canvas) {
+            // Main control panel
+            GameObject panelObj = CreatePanel("Control Panel", canvas.transform);
+            RectTransform panelRect = panelObj.GetComponent<RectTransform>();
+            
+            // Position on left side
+            panelRect.anchorMin = new Vector2(0, 0.5f);
+            panelRect.anchorMax = new Vector2(0, 0.5f);
+            panelRect.anchoredPosition = new Vector2(UI_PANEL_WIDTH / 2 + UI_PADDING, 0);
+            panelRect.sizeDelta = new Vector2(UI_PANEL_WIDTH, 600);
+            
+            // Add vertical layout
+            VerticalLayoutGroup layout = panelObj.AddComponent<VerticalLayoutGroup>();
+            layout.padding = new RectOffset(10, 10, 10, 10);
+            layout.spacing = 10;
+            layout.childAlignment = TextAnchor.UpperCenter;
+            layout.childControlWidth = true;
+            layout.childControlHeight = false;
+            layout.childForceExpandWidth = true;
+            layout.childForceExpandHeight = false;
+            
+            // Header
+            CreateHeader("Traversify Controls", panelObj.transform);
+            
+            // File selection section
+            CreateSectionHeader("Map Image", panelObj.transform);
+            CreateFileSelectionUI(panelObj.transform);
+            
+            // Settings section
+            CreateSectionHeader("Generation Settings", panelObj.transform);
+            CreateSettingsUI(panelObj.transform);
+            
+            // Action buttons
+            CreateSectionHeader("Actions", panelObj.transform);
+            CreateActionButtons(panelObj.transform);
+        }
+        
+        private void CreateProgressPanel(Canvas canvas) {
+            GameObject panelObj = CreatePanel("Progress Panel", canvas.transform);
+            RectTransform panelRect = panelObj.GetComponent<RectTransform>();
+            
+            // Position at bottom
+            panelRect.anchorMin = new Vector2(0.5f, 0);
+            panelRect.anchorMax = new Vector2(0.5f, 0);
+            panelRect.anchoredPosition = new Vector2(0, 100);
+            panelRect.sizeDelta = new Vector2(800, 180);
+            
+            // Initially hidden
+            panelObj.SetActive(false);
+            
+            // Add components for progress display
+            VerticalLayoutGroup layout = panelObj.AddComponent<VerticalLayoutGroup>();
+            layout.padding = new RectOffset(20, 20, 20, 20);
+            layout.spacing = 10;
+            
+            // Stage text
+            GameObject stageTextObj = CreateText("Stage: Initializing", panelObj.transform);
+            stageTextObj.name = "StageText";
+            
+            // Progress bar
+            GameObject progressBarObj = CreateProgressBar(panelObj.transform);
+            progressBarObj.name = "ProgressBar";
+            
+            // Details text
+            GameObject detailsTextObj = CreateText("", panelObj.transform);
+            detailsTextObj.name = "DetailsText";
+            TextMeshProUGUI detailsText = detailsTextObj.GetComponent<TextMeshProUGUI>();
+            detailsText.fontSize = 14;
+            detailsText.color = new Color(0.8f, 0.8f, 0.8f);
+            
+            // Cancel button
+            GameObject cancelBtn = CreateButton("Cancel", panelObj.transform, () => {
+                TraversifyManager.Instance?.CancelProcessing();
+            });
+            cancelBtn.GetComponent<RectTransform>().sizeDelta = new Vector2(200, 40);
+        }
+        
+        private void CreateInfoPanel(Canvas canvas) {
+            GameObject panelObj = CreatePanel("Info Panel", canvas.transform);
+            RectTransform panelRect = panelObj.GetComponent<RectTransform>();
+            
+            // Position on right side
+            panelRect.anchorMin = new Vector2(1, 0.5f);
+            panelRect.anchorMax = new Vector2(1, 0.5f);
+            panelRect.anchoredPosition = new Vector2(-UI_PANEL_WIDTH / 2 - UI_PADDING, 0);
+            panelRect.sizeDelta = new Vector2(UI_PANEL_WIDTH, 400);
+            
+            // Initially hidden
+            panelObj.SetActive(false);
+            
+            // Add scroll view for info display
+            GameObject scrollViewObj = CreateScrollView(panelObj.transform);
+            GameObject contentObj = scrollViewObj.transform.Find("Viewport/Content").gameObject;
+            
+            // Info text
+            GameObject infoTextObj = CreateText("", contentObj.transform);
+            infoTextObj.name = "InfoText";
+            TextMeshProUGUI infoText = infoTextObj.GetComponent<TextMeshProUGUI>();
+            infoText.fontSize = 14;
+        }
+        
+        private void CreateDebugPanel(Canvas canvas) {
+            GameObject panelObj = CreatePanel("Debug Panel", canvas.transform);
+            RectTransform panelRect = panelObj.GetComponent<RectTransform>();
+            
+            // Position at top-right corner
+            panelRect.anchorMin = new Vector2(1, 1);
+            panelRect.anchorMax = new Vector2(1, 1);
+            panelRect.anchoredPosition = new Vector2(-200, -100);
+            panelRect.sizeDelta = new Vector2(380, 180);
+            
+            // Initially hidden
+            panelObj.SetActive(false);
+            
+            // Debug info display
+            VerticalLayoutGroup layout = panelObj.AddComponent<VerticalLayoutGroup>();
+            layout.padding = new RectOffset(10, 10, 10, 10);
+            layout.spacing = 5;
+            
+            // FPS counter
+            GameObject fpsTextObj = CreateText("FPS: 0", panelObj.transform);
+            fpsTextObj.name = "FPSText";
+            
+            // Memory usage
+            GameObject memoryTextObj = CreateText("Memory: 0 MB", panelObj.transform);
+            memoryTextObj.name = "MemoryText";
+            
+            // Processing stats
+            GameObject statsTextObj = CreateText("", panelObj.transform);
+            statsTextObj.name = "StatsText";
+            TextMeshProUGUI statsText = statsTextObj.GetComponent<TextMeshProUGUI>();
+            statsText.fontSize = 12;
+        }
+        
+        #endregion
+        
+        #region UI Helper Methods
+        
+        private GameObject CreatePanel(string name, Transform parent) {
+            GameObject panelObj = new GameObject(name);
+            panelObj.transform.SetParent(parent);
+            
+            RectTransform rect = panelObj.AddComponent<RectTransform>();
+            rect.localScale = Vector3.one;
+            
+            Image image = panelObj.AddComponent<Image>();
+            image.color = new Color(0.1f, 0.1f, 0.1f, 0.9f);
+            
+            return panelObj;
+        }
+        
+        private GameObject CreateHeader(string text, Transform parent) {
+            GameObject headerObj = new GameObject("Header");
+            headerObj.transform.SetParent(parent);
+            
+            RectTransform rect = headerObj.AddComponent<RectTransform>();
+            rect.sizeDelta = new Vector2(0, UI_HEADER_HEIGHT);
+            
+            TextMeshProUGUI tmp = headerObj.AddComponent<TextMeshProUGUI>();
+            tmp.text = text;
+            tmp.fontSize = 24;
+            tmp.fontWeight = FontWeight.Bold;
+            tmp.alignment = TextAlignmentOptions.Center;
+            
+            return headerObj;
+        }
+        
+        private GameObject CreateSectionHeader(string text, Transform parent) {
+            GameObject headerObj = CreateText(text, parent);
+            TextMeshProUGUI tmp = headerObj.GetComponent<TextMeshProUGUI>();
+            tmp.fontSize = 18;
+            tmp.fontWeight = FontWeight.Bold;
+            tmp.color = new Color(0.8f, 0.8f, 0.8f);
+            
+            RectTransform rect = headerObj.GetComponent<RectTransform>();
+            rect.sizeDelta = new Vector2(0, 30);
+            
+            return headerObj;
+        }
+        
+        private GameObject CreateText(string text, Transform parent) {
+            GameObject textObj = new GameObject("Text");
+            textObj.transform.SetParent(parent);
+            
+            RectTransform rect = textObj.AddComponent<RectTransform>();
+            rect.sizeDelta = new Vector2(0, 30);
+            
+            TextMeshProUGUI tmp = textObj.AddComponent<TextMeshProUGUI>();
+            tmp.text = text;
+            tmp.fontSize = 16;
+            tmp.alignment = TextAlignmentOptions.Left;
+            
+            return textObj;
+        }
+        
+        private GameObject CreateButton(string text, Transform parent, UnityEngine.Events.UnityAction onClick) {
+            GameObject buttonObj = new GameObject("Button");
+            buttonObj.transform.SetParent(parent);
+            
+            RectTransform rect = buttonObj.AddComponent<RectTransform>();
+            rect.sizeDelta = new Vector2(0, UI_BUTTON_HEIGHT);
+            
+            Image image = buttonObj.AddComponent<Image>();
+            image.color = new Color(0.2f, 0.5f, 0.8f);
+            
+            Button button = buttonObj.AddComponent<Button>();
+            button.targetGraphic = image;
+            button.onClick.AddListener(onClick);
+            
+            GameObject textObj = CreateText(text, buttonObj.transform);
+            TextMeshProUGUI tmp = textObj.GetComponent<TextMeshProUGUI>();
+            tmp.alignment = TextAlignmentOptions.Center;
+            tmp.color = Color.white;
+            
+            return buttonObj;
+        }
+        
+        private GameObject CreateInputField(string placeholder, Transform parent) {
+            GameObject inputObj = GameObject.Instantiate(Resources.Load<GameObject>("UI/InputField"));
+            if (inputObj == null) {
+                inputObj = new GameObject("InputField");
+                inputObj.transform.SetParent(parent);
+                
+                RectTransform rect = inputObj.AddComponent<RectTransform>();
+                rect.sizeDelta = new Vector2(0, 30);
+                
+                Image image = inputObj.AddComponent<Image>();
+                image.color = new Color(0.2f, 0.2f, 0.2f);
+                
+                TMP_InputField inputField = inputObj.AddComponent<TMP_InputField>();
+                
+                // Create text area
+                GameObject textArea = new GameObject("Text Area");
+                textArea.transform.SetParent(inputObj.transform);
+                RectTransform textAreaRect = textArea.AddComponent<RectTransform>();
+                textAreaRect.anchorMin = Vector2.zero;
+                textAreaRect.anchorMax = Vector2.one;
+                textAreaRect.sizeDelta = Vector2.zero;
+                textAreaRect.offsetMin = new Vector2(10, 5);
+                textAreaRect.offsetMax = new Vector2(-10, -5);
+                
+                // Placeholder
+                GameObject placeholderObj = CreateText(placeholder, textArea.transform);
+                placeholderObj.name = "Placeholder";
+                TextMeshProUGUI placeholderText = placeholderObj.GetComponent<TextMeshProUGUI>();
+                placeholderText.color = new Color(0.5f, 0.5f, 0.5f);
+                
+                // Text
+                GameObject textObj = CreateText("", textArea.transform);
+                textObj.name = "Text";
+                
+                inputField.textViewport = textAreaRect;
+                inputField.textComponent = textObj.GetComponent<TextMeshProUGUI>();
+                inputField.placeholder = placeholderText;
+            }
+            
+            inputObj.transform.SetParent(parent);
+            return inputObj;
+        }
+        
+        private GameObject CreateSlider(float min, float max, float value, Transform parent) {
+            GameObject sliderObj = new GameObject("Slider");
+            sliderObj.transform.SetParent(parent);
+            
+            RectTransform rect = sliderObj.AddComponent<RectTransform>();
+            rect.sizeDelta = new Vector2(0, 20);
+            
+            Slider slider = sliderObj.AddComponent<Slider>();
+            slider.minValue = min;
+            slider.maxValue = max;
+            slider.value = value;
+            
+            // Background
+            GameObject bgObj = new GameObject("Background");
+            bgObj.transform.SetParent(sliderObj.transform);
+            RectTransform bgRect = bgObj.AddComponent<RectTransform>();
+            bgRect.anchorMin = new Vector2(0, 0.25f);
+            bgRect.anchorMax = new Vector2(1, 0.75f);
+            bgRect.sizeDelta = new Vector2(0, 0);
+            Image bgImage = bgObj.AddComponent<Image>();
+            bgImage.color = new Color(0.2f, 0.2f, 0.2f);
+            
+            // Fill area
+            GameObject fillAreaObj = new GameObject("Fill Area");
+            fillAreaObj.transform.SetParent(sliderObj.transform);
+            RectTransform fillAreaRect = fillAreaObj.AddComponent<RectTransform>();
+            fillAreaRect.anchorMin = new Vector2(0, 0.25f);
+            fillAreaRect.anchorMax = new Vector2(1, 0.75f);
+            fillAreaRect.sizeDelta = new Vector2(-20, 0);
+            
+            // Fill
+            GameObject fillObj = new GameObject("Fill");
+            fillObj.transform.SetParent(fillAreaObj.transform);
+            RectTransform fillRect = fillObj.AddComponent<RectTransform>();
+            fillRect.anchorMin = Vector2.zero;
+            fillRect.anchorMax = new Vector2(0, 1);
+            fillRect.sizeDelta = new Vector2(10, 0);
+            Image fillImage = fillObj.AddComponent<Image>();
+            fillImage.color = new Color(0.2f, 0.5f, 0.8f);
+            
+            // Handle
+            GameObject handleObj = new GameObject("Handle");
+            handleObj.transform.SetParent(sliderObj.transform);
+            RectTransform handleRect = handleObj.AddComponent<RectTransform>();
+            handleRect.anchorMin = new Vector2(0, 0);
+            handleRect.anchorMax = new Vector2(0, 1);
+            handleRect.sizeDelta = new Vector2(20, 0);
+            Image handleImage = handleObj.AddComponent<Image>();
+            handleImage.color = Color.white;
+            
+            // Assign references
+            slider.targetGraphic = handleImage;
+            slider.fillRect = fillRect;
+            slider.handleRect = handleRect;
+            
+            return sliderObj;
+        }
+        
+        private GameObject CreateToggle(string label, bool value, Transform parent) {
+            GameObject toggleObj = new GameObject("Toggle");
+            toggleObj.transform.SetParent(parent);
+            
+            RectTransform rect = toggleObj.AddComponent<RectTransform>();
+            rect.sizeDelta = new Vector2(0, 30);
+            
+            HorizontalLayoutGroup layout = toggleObj.AddComponent<HorizontalLayoutGroup>();
+            layout.spacing = 10;
+            layout.childAlignment = TextAnchor.MiddleLeft;
+            layout.childControlWidth = false;
+            layout.childControlHeight = false;
+            
+            // Checkbox
+            GameObject checkboxObj = new GameObject("Checkbox");
+            checkboxObj.transform.SetParent(toggleObj.transform);
+            RectTransform checkRect = checkboxObj.AddComponent<RectTransform>();
+            checkRect.sizeDelta = new Vector2(20, 20);
+            
+            Image bgImage = checkboxObj.AddComponent<Image>();
+            bgImage.color = new Color(0.2f, 0.2f, 0.2f);
+            
+            Toggle toggle = checkboxObj.AddComponent<Toggle>();
+            toggle.isOn = value;
+            toggle.targetGraphic = bgImage;
+            
+            // Checkmark
+            GameObject checkmarkObj = new GameObject("Checkmark");
+            checkmarkObj.transform.SetParent(checkboxObj.transform);
+            RectTransform checkmarkRect = checkmarkObj.AddComponent<RectTransform>();
+            checkmarkRect.anchorMin = Vector2.zero;
+            checkmarkRect.anchorMax = Vector2.one;
+            checkmarkRect.sizeDelta = new Vector2(-4, -4);
+            checkmarkRect.anchoredPosition = Vector2.zero;
+            
+            Image checkmarkImage = checkmarkObj.AddComponent<Image>();
+            checkmarkImage.color = new Color(0.2f, 0.8f, 0.2f);
+            
+            toggle.graphic = checkmarkImage;
+            
+            // Label
+            GameObject labelObj = CreateText(label, toggleObj.transform);
+            
+            return toggleObj;
+        }
+        
+        private GameObject CreateProgressBar(Transform parent) {
+            GameObject progressObj = new GameObject("ProgressBar");
+            progressObj.transform.SetParent(parent);
+            
+            RectTransform rect = progressObj.AddComponent<RectTransform>();
+            rect.sizeDelta = new Vector2(0, 30);
+            
+            Slider progressBar = progressObj.AddComponent<Slider>();
+            progressBar.minValue = 0;
+            progressBar.maxValue = 1;
+            progressBar.value = 0;
+            progressBar.interactable = false;
+            
+            // Background
+            GameObject bgObj = new GameObject("Background");
+            bgObj.transform.SetParent(progressObj.transform);
+            RectTransform bgRect = bgObj.AddComponent<RectTransform>();
+            bgRect.anchorMin = Vector2.zero;
+            bgRect.anchorMax = Vector2.one;
+            bgRect.sizeDelta = Vector2.zero;
+            Image bgImage = bgObj.AddComponent<Image>();
+            bgImage.color = new Color(0.2f, 0.2f, 0.2f);
+            
+            // Fill area
+            GameObject fillAreaObj = new GameObject("Fill Area");
+            fillAreaObj.transform.SetParent(progressObj.transform);
+            RectTransform fillAreaRect = fillAreaObj.AddComponent<RectTransform>();
+            fillAreaRect.anchorMin = Vector2.zero;
+            fillAreaRect.anchorMax = Vector2.one;
+            fillAreaRect.sizeDelta = Vector2.zero;
+            
+            // Fill
+            GameObject fillObj = new GameObject("Fill");
+            fillObj.transform.SetParent(fillAreaObj.transform);
+            RectTransform fillRect = fillObj.AddComponent<RectTransform>();
+            fillRect.anchorMin = Vector2.zero;
+            fillRect.anchorMax = new Vector2(0, 1);
+            fillRect.sizeDelta = Vector2.zero;
+            Image fillImage = fillObj.AddComponent<Image>();
+            fillImage.color = new Color(0.2f, 0.8f, 0.2f);
+            
+            progressBar.fillRect = fillRect;
+            
+            // Progress text
+            GameObject textObj = CreateText("0%", progressObj.transform);
+            textObj.name = "ProgressText";
+            TextMeshProUGUI progressText = textObj.GetComponent<TextMeshProUGUI>();
+            progressText.alignment = TextAlignmentOptions.Center;
+            RectTransform textRect = textObj.GetComponent<RectTransform>();
+            textRect.anchorMin = Vector2.zero;
+            textRect.anchorMax = Vector2.one;
+            textRect.sizeDelta = Vector2.zero;
+            
+            return progressObj;
+        }
+        
+        private GameObject CreateScrollView(Transform parent) {
+            GameObject scrollViewObj = new GameObject("ScrollView");
+            scrollViewObj.transform.SetParent(parent);
+            
+            RectTransform rect = scrollViewObj.AddComponent<RectTransform>();
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.sizeDelta = Vector2.zero;
+            
+            ScrollRect scrollRect = scrollViewObj.AddComponent<ScrollRect>();
+            Image bgImage = scrollViewObj.AddComponent<Image>();
+            bgImage.color = new Color(0.15f, 0.15f, 0.15f, 0.8f);
+            
+            // Viewport
+            GameObject viewportObj = new GameObject("Viewport");
+            viewportObj.transform.SetParent(scrollViewObj.transform);
+            RectTransform viewportRect = viewportObj.AddComponent<RectTransform>();
+            viewportRect.anchorMin = Vector2.zero;
+            viewportRect.anchorMax = Vector2.one;
+            viewportRect.sizeDelta = Vector2.zero;
+            viewportRect.offsetMin = new Vector2(10, 10);
+            viewportRect.offsetMax = new Vector2(-10, -10);
+            
+            Image viewportImage = viewportObj.AddComponent<Image>();
+            viewportImage.color = new Color(1, 1, 1, 0);
+            Mask viewportMask = viewportObj.AddComponent<Mask>();
+            viewportMask.showMaskGraphic = false;
+            
+            // Content
+            GameObject contentObj = new GameObject("Content");
+            contentObj.transform.SetParent(viewportObj.transform);
+            RectTransform contentRect = contentObj.AddComponent<RectTransform>();
+            contentRect.anchorMin = new Vector2(0, 1);
+            contentRect.anchorMax = new Vector2(1, 1);
+            contentRect.pivot = new Vector2(0.5f, 1);
+            contentRect.sizeDelta = new Vector2(0, 300);
+            
+            VerticalLayoutGroup contentLayout = contentObj.AddComponent<VerticalLayoutGroup>();
+            contentLayout.padding = new RectOffset(10, 10, 10, 10);
+            contentLayout.spacing = 10;
+            contentLayout.childAlignment = TextAnchor.UpperLeft;
+            contentLayout.childControlWidth = true;
+            contentLayout.childControlHeight = false;
+            
+            ContentSizeFitter contentFitter = contentObj.AddComponent<ContentSizeFitter>();
+            contentFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            
+            // Scrollbar
+            GameObject scrollbarObj = new GameObject("Scrollbar");
+            scrollbarObj.transform.SetParent(scrollViewObj.transform);
+            RectTransform scrollbarRect = scrollbarObj.AddComponent<RectTransform>();
+            scrollbarRect.anchorMin = new Vector2(1, 0);
+            scrollbarRect.anchorMax = new Vector2(1, 1);
+            scrollbarRect.pivot = new Vector2(1, 0.5f);
+            scrollbarRect.sizeDelta = new Vector2(20, 0);
+            scrollbarRect.anchoredPosition = new Vector2(0, 0);
+            
+            Image scrollbarImage = scrollbarObj.AddComponent<Image>();
+            scrollbarImage.color = new Color(0.1f, 0.1f, 0.1f);
+            
+            Scrollbar scrollbar = scrollbarObj.AddComponent<Scrollbar>();
+            scrollbar.direction = Scrollbar.Direction.TopToBottom;
+            
+            // Scrollbar handle
+            GameObject handleObj = new GameObject("Handle");
+            handleObj.transform.SetParent(scrollbarObj.transform);
+            RectTransform handleRect = handleObj.AddComponent<RectTransform>();
+            handleRect.anchorMin = new Vector2(0, 0);
+            handleRect.anchorMax = new Vector2(1, 1);
+            handleRect.sizeDelta = new Vector2(-4, -4);
+            
+            Image handleImage = handleObj.AddComponent<Image>();
+            handleImage.color = new Color(0.4f, 0.4f, 0.4f);
+            
+            scrollbar.targetGraphic = handleImage;
+            scrollbar.handleRect = handleRect;
+            
+            // Setup ScrollRect
+            scrollRect.viewport = viewportRect;
+            scrollRect.content = contentRect;
+            scrollRect.verticalScrollbar = scrollbar;
+            scrollRect.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHideAndExpandViewport;
+            scrollRect.horizontal = false;
+            
+            return scrollViewObj;
+        }
+        
+        #endregion
+        
+        #region UI Content Creation
+        
+        private void CreateFileSelectionUI(Transform parent) {
+            // Image preview
+            GameObject previewObj = new GameObject("ImagePreview");
+            previewObj.transform.SetParent(parent);
+            RectTransform previewRect = previewObj.AddComponent<RectTransform>();
+            previewRect.sizeDelta = new Vector2(0, 200);
+            
+            Image previewImage = previewObj.AddComponent<Image>();
+            previewImage.color = new Color(0.2f, 0.2f, 0.2f);
+            previewImage.preserveAspect = true;
+            
+            AspectRatioFitter aspectFitter = previewObj.AddComponent<AspectRatioFitter>();
+            aspectFitter.aspectMode = AspectRatioFitter.AspectMode.FitInParent;
+            
+            // File path display
+            GameObject pathObj = CreateInputField("No file selected", parent);
+            pathObj.name = "FilePathInput";
+            TMP_InputField pathInput = pathObj.GetComponent<TMP_InputField>();
+            pathInput.interactable = false;
+            
+            // Browse button
+            GameObject browseBtn = CreateButton("Browse for Map Image", parent, () => {
+                TraversifyManager.Instance?.OpenFileExplorer();
+            });
+        }
+        
+        private void CreateSettingsUI(Transform parent) {
+            // Terrain size
+            CreateLabeledSlider("Terrain Size", parent, 100, 2000, 1000, (value) => {
+                if (TraversifyManager.Instance != null) {
+                    Vector3 size = TraversifyManager.Instance.terrainSize;
+                    size.x = size.z = value;
+                    TraversifyManager.Instance.terrainSize = size;
+                }
+            });
+            
+            // Terrain height
+            CreateLabeledSlider("Max Height", parent, 10, 500, 100, (value) => {
+                if (TraversifyManager.Instance != null) {
+                    Vector3 size = TraversifyManager.Instance.terrainSize;
+                    size.y = value;
+                    TraversifyManager.Instance.terrainSize = size;
+                }
+            });
+            
+            // Water settings
+            GameObject waterToggle = CreateToggle("Generate Water", true, parent);
+            waterToggle.GetComponentInChildren<Toggle>().onValueChanged.AddListener((value) => {
+                if (TraversifyManager.Instance != null) {
+                    TraversifyManager.Instance.generateWater = value;
+                }
+            });
+            
+            CreateLabeledSlider("Water Level", parent, 0, 50, 20, (value) => {
+                if (TraversifyManager.Instance != null) {
+                    TraversifyManager.Instance.waterHeight = value;
+                }
+            });
+            
+            // Quality settings
+            GameObject qualityToggle = CreateToggle("High Quality Analysis", true, parent);
+            qualityToggle.GetComponentInChildren<Toggle>().onValueChanged.AddListener((value) => {
+                if (TraversifyManager.Instance != null) {
+                    TraversifyManager.Instance.useHighQualityAnalysis = value;
+                }
+            });
+            
+            // Object settings
+            CreateLabeledSlider("Max Objects", parent, 10, 200, 100, (value) => {
+                if (TraversifyManager.Instance != null) {
+                    TraversifyManager.Instance.maxObjectsToProcess = (int)value;
+                }
+            });
+            
+            GameObject groupToggle = CreateToggle("Group Similar Objects", true, parent);
+            groupToggle.GetComponentInChildren<Toggle>().onValueChanged.AddListener((value) => {
+                if (TraversifyManager.Instance != null) {
+                    TraversifyManager.Instance.groupSimilarObjects = value;
+                }
+            });
+        }
+        
+        private void CreateActionButtons(Transform parent) {
+            // Generate button
+            GameObject generateBtn = CreateButton("Generate Environment", parent, () => {
+                TraversifyManager.Instance?.StartTerrainGeneration();
+            });
+            generateBtn.name = "GenerateButton";
+            
+            // Clear button
+            GameObject clearBtn = CreateButton("Clear Environment", parent, () => {
+                if (Traversify.Instance != null) {
+                    Traversify.Instance.ClearGeneratedEnvironment();
+                }
+            });
+            
+            // Save button
+            GameObject saveBtn = CreateButton("Save Environment", parent, () => {
+                if (Traversify.Instance != null) {
+                    string path = Traversify.Instance.SaveEnvironment();
+                    if (!string.IsNullOrEmpty(path)) {
+                        #if UNITY_EDITOR
+                        EditorUtility.DisplayDialog("Save Complete", 
+                            $"Environment saved to:\n{path}", "OK");
+                        #endif
+                    }
+                }
+            });
+            
+            // API Key input
+            CreateSectionHeader("API Configuration", parent);
+            GameObject apiKeyInput = CreateInputField("Enter OpenAI API Key", parent);
+            apiKeyInput.name = "APIKeyInput";
+            TMP_InputField apiInput = apiKeyInput.GetComponent<TMP_InputField>();
+            apiInput.contentType = TMP_InputField.ContentType.Password;
+            apiInput.onEndEdit.AddListener((value) => {
+                if (TraversifyManager.Instance != null) {
+                    TraversifyManager.Instance.openAIApiKey = value;
+                }
+            });
+        }
+        
+        private GameObject CreateLabeledSlider(string label, Transform parent, float min, float max, float value, 
+            UnityEngine.Events.UnityAction<float> onValueChanged) {
+            GameObject container = new GameObject(label + " Container");
+            container.transform.SetParent(parent);
+            
+            VerticalLayoutGroup layout = container.AddComponent<VerticalLayoutGroup>();
+            layout.spacing = 5;
+            layout.childControlWidth = true;
+            layout.childControlHeight = false;
+            
+            // Label with value
+            GameObject labelObj = CreateText($"{label}: {value:F0}", container.transform);
+            TextMeshProUGUI labelText = labelObj.GetComponent<TextMeshProUGUI>();
+            
+            // Slider
+            GameObject sliderObj = CreateSlider(min, max, value, container.transform);
+            Slider slider = sliderObj.GetComponent<Slider>();
+            slider.onValueChanged.AddListener((v) => {
+                labelText.text = $"{label}: {v:F0}";
+                onValueChanged?.Invoke(v);
+            });
+            
+            return container;
+        }
+        
+        #endregion
+        
+        #region Component Linking
+        
+        private void LinkComponents(GameObject root) {
+            // Get all main components
+            Traversify traversifyMain = root.GetComponentInChildren<Traversify>();
+            TraversifyManager manager = root.GetComponentInChildren<TraversifyManager>();
+            MapAnalyzer analyzer = root.GetComponentInChildren<MapAnalyzer>();
+            ModelGenerator modelGen = root.GetComponentInChildren<ModelGenerator>();
+            TerrainGenerator terrainGen = root.GetComponentInChildren<TerrainGenerator>();
+            SegmentationVisualizer segVis = root.GetComponentInChildren<SegmentationVisualizer>();
+            
+            // Link UI references to manager
+            if (manager != null) {
+                Canvas canvas = root.GetComponentInChildren<Canvas>();
+                if (canvas != null) {
+                    // Find UI elements
+                    Transform controlPanel = canvas.transform.Find("Control Panel");
+                    Transform progressPanel = canvas.transform.Find("Progress Panel");
+                    
+                    // Set manager UI references
+                    manager.imagePreview = controlPanel?.Find("ImagePreview")?.GetComponent<Image>();
+                    manager.filePathInput = controlPanel?.Find("FilePathInput")?.GetComponent<TMP_InputField>();
+                    manager.generateButton = controlPanel?.Find("GenerateButton")?.GetComponent<Button>();
+                    manager.apiKeyInput = controlPanel?.Find("APIKeyInput")?.GetComponent<TMP_InputField>();
+                    
+                    manager.loadingPanel = progressPanel?.gameObject;
+                    manager.progressBar = progressPanel?.Find("ProgressBar")?.GetComponent<Slider>();
+                    manager.progressText = progressPanel?.Find("ProgressBar/ProgressText")?.GetComponent<TextMeshProUGUI>();
+                    manager.stageText = progressPanel?.Find("StageText")?.GetComponent<TextMeshProUGUI>();
+                    manager.detailsText = progressPanel?.Find("DetailsText")?.GetComponent<TextMeshProUGUI>();
+                }
+            }
+            
+            // Link analyzer to terrain generator
+            if (analyzer != null && terrainGen != null) {
+                analyzer.SetTerrainGenerator(terrainGen);
+            }
+            
+            // Set singleton references
+            if (traversifyMain != null) {
+                // Traversify will find its own component references through GetComponent
+            }
+        }
+        
+        #endregion
+        
+        #region Default Settings
+        
+        private void ApplyDefaultSettings(GameObject root) {
+            // Load any saved preferences
+            LoadUserPreferences();
+            
+            // Apply default material settings
+            CreateDefaultMaterials();
+            
+            // Setup default compute shaders
+            SetupComputeShaders();
+            
+            // Configure default LOD settings
+            ConfigureLODSettings();
+        }
+        
+        private void LoadUserPreferences() {
+            // Load from PlayerPrefs or config file
+            string apiKey = PlayerPrefs.GetString("TraversifyAPIKey", "");
+            if (!string.IsNullOrEmpty(apiKey) && TraversifyManager.Instance != null) {
+                TraversifyManager.Instance.openAIApiKey = apiKey;
+            }
+        }
+        
+        private void CreateDefaultMaterials() {
+            #if UNITY_EDITOR
+            // Create default materials if they don't exist
+            string[] materialNames = {
+                "SegmentOverlay",
+                "SegmentOutline",
+                "WaterSurface",
+                "TerrainPath",
+                "ModelDefault"
+            };
+            
+            foreach (string matName in materialNames) {
+                string path = Path.Combine(MATERIALS_PATH, $"{matName}.mat");
+                if (!File.Exists(path)) {
+                    Material mat = new Material(Shader.Find("Standard"));
+                    mat.name = matName;
+                    AssetDatabase.CreateAsset(mat, path);
+                }
+            }
+            
+            AssetDatabase.SaveAssets();
+            #endif
+        }
+        
+        private void SetupComputeShaders() {
+            // Compute shaders would be loaded here if needed
+            // Currently using CPU/Jobs for processing
+        }
+        
+        private void ConfigureLODSettings() {
+            // Set global LOD bias
+            QualitySettings.lodBias = 2.0f;
+            QualitySettings.maximumLODLevel = 0;
+        }
+        
+        #endregion
+        
+        #region Scene Configuration
+        
+        private void ConfigureSceneSettings() {
+            // Setup lighting
+            SetupLighting();
+            
+            // Setup camera
+            SetupCamera();
+            
+            // Setup rendering settings
+            SetupRenderingSettings();
+            
+            // Setup navigation
+            SetupNavigation();
+        }
+        
+        private void SetupLighting() {
+            // Find or create directional light
+            Light sunLight = FindObjectOfType<Light>();
+            if (sunLight == null || sunLight.type != LightType.Directional) {
+                GameObject lightObj = new GameObject("Directional Light");
+                sunLight = lightObj.AddComponent<Light>();
+                sunLight.type = LightType.Directional;
+            }
+            
+            // Configure sun light
+            sunLight.transform.rotation = Quaternion.Euler(45f, -30f, 0f);
+            sunLight.intensity = 1.2f;
+            sunLight.color = new Color(1f, 0.95f, 0.8f);
+            sunLight.shadows = LightShadows.Soft;
+            
+            // Ambient lighting
+            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
+            RenderSettings.ambientSkyColor = new Color(0.5f, 0.7f, 0.9f);
+            RenderSettings.ambientEquatorColor = new Color(0.4f, 0.5f, 0.6f);
+            RenderSettings.ambientGroundColor = new Color(0.2f, 0.3f, 0.3f);
+            
+            // Fog settings
+            RenderSettings.fog = true;
+            RenderSettings.fogMode = FogMode.Exponential;
+            RenderSettings.fogDensity = 0.005f;
+            RenderSettings.fogColor = new Color(0.7f, 0.8f, 0.9f);
+        }
+        
+        private void SetupCamera() {
+            Camera mainCamera = Camera.main;
+            if (mainCamera == null) {
+                GameObject cameraObj = new GameObject("Main Camera");
+                mainCamera = cameraObj.AddComponent<Camera>();
+                cameraObj.tag = "MainCamera";
+            }
+            
+            // Position camera
+            mainCamera.transform.position = new Vector3(500, 200, -200);
+            mainCamera.transform.rotation = Quaternion.Euler(30, 0, 0);
+            
+            // Camera settings
+            mainCamera.fieldOfView = 60;
+            mainCamera.nearClipPlane = 1f;
+            mainCamera.farClipPlane = 2000f;
+            
+            // Add camera controller if needed
+            if (mainCamera.GetComponent<AudioListener>() == null) {
+                mainCamera.gameObject.AddComponent<AudioListener>();
+            }
+        }
+        
+        private void SetupRenderingSettings() {
+            // Shadow settings
+            QualitySettings.shadows = ShadowQuality.All;

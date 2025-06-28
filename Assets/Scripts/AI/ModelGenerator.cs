@@ -199,11 +199,6 @@ namespace Traversify {
         
         // State
         private bool _isProcessing = false;
-        private bool _isInitialized = false;
-        private int _activeRequests = 0;
-        
-        // Configuration 
-        private ModelGenerationConfig _generationConfig;
         #endregion
 
         #region Initialization
@@ -2052,6 +2047,48 @@ namespace Traversify {
                 }
             }
         }
+        #endregion
+
+        #region TraversifyComponent Implementation
+        
+        /// <summary>
+        /// Component-specific initialization logic.
+        /// </summary>
+        /// <param name="config">Component configuration object</param>
+        /// <returns>True if initialization was successful</returns>
+        protected override bool OnInitialize(object config)
+        {
+            try
+            {
+                // Initialize API semaphore
+                _apiSemaphore = new SemaphoreSlim(maxConcurrentAPIRequests, maxConcurrentAPIRequests);
+                
+                // Initialize cancellation token
+                _cancellationTokenSource = new CancellationTokenSource();
+                
+                // Create model container
+                if (_modelContainer == null)
+                {
+                    _modelContainer = new GameObject("Generated Models");
+                    _modelContainer.transform.SetParent(transform);
+                }
+                
+                // Initialize terrain cache
+                _terrainCache.Clear();
+                
+                // Initialize metrics
+                ResetMetrics();
+                
+                Log("ModelGenerator initialized successfully", LogCategory.System);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LogError($"Failed to initialize ModelGenerator: {ex.Message}", LogCategory.System);
+                return false;
+            }
+        }
+        
         #endregion
     }
 }

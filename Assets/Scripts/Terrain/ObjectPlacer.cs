@@ -1381,79 +1381,87 @@ namespace Traversify {
         
         #endregion
         
-        #region Utility Classes
+        #region TraversifyComponent Implementation
         
         /// <summary>
-        /// Represents a task for processing a batch of object placements.
+        /// Component-specific initialization logic.
         /// </summary>
-        private class PlacementTask {
-            public string ObjectType { get; set; }
-            public string GroupId { get; set; }
-            public List<MapObject> Objects { get; set; }
-            public int Priority { get; set; }
-        }
-        
-        /// <summary>
-        /// Represents a single placement attempt.
-        /// </summary>
-        private class PlacementAttempt {
-            public Vector3 Position { get; set; }
-            public bool Success { get; set; }
-            public string FailureReason { get; set; }
-        }
-        
-        /// <summary>
-        /// Represents a simple task with result.
-        /// </summary>
-        private class Task<T> {
-            private Func<T> _action;
-            private T _result;
-            private bool _isCompleted;
-            private Exception _exception;
-            
-            public bool IsCompleted => _isCompleted;
-            public T Result => _result;
-            public Exception Exception => _exception;
-            
-            public Task(Func<T> action) {
-                _action = action;
-                _isCompleted = false;
-            }
-            
-            public void Start() {
-                try {
-                    _result = _action();
-                    _isCompleted = true;
-                } catch (Exception ex) {
-                    _exception = ex;
-                    _isCompleted = true;
+        /// <param name="config">Component configuration object</param>
+        /// <returns>True if initialization was successful</returns>
+        protected override bool OnInitialize(object config)
+        {
+            try
+            {
+                // Initialize collections
+                _placedObjects.Clear();
+                _occupiedPositions.Clear();
+                _placementAttempts.Clear();
+                _spatialGrid.Clear();
+                _instancedMaterials.Clear();
+                _prototypeObjects.Clear();
+                _failedPlacements.Clear();
+                _lastPlacedObjects.Clear();
+                
+                // Initialize counters
+                _totalPlacedObjects = 0;
+                _totalPlacementAttempts = 0;
+                _activeOperations = 0;
+                
+                // Initialize debugger
+                if (_debugger == null)
+                {
+                    _debugger = GetComponent<TraversifyDebugger>();
+                    if (_debugger == null)
+                    {
+                        _debugger = gameObject.AddComponent<TraversifyDebugger>();
+                    }
                 }
+                
+                Log("ObjectPlacer initialized successfully", LogCategory.System);
+                return true;
             }
-        }
-        
-        /// <summary>
-        /// Provides GPU instancing functionality.
-        /// </summary>
-        private class GPUInstancer : MonoBehaviour {
-            public Mesh mesh;
-            public Material material;
-            public Matrix4x4[] instanceMatrices;
-            
-            private bool _initialized;
-            
-            public void Initialize() {
-                _initialized = true;
-            }
-            
-            private void Update() {
-                if (_initialized && mesh != null && material != null && instanceMatrices != null) {
-                    // Draw all instances in a single draw call
-                    Graphics.DrawMeshInstanced(mesh, 0, material, instanceMatrices);
-                }
+            catch (Exception ex)
+            {
+                LogError($"Failed to initialize ObjectPlacer: {ex.Message}", LogCategory.System);
+                return false;
             }
         }
         
         #endregion
+    }
+    
+    /// <summary>
+    /// Represents a placement task for a group of objects.
+    /// </summary>
+    public class PlacementTask {
+        public string ObjectType { get; set; }
+        public string GroupId { get; set; }
+        public List<MapObject> Objects { get; set; }
+        public int Priority { get; set; }
+    }
+    
+    /// <summary>
+    /// Represents an attempt to place an object.
+    /// </summary>
+    public class PlacementAttempt {
+        public Vector3 Position { get; set; }
+        public bool Successful { get; set; }
+        public string FailureReason { get; set; }
+        public float AttemptTime { get; set; }
+    }
+    
+    /// <summary>
+    /// GPU instancer component for efficient rendering of similar objects.
+    /// </summary>
+    public class GPUInstancer : MonoBehaviour {
+        public Mesh mesh;
+        public Material material;
+        public Matrix4x4[] instanceMatrices;
+        
+        public void Initialize() {
+            // GPU instancing implementation would go here
+            // This is a placeholder for the GPU instancing system
+        }
     }
     
     /// <summary>

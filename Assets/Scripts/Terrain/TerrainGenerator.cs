@@ -2634,6 +2634,77 @@ namespace Traversify {
             }
         }
         #endregion
+        
+        #region TraversifyComponent Implementation
+        
+        /// <summary>
+        /// Component-specific initialization logic.
+        /// </summary>
+        /// <param name="config">Component configuration object</param>
+        /// <returns>True if initialization was successful</returns>
+        protected override bool OnInitialize(object config)
+        {
+            try
+            {
+                // Get or create terrain component
+                _terrain = GetComponent<UnityEngine.Terrain>();
+                if (_terrain == null)
+                {
+                    _terrain = gameObject.AddComponent<UnityEngine.Terrain>();
+                }
+                
+                // Get or create terrain collider
+                _terrainCollider = GetComponent<TerrainCollider>();
+                if (_terrainCollider == null)
+                {
+                    _terrainCollider = gameObject.AddComponent<TerrainCollider>();
+                }
+                
+                // Initialize debugger
+                if (_debugger == null)
+                {
+                    _debugger = GetComponent<TraversifyDebugger>();
+                    if (_debugger == null)
+                    {
+                        _debugger = gameObject.AddComponent<TraversifyDebugger>();
+                    }
+                }
+                
+                // Initialize collections and state
+                _isGenerating = false;
+                _generationProgress = 0f;
+                
+                // Initialize terrain data if needed
+                if (_terrain.terrainData == null)
+                {
+                    InitializeTerrainData();
+                }
+                
+                Log("TerrainGenerator initialized successfully", LogCategory.System);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LogError($"Failed to initialize TerrainGenerator: {ex.Message}", LogCategory.System);
+                return false;
+            }
+        }
+        
+        /// <summary>
+        /// Initializes terrain data with default settings.
+        /// </summary>
+        private void InitializeTerrainData()
+        {
+            TerrainData terrainData = new TerrainData();
+            terrainData.size = terrainSize;
+            terrainData.heightmapResolution = heightmapResolution;
+            terrainData.alphamapResolution = alphamapResolution;
+            terrainData.baseMapResolution = baseTextureResolution;
+            
+            _terrain.terrainData = terrainData;
+            _terrainCollider.terrainData = terrainData;
+        }
+        
+        #endregion
     }
 }
-

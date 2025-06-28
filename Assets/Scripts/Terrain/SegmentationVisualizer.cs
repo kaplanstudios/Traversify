@@ -181,6 +181,10 @@ namespace Traversify {
         private NativeArray<float3> _segmentPositions;
         private NativeArray<float> _segmentVisibility;
         private bool _isProcessing = false;
+        
+        // Initialize collections
+        private Dictionary<string, SegmentVisualization> _activeSegments = new Dictionary<string, SegmentVisualization>();
+        private Camera _camera;
         #endregion
 
         #region Initialization
@@ -1921,141 +1925,93 @@ namespace Traversify {
         }
         #endregion
 
-        #region Default Prefab Creation
-        private GameObject CreateDefaultOverlayPrefab() {
-            GameObject prefab = new GameObject("DefaultOverlayPrefab");
+        #region Helper Methods
+        
+        private void InitializeMaterials()
+        {
+            // Initialize default materials if not assigned
+            if (overlayMaterial == null)
+            {
+                overlayMaterial = new Material(Shader.Find("Standard"));
+                overlayMaterial.name = "DefaultOverlayMaterial";
+            }
+        }
+        
+        private GameObject CreateDefaultOverlayPrefab()
+        {
+            GameObject prefab = new GameObject("DefaultOverlay");
             prefab.AddComponent<MeshFilter>();
             prefab.AddComponent<MeshRenderer>();
             return prefab;
         }
         
-        private GameObject CreateDefaultLabelPrefab() {
-            GameObject prefab = new GameObject("DefaultLabelPrefab");
-            
-            // Add TextMeshPro
-            var textMesh = prefab.AddComponent<TextMeshPro>();
-            textMesh.fontSize = labelFontSize;
-            textMesh.color = labelTextColor;
-            textMesh.alignment = TextAlignmentOptions.Center;
-            
-            // Configure rect transform
-            RectTransform rect = prefab.GetComponent<RectTransform>();
-            rect.sizeDelta = new Vector2(200, 50);
-            
+        private GameObject CreateDefaultLabelPrefab()
+        {
+            GameObject prefab = new GameObject("DefaultLabel");
+            prefab.AddComponent<TextMeshPro>();
             return prefab;
         }
         
-        private GameObject CreateDefaultTooltipPrefab() {
-            GameObject prefab = new GameObject("DefaultTooltipPrefab");
+        private GameObject CreateDefaultTooltipPrefab()
+        {
+            GameObject prefab = new GameObject("DefaultTooltip");
+            Canvas canvas = prefab.AddComponent<Canvas>();
+            prefab.AddComponent<CanvasScaler>();
+            prefab.AddComponent<GraphicRaycaster>();
             
-            // Background
-            Image background = prefab.AddComponent<Image>();
-            background.color = new Color(0, 0, 0, 0.9f);
-            
-            // Configure rect
-            RectTransform bgRect = prefab.GetComponent<RectTransform>();
-            bgRect.sizeDelta = new Vector2(300, 150);
-            bgRect.pivot = new Vector2(0, 1);
-            
-            // Text
             GameObject textGO = new GameObject("Text");
-            textGO.transform.SetParent(prefab.transform, false);
-            
-            var text = textGO.AddComponent<TextMeshProUGUI>();
-            text.fontSize = 14;
-            text.color = Color.white;
-            text.margin = new Vector4(10, 10, 10, 10);
-            
-            RectTransform textRect = textGO.GetComponent<RectTransform>();
-            textRect.anchorMin = Vector2.zero;
-            textRect.anchorMax = Vector2.one;
-            textRect.offsetMin = Vector2.zero;
-            textRect.offsetMax = Vector2.zero;
+            textGO.transform.SetParent(prefab.transform);
+            textGO.AddComponent<TextMeshProUGUI>();
             
             return prefab;
         }
-        #endregion
-
-        #region Helper Components
-        [Serializable]
-        public class Billboard : MonoBehaviour {
-            private Camera _camera;
-            
-            private void Start() {
-                _camera = Camera.main;
-            }
-            
-            private void LateUpdate() {
-                if (_camera == null) {
-                    _camera = Camera.main;
-                    if (_camera == null) return;
+        
+        #region TraversifyComponent Implementation
+        
+        /// <summary>
+        /// Component-specific initialization logic.
+        /// </summary>
+        /// <param name="config">Optional configuration object</param>
+        /// <returns>True if initialization was successful</returns>
+        protected override bool OnInitialize(object config) {
+            try {
+                // Initialize debugger
+                if (debugger == null) {
+                    debugger = GetComponent<TraversifyDebugger>();
+                    if (debugger == null) {
+                        debugger = gameObject.AddComponent<TraversifyDebugger>();
+                    }
                 }
                 
-                transform.LookAt(transform.position + _camera.transform.rotation * Vector3.forward,
-                                _camera.transform.rotation * Vector3.up);
+                // Initialize collections and state
+                _segmentOverlays.Clear();
+                _segmentLabels.Clear();
+                _fadingSegments.Clear();
+                
+                // Reset state
+                _isVisualizationActive = false;
+                _currentAnalysisResults = null;
+                
+                // Initialize materials if not set
+                if (overlayMaterial == null) {
+                    overlayMaterial = new Material(Shader.Find("Standard"));
+                    overlayMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                    overlayMaterial.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                    overlayMaterial.SetInt("_ZWrite", 0);
+                    overlayMaterial.renderQueue = 3000;
+                }
+                
+                debugger?.Log("SegmentationVisualizer initialized successfully", LogCategory.System);
+                return true;
+            }
+            catch (Exception ex) {
+                debugger?.LogError($"Failed to initialize SegmentationVisualizer: {ex.Message}", LogCategory.System);
+                return false;
             }
         }
         
-        [Serializable]
-        public class DistanceScaler : MonoBehaviour {
-            public float minScale = 0.5f;
-            public float maxScale = 2f;
-            public float referenceDistance = 50f;
-            
-            private Camera _camera;
-            private Vector3 _originalScale;
-            
-            private void Start() {
-                _camera = Camera.main;
-                _originalScale = transform.localScale;
-            }
-            
-            private void Update() {
-                if (_camera == null) {
-                    _camera = Camera.main;
-                    if (_camera == null) return;
-                }
-                
-                float distance = Vector3.Distance(transform.position, _camera.transform.position);
-                float scaleFactor = Mathf.Clamp(referenceDistance / distance, minScale, maxScale);
-                transform.localScale = _originalScale * scaleFactor;
-            }
-        }
         #endregion
-
-        #region Job System
-        [BurstCompile]
-        private struct VisibilityCullingJob : IJobParallelFor {
-            [ReadOnly] public NativeArray<float3> segmentPositions;
-            [ReadOnly] public float4x4 viewProjectionMatrix;
-            [WriteOnly] public NativeArray<float> visibility;
-            
-            public void Execute(int index) {
-                float3 pos = segmentPositions[index];
-                float4 clipPos = math.mul(viewProjectionMatrix, new float4(pos, 1f));
-                
-                // Frustum culling
-                bool inFrustum = clipPos.z > 0 &&
-                                math.abs(clipPos.x) <= clipPos.w &&
-                                math.abs(clipPos.y) <= clipPos.w;
-                
-                visibility[index] = inFrustum ? 1f : 0f;
-            }
-        }
         
-        private void ScheduleVisibilityCulling() {
-            if (!_segmentPositions.IsCreated || _mainCamera == null) {
-                return;
-            }
-            
-            var job = new VisibilityCullingJob {
-                segmentPositions = _segmentPositions,
-                viewProjectionMatrix = _mainCamera.projectionMatrix * _mainCamera.worldToCameraMatrix,
-                visibility = _segmentVisibility
-            };
-            
-            _currentJob = job.Schedule(_segmentPositions.Length, 64);
-        }
         #endregion
     }
 }

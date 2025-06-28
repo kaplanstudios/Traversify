@@ -206,6 +206,38 @@ namespace Traversify.AI
         
         #endregion
         
+        #region TraversifyComponent Implementation
+        
+        /// <summary>
+        /// Component-specific initialization logic.
+        /// </summary>
+        /// <param name="config">Component configuration object</param>
+        /// <returns>True if initialization was successful</returns>
+        protected override bool OnInitialize(object config)
+        {
+            try
+            {
+                // Initialize AI models
+                InitializeModels();
+                
+                // Load class labels
+                LoadClassLabels();
+                
+                // Find terrain generator reference
+                _terrainGenerator = FindObjectOfType<TerrainGenerator>();
+                
+                Log("MapAnalyzer initialized successfully", LogCategory.System);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LogError($"Failed to initialize MapAnalyzer: {ex.Message}", LogCategory.System);
+                return false;
+            }
+        }
+        
+        #endregion
+        
         #region Unity Lifecycle
         
         private void Awake()
