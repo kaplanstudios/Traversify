@@ -121,6 +121,11 @@ namespace Traversify.AI {
         public float occlusionStrength = 1f;
         
         /// <summary>
+        /// Unity Material reference for this model.
+        /// </summary>
+        public Material material;
+        
+        /// <summary>
         /// List of submesh materials when model has multiple materials.
         /// </summary>
         public List<MaterialData> materials;
@@ -1191,3 +1196,4 @@ namespace Traversify.AI {
         }
     }
 }
+

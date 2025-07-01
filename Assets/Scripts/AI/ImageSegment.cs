@@ -50,17 +50,17 @@ namespace Traversify.AI {
         /// <summary>
         /// Confidence score for this segment (0-1).
         /// </summary>
-        public float confidence => detectedObject?.confidence ?? 0f;
+        public float confidence { get; set; }
         
         /// <summary>
         /// Class name of the segment.
         /// </summary>
-        public string className => detectedObject?.className ?? "unknown";
+        public string className { get; set; }
         
         /// <summary>
         /// Class ID of the segment.
         /// </summary>
-        public int classId => detectedObject?.classId ?? -1;
+        public int classId { get; set; }
         
         /// <summary>
         /// Center point of the segment in pixel coordinates.

@@ -15,10 +15,12 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
-// Unity.Sentis package not available - using conditional compilation
-#if UNITY_SENTIS_AVAILABLE
-using Unity.Sentis;
-using TensorType = Unity.Sentis.Tensor;
+using Traversify.Core;
+using Traversify.AI;
+// Unity.InferenceEngine package - using conditional compilation
+#if UNITY_INFERENCE_ENGINE_AVAILABLE
+using Unity.InferenceEngine;
+using TensorType = Unity.InferenceEngine.Tensor;
 #else
 using TensorType = Traversify.AI.Tensor;
 #endif
@@ -58,12 +60,25 @@ namespace Traversify.Core {
         WorkerType WorkerType { get; }
         
         /// <summary>
+        /// Executes the model with input tensors (required by IWorker interface).
+        /// </summary>
+        /// <param name="inputs">Dictionary of input tensors by name</param>
+        void Execute(Dictionary<string, Tensor> inputs);
+
+        /// <summary>
+        /// Gets the output tensor with the specified name (required by IWorker interface).
+        /// </summary>
+        /// <param name="name">Name of the output tensor</param>
+        /// <returns>The output tensor</returns>
+        Tensor PeekOutput(string name);
+        
+        /// <summary>
         /// Executes the model with the given input tensor.
         /// </summary>
         /// <param name="input">Input tensor data</param>
         /// <param name="cancellationToken">Cancellation token</param>
         /// <returns>Output tensor data</returns>
-#if UNITY_SENTIS_AVAILABLE
+#if UNITY_AI_INFERENCE_AVAILABLE
         Task<Tensor> ExecuteAsync(Tensor input, CancellationToken cancellationToken = default);
 #else
         Task<float[]> ExecuteAsync(float[] input, CancellationToken cancellationToken = default);
@@ -75,7 +90,7 @@ namespace Traversify.Core {
         /// <param name="inputs">Dictionary of input tensors by name</param>
         /// <param name="cancellationToken">Cancellation token</param>
         /// <returns>Dictionary of output tensors by name</returns>
-#if UNITY_SENTIS_AVAILABLE
+#if UNITY_AI_INFERENCE_AVAILABLE
         Task<Dictionary<string, Tensor>> ExecuteAsync(Dictionary<string, Tensor> inputs, CancellationToken cancellationToken = default);
 #else
         Task<Dictionary<string, float[]>> ExecuteAsync(Dictionary<string, float[]> inputs, CancellationToken cancellationToken = default);
@@ -125,7 +140,7 @@ namespace Traversify.Core {
         /// <summary>
         /// The tensor value.
         /// </summary>
-#if UNITY_SENTIS_AVAILABLE
+#if UNITY_AI_INFERENCE_AVAILABLE
         public readonly Tensor Value;
         
         public TensorValuePair(string name, Tensor value) {
@@ -150,7 +165,7 @@ namespace Traversify.Core {
         /// <summary>
         /// Dictionary of output tensors by name.
         /// </summary>
-#if UNITY_SENTIS_AVAILABLE
+#if UNITY_AI_INFERENCE_AVAILABLE
         protected Dictionary<string, Tensor> Outputs { get; } = new Dictionary<string, Tensor>();
 #else
         protected Dictionary<string, float[]> Outputs { get; } = new Dictionary<string, float[]>();
@@ -226,7 +241,7 @@ namespace Traversify.Core {
             ExecutionInProgress = true;
             try
             {
-#if UNITY_SENTIS_AVAILABLE
+#if UNITY_AI_INFERENCE_AVAILABLE
                 Execute(inputs);
 #else
                 // Convert to float array format for fallback implementation
@@ -235,7 +250,7 @@ namespace Traversify.Core {
                 {
                     if (kvp.Value is Tensor tensor)
                     {
-                        floatInputs[kvp.Key] = tensor.data;
+                        floatInputs[kvp.Key] = tensor.data.ToArray();
                     }
                 }
                 Execute(floatInputs);
@@ -248,28 +263,106 @@ namespace Traversify.Core {
         }
 
         /// <summary>
+        /// Executes the model with input tensors (required by IWorker interface).
+        /// </summary>
+        /// <param name="inputs">Dictionary of input tensors by name</param>
+        public virtual void Execute(Dictionary<string, Tensor> inputs)
+        {
+            if (inputs == null) throw new ArgumentNullException(nameof(inputs));
+            if (Disposed) throw new ObjectDisposedException(GetType().Name);
+            
+            ExecutionInProgress = true;
+            try
+            {
+                // Convert to TensorType format and delegate to Run method
+                var tensorInputs = new Dictionary<string, TensorType>();
+                foreach (var kvp in inputs)
+                {
+                    tensorInputs[kvp.Key] = kvp.Value;
+                }
+                
+                // Derived classes should implement the actual execution logic
+                ExecuteInternal(tensorInputs);
+            }
+            finally
+            {
+                ExecutionInProgress = false;
+            }
+        }
+
+        /// <summary>
+        /// Gets the output tensor with the specified name (required by IWorker interface).
+        /// </summary>
+        /// <param name="name">Name of the output tensor</param>
+        /// <returns>The output tensor</returns>
+        public virtual Tensor PeekOutput(string name)
+        {
+            if (string.IsNullOrEmpty(name)) throw new ArgumentException("Output name cannot be null or empty", nameof(name));
+            if (Disposed) throw new ObjectDisposedException(GetType().Name);
+
+#if UNITY_AI_INFERENCE_AVAILABLE
+            if (Outputs.TryGetValue(name, out Tensor tensor))
+            {
+                return tensor;
+            }
+#else
+            if (Outputs.TryGetValue(name, out float[] data))
+            {
+                // Create a fallback tensor from float array
+                return CreateTensorFromFloatArray(data);
+            }
+#endif
+            
+            throw new ArgumentException($"Output '{name}' not found", nameof(name));
+        }
+
+        /// <summary>
         /// Fetches an output tensor by name after execution.
         /// </summary>
         /// <param name="outputName">Name of the output tensor</param>
         /// <returns>Output tensor</returns>
-        public TensorType Fetch(string outputName)
+        public virtual TensorType Fetch(string outputName)
         {
-            if (string.IsNullOrEmpty(outputName)) throw new ArgumentNullException(nameof(outputName));
+            if (string.IsNullOrEmpty(outputName)) throw new ArgumentException("Output name cannot be null or empty", nameof(outputName));
             if (Disposed) throw new ObjectDisposedException(GetType().Name);
-            
-#if UNITY_SENTIS_AVAILABLE
-            return Outputs.TryGetValue(outputName, out var tensor) ? tensor : null;
-#else
-            if (Outputs.TryGetValue(outputName, out var data))
+
+#if UNITY_AI_INFERENCE_AVAILABLE
+            if (Outputs.TryGetValue(outputName, out Tensor tensor))
             {
-                // Create a tensor from the float array data
-                return new Tensor(new[] { 1, data.Length }, data) as TensorType;
+                return tensor;
             }
-            return default(TensorType);
+#else
+            if (Outputs.TryGetValue(outputName, out float[] data))
+            {
+                // For fallback mode, create a Tensor from float array
+                return CreateTensorFromFloatArray(data) as TensorType;
+            }
 #endif
+            
+            throw new ArgumentException($"Output '{outputName}' not found", nameof(outputName));
         }
+
+        /// <summary>
+        /// Internal execution method that derived classes should implement.
+        /// </summary>
+        /// <param name="inputs">Input tensors</param>
+        protected abstract void ExecuteInternal(Dictionary<string, TensorType> inputs);
+
+#if !UNITY_AI_INFERENCE_AVAILABLE
+        /// <summary>
+        /// Creates a tensor from a float array when Sentis is not available.
+        /// </summary>
+        /// <param name="data">Float array data</param>
+        /// <returns>A tensor containing the data</returns>
+        protected virtual Tensor CreateTensorFromFloatArray(float[] data)
+        {
+            // This is a placeholder implementation - in a real scenario,
+            // you would create an appropriate tensor type
+            throw new NotImplementedException("Tensor creation from float array not implemented in fallback mode");
+        }
+#endif
         
-#if UNITY_SENTIS_AVAILABLE
+#if UNITY_AI_INFERENCE_AVAILABLE
         /// <summary>
         /// Execute the model with a single input tensor.
         /// </summary>
@@ -419,7 +512,7 @@ namespace Traversify.Core {
         public virtual void Reset() {
             if (Disposed) throw new ObjectDisposedException(GetType().Name);
             
-#if UNITY_SENTIS_AVAILABLE
+#if UNITY_AI_INFERENCE_AVAILABLE
             // Dispose all output tensors
             foreach (var tensor in Outputs.Values) {
                 tensor?.Dispose();
@@ -436,7 +529,7 @@ namespace Traversify.Core {
         public virtual void Dispose() {
             if (Disposed) return;
             
-#if UNITY_SENTIS_AVAILABLE
+#if UNITY_AI_INFERENCE_AVAILABLE
             // Dispose of all output tensors
             foreach (var tensor in Outputs.Values) {
                 tensor?.Dispose();

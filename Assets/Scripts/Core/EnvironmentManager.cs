@@ -1294,9 +1294,9 @@ namespace Traversify {
             
             // Determine time of day from image brightness
             float avgBrightness = 0.5f; // Default to midday
-            if (analysisResults.metadata.ContainsKey("averageBrightness")) {
+            if (analysisResults.metadata.settings.ContainsKey("averageBrightness")) {
                 try {
-                    avgBrightness = (float)analysisResults.metadata["averageBrightness"];
+                    avgBrightness = (float)analysisResults.metadata.settings["averageBrightness"];
                 } catch (Exception) {
                     // Use default
                 }
@@ -1313,9 +1313,9 @@ namespace Traversify {
             bool isFoggy = false;
             bool isSnowy = false;
             
-            if (analysisResults.metadata.ContainsKey("weatherHints")) {
+            if (analysisResults.metadata.settings.ContainsKey("weatherHints")) {
                 try {
-                    Dictionary<string, float> weatherHints = (Dictionary<string, float>)analysisResults.metadata["weatherHints"];
+                    Dictionary<string, float> weatherHints = (Dictionary<string, float>)analysisResults.metadata.settings["weatherHints"];
                     
                     if (weatherHints.ContainsKey("rain")) {
                         isRainy = weatherHints["rain"] > 0.6f;

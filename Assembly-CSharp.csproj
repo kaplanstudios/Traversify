@@ -51,10 +51,12 @@
     <Compile Include="Assets/Scripts/Terrain/TerrainGenerator.cs" />
     <Compile Include="Assets/Scripts/Terrain/TerrainModification.cs" />
     <Compile Include="Assets/Scripts/Utils/TextureUtils.cs" />
+    <Compile Include="Assets/FreeFlyCamera/Demo/Scripts/ToggleGameObjectEnable.cs" />
     <Compile Include="Assets/Scripts/Utils/MeshUtils.cs" />
     <Compile Include="Assets/Scripts/AI/ModelGeneratorExtensions.cs" />
     <Compile Include="Assets/Scripts/AI/Model3DData.cs" />
     <Compile Include="Assets/Scripts/Utils/PerformanceMonitor.cs" />
+    <Compile Include="Assets/FreeFlyCamera/Scripts/FreeFlyCamera.cs" />
     <Compile Include="Assets/Scripts/Core/IWorker.cs" />
     <Compile Include="Assets/Scripts/Core/TraversifyDebugger.cs" />
     <Compile Include="Assets/Scripts/Core/Tensor.cs" />
@@ -76,28 +78,45 @@
     <Compile Include="Assets/Scripts/AI/ModelGenerator.cs" />
     <Compile Include="Assets/Scripts/AI/ImageSegment.cs" />
     <Compile Include="Assets/Scripts/AI/MapAnalyzer.cs" />
+    <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250701_074025/metadata.json" />
     <None Include="Assets/TextMesh Pro/Shaders/TMPro.cginc" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF-Mobile Overlay.shader" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF-Mobile-2-Pass.shader" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_Bitmap.shader" />
+    <None Include="Packages/com.unity.vast.tripoforunity@1.0.1/package.json" />
+    <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250701_071808/metadata.json" />
+    <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250701_072539/metadata.json" />
+    <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250701_074132/metadata.json" />
     <None Include="Assets/TextMesh Pro/Shaders/TMPro_Mobile.cginc" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF SSD.shader" />
+    <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250630_221438/metadata.json" />
+    <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250701_121240/metadata.json" />
+    <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250630_221647/metadata.json" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF-Surface-Mobile.shader" />
     <None Include="Assets/TextMesh Pro/Shaders/SDFFunctions.hlsl" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF-Surface.shader" />
     <None Include="Assets/TextMesh Pro/Sprites/EmojiOne Attribution.txt" />
+    <None Include="Assets/FreeFlyCamera/readme.txt" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_Bitmap-Custom-Atlas.shader" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF.shader" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF-Mobile SSD.shader" />
     <None Include="Assets/TextMesh Pro/Resources/LineBreaking Leading Characters.txt" />
     <None Include="Assets/TextMesh Pro/Shaders/TMPro_Properties.cginc" />
+    <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250701_083952/metadata.json" />
+    <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250630_221404/metadata.json" />
     <None Include="Assets/TextMesh Pro/Shaders/TMPro_Surface.cginc" />
+    <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250701_080122/metadata.json" />
+    <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250630_221153/metadata.json" />
     <None Include="Assets/TextMesh Pro/Resources/LineBreaking Following Characters.txt" />
+    <None Include="Assets/Resources/Shaders/SegmentationCompute.compute" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF-Mobile Masking.shader" />
+    <None Include="Assets/Resources/Shaders/ObjectPlacementCompute.compute" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF Overlay.shader" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_Bitmap-Mobile.shader" />
     <None Include="Assets/TextMesh Pro/Fonts/LiberationSans - OFL.txt" />
+    <None Include="Assets/Resources/Traversify/labels.txt" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF-Mobile.shader" />
+    <None Include="Assets/Traversify/Resources/ClassLabels.txt" />
     <None Include="Assets/TextMesh Pro/Sprites/EmojiOne.json" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_Sprite.shader" />
     <Reference Include="UnityEngine">
@@ -856,14 +875,17 @@
     <Reference Include="UnityEditor.UI">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/UnityEditor.UI.dll</HintPath>
     </Reference>
-    <Reference Include="Unity.AI.Navigation">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.AI.Navigation.dll</HintPath>
-    </Reference>
     <Reference Include="Unity.Rider.Editor">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Rider.Editor.dll</HintPath>
     </Reference>
+    <Reference Include="Unity.Sentis.iOSBLAS">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Sentis.iOSBLAS.dll</HintPath>
+    </Reference>
     <Reference Include="Unity.Collections.Editor">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Collections.Editor.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.TerrainTools.Editor">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.TerrainTools.Editor.dll</HintPath>
     </Reference>
     <Reference Include="Unity.Multiplayer.Center.Common">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Multiplayer.Center.Common.dll</HintPath>
@@ -871,32 +893,38 @@
     <Reference Include="Unity.AI.Navigation.Updater">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.AI.Navigation.Updater.dll</HintPath>
     </Reference>
-    <Reference Include="Unity.InferenceEngine">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.InferenceEngine.dll</HintPath>
+    <Reference Include="Unity.Sentis">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Sentis.dll</HintPath>
+    </Reference>
+    <Reference Include="glTFast.dots">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/glTFast.dots.dll</HintPath>
     </Reference>
     <Reference Include="Unity.TextMeshPro">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.TextMeshPro.dll</HintPath>
     </Reference>
-    <Reference Include="Unity.InferenceEngine.iOSBLAS">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.InferenceEngine.iOSBLAS.dll</HintPath>
+    <Reference Include="Unity.AI.Navigation">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.AI.Navigation.dll</HintPath>
     </Reference>
     <Reference Include="Unity.EditorCoroutines.Editor">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.EditorCoroutines.Editor.dll</HintPath>
     </Reference>
-    <Reference Include="Unity.InferenceEngine.ONNX.Editor">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.InferenceEngine.ONNX.Editor.dll</HintPath>
+    <Reference Include="Unity.TerrainTools">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.TerrainTools.dll</HintPath>
     </Reference>
-    <Reference Include="Unity.InferenceEngine.MacBLAS">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.InferenceEngine.MacBLAS.dll</HintPath>
+    <Reference Include="Unity.Sentis.Editor">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Sentis.Editor.dll</HintPath>
+    </Reference>
+    <Reference Include="glTFast">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/glTFast.dll</HintPath>
     </Reference>
     <Reference Include="Unity.AI.Navigation.Editor">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.AI.Navigation.Editor.dll</HintPath>
     </Reference>
-    <Reference Include="UnityEngine.UI">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/UnityEngine.UI.dll</HintPath>
-    </Reference>
     <Reference Include="Unity.Mathematics">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Mathematics.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/UnityEngine.UI.dll</HintPath>
     </Reference>
     <Reference Include="Unity.Multiplayer.Center.Editor">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Multiplayer.Center.Editor.dll</HintPath>
@@ -906,9 +934,6 @@
     </Reference>
     <Reference Include="Unity.AI.Navigation.Editor.ConversionSystem">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.AI.Navigation.Editor.ConversionSystem.dll</HintPath>
-    </Reference>
-    <Reference Include="Unity.InferenceEngine.Editor">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.InferenceEngine.Editor.dll</HintPath>
     </Reference>
     <Reference Include="Unity.TextMeshPro.Editor">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.TextMeshPro.Editor.dll</HintPath>
@@ -922,8 +947,25 @@
     <Reference Include="Unity.Burst">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Burst.dll</HintPath>
     </Reference>
+    <Reference Include="glTFast.Editor">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/glTFast.Editor.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.Sentis.MacBLAS">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Sentis.MacBLAS.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.Sentis.ONNX">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Sentis.ONNX.dll</HintPath>
+    </Reference>
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="tripoforunity.Editor.csproj">
+      <Project>{7f21fb3c-95b9-7b8a-50ec-8ceb303121fc}</Project>
+      <Name>tripoforunity.Editor</Name>
+    </ProjectReference>
+    <ProjectReference Include="tripoforunity.Runtime.csproj">
+      <Project>{e8440458-707c-7364-0518-ad460acb9317}</Project>
+      <Name>tripoforunity.Runtime</Name>
+    </ProjectReference>
     <ProjectReference Include="Piglet.csproj">
       <Project>{36c21c8e-64ce-a22c-c82b-4d354fe56783}</Project>
       <Name>Piglet</Name>

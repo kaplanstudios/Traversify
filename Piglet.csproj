@@ -58,8 +58,8 @@
     <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Extensions/KHR_draco_mesh_compressionExtensionFactory.cs" />
     <Compile Include="Assets/Piglet/Scripts/Draco/DracoUnityUtil.cs" />
     <Compile Include="Assets/Piglet/Scripts/Util/UriUtil.cs" />
-    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Extensions/ExtTextureTransformExtension.cs" />
     <Compile Include="Assets/Piglet/Examples/RuntimeAnimation/Scripts/RuntimeAnimationBehaviour.cs" />
+    <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Extensions/ExtTextureTransformExtension.cs" />
     <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFUtils.cs" />
     <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/CameraOrthographic.cs" />
     <Compile Include="Assets/Piglet/Dependencies/UnityGLTF/GLTFSerialization/Schema/AnimationChannel.cs" />

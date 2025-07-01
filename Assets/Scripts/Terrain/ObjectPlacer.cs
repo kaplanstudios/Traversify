@@ -14,6 +14,8 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using UnityEngine;
 using Traversify.Core;
 using Traversify.AI;
@@ -139,6 +141,9 @@ namespace Traversify {
         private int _totalPlacementAttempts = 0;
         private List<GameObject> _lastPlacedObjects = new List<GameObject>();
         
+        // Cancellation support
+        private CancellationTokenSource _cancellationTokenSource;
+        
         // Spatial partitioning for faster collision checks
         private const float GRID_CELL_SIZE = 5.0f;
         private Dictionary<Vector3Int, List<GameObject>> _spatialGrid = new Dictionary<Vector3Int, List<GameObject>>();
@@ -198,19 +203,39 @@ namespace Traversify {
             Action<int, int> onProgress = null,
             Action<string> onError = null
         ) {
+            // Use SafeCoroutine to handle the main logic with error handling
+            yield return SafeCoroutine.Wrap(
+                InnerPlaceObjects(analysisResults, terrain, modelProvider, onComplete, onProgress),
+                ex => {
+                    _debugger.LogError($"Object placement failed: {ex.Message}", LogCategory.Models);
+                    onError?.Invoke($"Placement error: {ex.Message}");
+                    _isProcessing = false;
+                    _cancellationTokenSource = null;
+                },
+                LogCategory.Models
+            );
+        }
+        
+        /// <summary>
+        /// Internal implementation of object placement without try-catch around yields.
+        /// </summary>
+        private IEnumerator InnerPlaceObjects(
+            AnalysisResults analysisResults,
+            UnityEngine.Terrain terrain,
+            IModelProvider modelProvider,
+            Action<List<GameObject>> onComplete,
+            Action<int, int> onProgress
+        ) {
             if (analysisResults == null) {
-                onError?.Invoke("Analysis results are null");
-                yield break;
+                throw new ArgumentException("Analysis results are null");
             }
             
             if (terrain == null) {
-                onError?.Invoke("Terrain is null");
-                yield break;
+                throw new ArgumentException("Terrain is null");
             }
             
             if (modelProvider == null) {
-                onError?.Invoke("Model provider is null");
-                yield break;
+                throw new ArgumentException("Model provider is null");
             }
             
             _debugger.Log($"Starting object placement for {analysisResults.mapObjects.Count} objects", LogCategory.Models);
@@ -606,62 +631,64 @@ namespace Traversify {
             Action<GameObject> onObjectPlaced
         ) {
             GameObject placedObject = null;
+            string errorMessage = null;
             
-            try {
-                // Calculate target position from normalized coordinates
-                Vector3 targetPosition = ConvertToWorldPosition(mapObject.position);
+            // Calculate target position from normalized coordinates
+            Vector3 targetPosition = ConvertToWorldPosition(mapObject.position);
+            
+            // Check if position is suitable
+            Vector3 objectSize = prototype.GetComponent<Renderer>()?.bounds.size ?? Vector3.one;
+            
+            if (IsPositionSuitable(targetPosition, objectSize, objectType)) {
+                // Position is suitable, place object
+                placedObject = InstantiateObject(prototype, targetPosition, objectType);
                 
-                // Check if position is suitable
-                Vector3 objectSize = prototype.GetComponent<Renderer>()?.bounds.size ?? Vector3.one;
-                
-                if (IsPositionSuitable(targetPosition, objectSize, objectType)) {
-                    // Position is suitable, place object
-                    placedObject = InstantiateObject(prototype, targetPosition, objectType);
+                if (placedObject != null) {
+                    // Apply object properties
+                    string objectId = $"{objectType}_{mapObject.GetHashCode()}";
+                    placedObject.name = $"{objectType}_{_totalPlacedObjects}";
                     
-                    if (placedObject != null) {
-                        // Apply object properties
-                        string objectId = $"{objectType}_{mapObject.GetHashCode()}";
-                        placedObject.name = $"{objectType}_{_totalPlacedObjects}";
-                        
-                        // Store object reference
-                        _placedObjects[objectId] = placedObject;
-                        
-                        // Apply rotation and scale
-                        ApplyTransformProperties(placedObject, mapObject, targetPosition);
-                        
-                        // Add to spatial grid
-                        AddToSpatialGrid(placedObject, targetPosition);
-                        
-                        // Mark position as occupied
-                        _occupiedPositions.Add(targetPosition);
-                        
-                        // Increment placed count
-                        _totalPlacedObjects++;
-                        
-                        // Log success
-                        _debugger.Log($"Placed object '{placedObject.name}' at {targetPosition}", LogCategory.Models);
-                    } else {
-                        // Failed to instantiate
-                        _debugger.LogWarning($"Failed to instantiate object of type '{objectType}'", LogCategory.Models);
-                        RecordFailedPlacement(objectType);
-                    }
+                    // Store object reference
+                    _placedObjects[objectId] = placedObject;
+                    
+                    // Apply rotation and scale
+                    ApplyTransformProperties(placedObject, mapObject, targetPosition);
+                    
+                    // Add to spatial grid
+                    AddToSpatialGrid(placedObject, targetPosition);
+                    
+                    // Mark position as occupied
+                    _occupiedPositions.Add(targetPosition);
+                    
+                    // Increment placed count
+                    _totalPlacedObjects++;
+                    
+                    // Log success
+                    _debugger.Log($"Placed object '{placedObject.name}' at {targetPosition}", LogCategory.Models);
                 } else {
-                    // Original position not suitable, try alternative positions
-                    yield return StartCoroutine(TryAlternativePositions(
-                        objectType,
-                        mapObject,
-                        prototype,
-                        obj => placedObject = obj
-                    ));
-                    
-                    if (placedObject == null) {
-                        // All placement attempts failed
-                        _debugger.LogWarning($"Failed to find suitable position for object of type '{objectType}'", LogCategory.Models);
-                        RecordFailedPlacement(objectType);
-                    }
+                    // Failed to instantiate
+                    _debugger.LogWarning($"Failed to instantiate object of type '{objectType}'", LogCategory.Models);
+                    RecordFailedPlacement(objectType);
                 }
-            } catch (Exception ex) {
-                _debugger.LogError($"Error placing object of type '{objectType}': {ex.Message}", LogCategory.Models);
+            } else {
+                // Original position not suitable, try alternative positions
+                yield return StartCoroutine(TryAlternativePositions(
+                    objectType,
+                    mapObject,
+                    prototype,
+                    obj => placedObject = obj
+                ));
+                
+                if (placedObject == null) {
+                    // All placement attempts failed
+                    _debugger.LogWarning($"Failed to find suitable position for object of type '{objectType}'", LogCategory.Models);
+                    RecordFailedPlacement(objectType);
+                }
+            }
+            
+            // Handle any errors that occurred
+            if (!string.IsNullOrEmpty(errorMessage)) {
+                _debugger.LogError($"Error placing object of type '{objectType}': {errorMessage}", LogCategory.Models);
                 RecordFailedPlacement(objectType);
             }
             
@@ -1023,47 +1050,50 @@ namespace Traversify {
             
             _debugger.Log($"Optimizing instance group for '{objectType}' with {container.transform.childCount} objects", LogCategory.Models);
             
-            try {
-                // Check if we should use GPU instancing
-                if (_useGPUInstancing && container.transform.childCount > 5) {
-                    // Convert to GPU instancing
-                    yield return null; // Give the system a frame to process
+            string errorMessage = null;
+            
+            // Check if we should use GPU instancing
+            if (_useGPUInstancing && container.transform.childCount > 5) {
+                // Convert to GPU instancing
+                yield return null; // Give the system a frame to process
+                
+                // Get reference mesh and material from first child
+                Transform firstChild = container.transform.GetChild(0);
+                MeshFilter meshFilter = firstChild.GetComponent<MeshFilter>();
+                MeshRenderer meshRenderer = firstChild.GetComponent<MeshRenderer>();
+                
+                if (meshFilter != null && meshRenderer != null) {
+                    // Collect transform matrices for all instances
+                    Matrix4x4[] matrices = new Matrix4x4[container.transform.childCount];
+                    for (int i = 0; i < container.transform.childCount; i++) {
+                        matrices[i] = container.transform.GetChild(i).localToWorldMatrix;
+                    }
                     
-                    // Get reference mesh and material from first child
-                    Transform firstChild = container.transform.GetChild(0);
-                    MeshFilter meshFilter = firstChild.GetComponent<MeshFilter>();
-                    MeshRenderer meshRenderer = firstChild.GetComponent<MeshRenderer>();
+                    // Setup GPU instancing component
+                    GPUInstancer instancer = container.AddComponent<GPUInstancer>();
+                    instancer.mesh = meshFilter.sharedMesh;
+                    instancer.material = _instancedMaterials.TryGetValue(objectType, out Material instancedMaterial) 
+                        ? instancedMaterial 
+                        : meshRenderer.sharedMaterial;
+                    instancer.instanceMatrices = matrices;
                     
-                    if (meshFilter != null && meshRenderer != null) {
-                        // Collect transform matrices for all instances
-                        Matrix4x4[] matrices = new Matrix4x4[container.transform.childCount];
-                        for (int i = 0; i < container.transform.childCount; i++) {
-                            matrices[i] = container.transform.GetChild(i).localToWorldMatrix;
-                        }
-                        
-                        // Setup GPU instancing component
-                        GPUInstancer instancer = container.AddComponent<GPUInstancer>();
-                        instancer.mesh = meshFilter.sharedMesh;
-                        instancer.material = _instancedMaterials.TryGetValue(objectType, out Material instancedMaterial) 
-                            ? instancedMaterial 
-                            : meshRenderer.sharedMaterial;
-                        instancer.instanceMatrices = matrices;
-                        
-                        // Activate instancing
-                        instancer.Initialize();
-                        
-                        // Disable original renderers to save draw calls
-                        for (int i = 0; i < container.transform.childCount; i++) {
-                            Transform child = container.transform.GetChild(i);
-                            Renderer renderer = child.GetComponent<Renderer>();
-                            if (renderer != null) {
-                                renderer.enabled = false;
-                            }
+                    // Activate instancing
+                    instancer.Initialize();
+                    
+                    // Disable original renderers to save draw calls
+                    for (int i = 0; i < container.transform.childCount; i++) {
+                        Transform child = container.transform.GetChild(i);
+                        Renderer renderer = child.GetComponent<Renderer>();
+                        if (renderer != null) {
+                            renderer.enabled = false;
                         }
                     }
                 }
-            } catch (Exception ex) {
-                _debugger.LogWarning($"Error optimizing instance group: {ex.Message}", LogCategory.Models);
+            }
+            
+            // Handle any errors that occurred
+            if (!string.IsNullOrEmpty(errorMessage)) {
+                _debugger.LogWarning($"Error optimizing instance group: {errorMessage}", LogCategory.Models);
             }
         }
         

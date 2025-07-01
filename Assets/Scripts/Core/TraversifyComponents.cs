@@ -12,6 +12,8 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -522,7 +524,7 @@ namespace Traversify {
                     return 4;
                 case TextureFormat.RGB565:
                 case TextureFormat.RGBA4444:
-                case TextureFormat.RGBA5551:
+                case TextureFormat.ARGB4444:
                     return 2;
                 case TextureFormat.DXT1:
                     return 1; // Average bytes per pixel in DXT1
@@ -602,113 +604,105 @@ namespace Traversify {
             CancellationToken token = InitProcessing();
             _debugger?.StartTimer("TerrainAnalysis");
             
-            try {
-                TerrainData terrainData = terrain.terrainData;
-                TerrainAnalysisResult result = new TerrainAnalysisResult();
-                
-                // Get heightmap data
-                int resolution = terrainData.heightmapResolution;
-                float[,] heights = terrainData.GetHeights(0, 0, resolution, resolution);
-                
-                UpdateProgress(0.1f, "Analyzing height distribution");
-                
-                // Analyze height distribution
-                float minHeight = float.MaxValue;
-                float maxHeight = float.MinValue;
-                float totalHeight = 0f;
-                
-                for (int y = 0; y < resolution; y++) {
-                    for (int x = 0; x < resolution; x++) {
-                        float height = heights[y, x] * terrainData.size.y;
-                        minHeight = Mathf.Min(minHeight, height);
-                        maxHeight = Mathf.Max(maxHeight, height);
-                        totalHeight += height;
-                    }
-                    
-                    if (y % 10 == 0) {
-                        UpdateProgress(0.1f + 0.2f * y / resolution, "Analyzing height distribution");
-                        yield return null;
-                    }
+            TerrainData terrainData = terrain.terrainData;
+            TerrainAnalysisResult result = new TerrainAnalysisResult();
+            
+            // Get heightmap data
+            int resolution = terrainData.heightmapResolution;
+            float[,] heights = terrainData.GetHeights(0, 0, resolution, resolution);
+            
+            UpdateProgress(0.1f, "Analyzing height distribution");
+            
+            // Analyze height distribution
+            float minHeight = float.MaxValue;
+            float maxHeight = float.MinValue;
+            float totalHeight = 0f;
+            
+            for (int y = 0; y < resolution; y++) {
+                for (int x = 0; x < resolution; x++) {
+                    float height = heights[y, x] * terrainData.size.y;
+                    minHeight = Mathf.Min(minHeight, height);
+                    maxHeight = Mathf.Max(maxHeight, height);
+                    totalHeight += height;
                 }
                 
-                float averageHeight = totalHeight / (resolution * resolution);
+                if (y % 10 == 0) {
+                    UpdateProgress(0.1f + 0.2f * y / resolution, "Analyzing height distribution");
+                    yield return null;
+                }
+            }
+            
+            float averageHeight = totalHeight / (resolution * resolution);
+            
+            result.minHeight = minHeight;
+            result.maxHeight = maxHeight;
+            result.averageHeight = averageHeight;
+            result.heightRange = maxHeight - minHeight;
+            
+            // Create slope map
+            UpdateProgress(0.3f, "Calculating slopes");
+            float[,] slopes = new float[resolution, resolution];
+            
+            for (int y = 1; y < resolution - 1; y++) {
+                for (int x = 1; x < resolution - 1; x++) {
+                    // Calculate slope using central differences
+                    float dx = (heights[y, x + 1] - heights[y, x - 1]) * 0.5f;
+                    float dy = (heights[y + 1, x] - heights[y - 1, x]) * 0.5f;
+                    
+                    // Convert to slope angle in degrees
+                    float slope = Mathf.Atan(new Vector2(dx, dy).magnitude / terrainData.heightmapScale.x) * Mathf.Rad2Deg;
+                    slopes[y, x] = slope;
+                }
                 
-                result.minHeight = minHeight;
-                result.maxHeight = maxHeight;
-                result.averageHeight = averageHeight;
-                result.heightRange = maxHeight - minHeight;
-                
-                // Create slope map
-                UpdateProgress(0.3f, "Calculating slopes");
-                float[,] slopes = new float[resolution, resolution];
-                
-                for (int y = 1; y < resolution - 1; y++) {
-                    for (int x = 1; x < resolution - 1; x++) {
-                        // Calculate slope using central differences
-                        float dx = (heights[y, x + 1] - heights[y, x - 1]) * 0.5f;
-                        float dy = (heights[y + 1, x] - heights[y - 1, x]) * 0.5f;
+                if (y % 10 == 0) {
+                    UpdateProgress(0.3f + 0.2f * y / resolution, "Calculating slopes");
+                    yield return null;
+                }
+            }
+            
+            // Detect regions using flood fill
+            UpdateProgress(0.5f, "Detecting terrain regions");
+            bool[,] visited = new bool[resolution, resolution];
+            List<TerrainRegion> regions = new List<TerrainRegion>();
+            
+            for (int y = 0; y < resolution; y++) {
+                for (int x = 0; x < resolution; x++) {
+                    if (!visited[y, x]) {
+                        TerrainRegion region = DetectRegion(heights, slopes, visited, x, y, resolution, terrainData);
                         
-                        // Convert to slope angle in degrees
-                        float slope = Mathf.Atan(new Vector2(dx, dy).magnitude / terrainData.heightmapScale.x) * Mathf.Rad2Deg;
-                        slopes[y, x] = slope;
-                    }
-                    
-                    if (y % 10 == 0) {
-                        UpdateProgress(0.3f + 0.2f * y / resolution, "Calculating slopes");
-                        yield return null;
-                    }
-                }
-                
-                // Detect regions using flood fill
-                UpdateProgress(0.5f, "Detecting terrain regions");
-                bool[,] visited = new bool[resolution, resolution];
-                List<TerrainRegion> regions = new List<TerrainRegion>();
-                
-                for (int y = 0; y < resolution; y++) {
-                    for (int x = 0; x < resolution; x++) {
-                        if (!visited[y, x]) {
-                            TerrainRegion region = DetectRegion(heights, slopes, visited, x, y, resolution, terrainData);
-                            
-                            // Filter small regions
-                            float regionSize = region.pixels.Count / (float)(resolution * resolution);
-                            if (regionSize >= _minFeatureSize) {
-                                regions.Add(region);
-                            }
+                        // Filter small regions
+                        float regionSize = region.pixels.Count / (float)(resolution * resolution);
+                        if (regionSize >= _minFeatureSize) {
+                            regions.Add(region);
                         }
                     }
-                    
-                    if (y % 10 == 0) {
-                        UpdateProgress(0.5f + 0.3f * y / resolution, "Detecting terrain regions");
-                        yield return null;
-                    }
                 }
                 
-                // Classify regions
-                UpdateProgress(0.8f, "Classifying terrain regions");
-                foreach (var region in regions) {
-                    region.type = ClassifyTerrainRegion(region, terrainData);
+                if (y % 10 == 0) {
+                    UpdateProgress(0.5f + 0.3f * y / resolution, "Detecting terrain regions");
+                    yield return null;
                 }
-                
-                result.regions = regions;
-                
-                // Calculate additional metrics
-                UpdateProgress(0.9f, "Calculating terrain metrics");
-                result.slopeDistribution = CalculateSlopeDistribution(slopes);
-                result.roughness = CalculateRoughness(heights, terrainData);
-                
-                UpdateProgress(1.0f, "Terrain analysis complete");
-                
-                float analysisTime = _debugger.StopTimer("TerrainAnalysis");
-                result.analysisTime = analysisTime;
-                
-                onComplete?.Invoke(result);
             }
-            catch (Exception ex) {
-                LogError($"Terrain analysis failed: {ex.Message}", LogCategory.Terrain);
+            
+            // Classify regions
+            UpdateProgress(0.8f, "Classifying terrain regions");
+            foreach (var region in regions) {
+                region.type = ClassifyTerrainRegion(region, terrainData);
             }
-            finally {
-                SetProcessingState(false);
-            }
+            
+            result.regions = regions;
+            
+            // Calculate additional metrics
+            UpdateProgress(0.9f, "Calculating terrain metrics");
+            result.slopeDistribution = CalculateSlopeDistribution(slopes);
+            result.roughness = CalculateRoughness(heights, terrainData);
+            
+            UpdateProgress(1.0f, "Terrain analysis complete");
+            
+            float analysisTime = _debugger?.StopTimer("TerrainAnalysis") ?? 0f;
+            Log($"Terrain analysis completed in {analysisTime:F2} seconds. Found {regions.Count} regions.", LogCategory.Terrain);
+            
+            onComplete?.Invoke(result);
         }
         
         /// <summary>

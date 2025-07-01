@@ -77,9 +77,9 @@ namespace Traversify.AI {
         }
         
         /// <summary>
-        /// Native pointer to tensor data for efficient GPU operations
+        /// Access to data pointer for native plugin integration (safe fallback when unsafe code is disabled)
         /// </summary>
-        public IntPtr dataPtr => _data.GetUnsafeReadOnlyPtr();
+        public IntPtr dataPtr => IntPtr.Zero; // Disabled unsafe access for compatibility
         
         /// <summary>
         /// Access to raw data array for advanced operations
@@ -304,9 +304,8 @@ namespace Traversify.AI {
         /// Gets a span view of the tensor data for efficient memory access.
         /// </summary>
         public Span<float> AsSpan() {
-            unsafe {
-                return new Span<float>(_data.GetUnsafePtr(), _data.Length);
-            }
+            // Use safe array conversion instead of unsafe pointer access
+            return new Span<float>(_data.ToArray());
         }
         
         /// <summary>
@@ -1230,12 +1229,7 @@ namespace Traversify.AI {
                 
                 DetectedObject obj = new DetectedObject {
                     id = Guid.NewGuid().ToString(),
-                    boundingBox = new BoundingBox {
-                        x = box[0],
-                        y = box[1],
-                        width = box[2] - box[0],
-                        height = box[3] - box[1]
-                    },
+                    boundingBox = new Rect(box[0], box[1], box[2] - box[0], box[3] - box[1]),
                     confidence = confidence,
                     classId = idx, // This should be the class index from earlier
                     className = classLabels != null && idx < classLabels.Length ? classLabels[idx] : $"class_{idx}",

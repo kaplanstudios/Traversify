@@ -543,7 +543,7 @@ namespace Traversify {
             }
             
             billboard.Mode = mode;
-            billboard.AxisConstraint = lockYAxis ? AxisConstraint.LockY : AxisConstraint.None;
+            billboard.CurrentAxisConstraint = lockYAxis ? AxisConstraint.LockY : AxisConstraint.None;
             
             return billboard;
         }
@@ -563,7 +563,7 @@ namespace Traversify {
             }
             
             billboard.Mode = cameraForward ? BillboardMode.CameraForward : BillboardMode.LookAtCamera;
-            billboard.AxisConstraint = AxisConstraint.None;
+            billboard.CurrentAxisConstraint = AxisConstraint.None;
             billboard.BillboardUpdateMode = UpdateMode.CameraMovement;
             billboard._updateInterval = 0.1f;
             billboard._cameraMovementThreshold = 0.2f;
@@ -622,7 +622,7 @@ namespace Traversify {
             // Add billboard component
             Billboard billboard = billboardObj.AddComponent<Billboard>();
             billboard.Mode = BillboardMode.Cylindrical;
-            billboard.AxisConstraint = AxisConstraint.None;
+            billboard.CurrentAxisConstraint = AxisConstraint.None;
             billboard.BillboardUpdateMode = UpdateMode.CameraMovement;
             billboard._updateInterval = 0.1f;
             billboard._cameraMovementThreshold = 0.2f;

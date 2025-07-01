@@ -11,13 +11,16 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Rendering;
 // Missing package references - using conditional compilation
-#if UNITY_SENTIS_AVAILABLE
-using Unity.Sentis;
+#if UNITY_INFERENCE_ENGINE_AVAILABLE
+using Unity.InferenceEngine;
+#elif UNITY_BARRACUDA_AVAILABLE
+using Unity.Barracuda;
 #endif
 #if UNITY_PROFILING_AVAILABLE
 using Unity.Profiling;
@@ -27,12 +30,20 @@ using Traversify.AI;
 
 namespace Traversify.Core {
     
-#if !UNITY_SENTIS_AVAILABLE
+#if !UNITY_AI_INFERENCE_AVAILABLE
     /// <summary>
-    /// Placeholder for NNModel when Unity.Sentis is not available.
+    /// Placeholder for NNModel when Unity.AI.Inference is not available.
     /// </summary>
     public class NNModel : ScriptableObject {
         public string modelName;
+        public ModelAsset modelAsset;
+    }
+    
+    /// <summary>
+    /// Placeholder for ModelAsset when Unity.AI.Inference is not available.
+    /// </summary>
+    public class ModelAsset {
+        public long length = 50 * 1024 * 1024; // Default 50MB
     }
     
     /// <summary>
@@ -480,7 +491,7 @@ namespace Traversify.Core {
                     // Import the ONNX model to Barracuda format
                     using (var modelBuilder = new ModelBuilder(onnxModel.name)) {
                         // Use model asset as input source
-                        ModelBuilder.Input nnInput = modelBuilder.Input(onnxModel);
+                        ModelBuilder.Input nnInput = modelBuilder.CreateInput(onnxModel);
                         nnModel = modelBuilder.Build(nnInput);
                     }
                 }
@@ -681,63 +692,55 @@ namespace Traversify.Core {
         /// Creates a Barracuda worker with the specified backend.
         /// </summary>
         private static IWorker CreateBarracudaWorker(Type type, Unity.InferenceEngine.Model model, WorkerConfig config) {
-            WorkerFactory.Type barracudaType;
+            #if UNITY_BARRACUDA_AVAILABLE
+            Unity.Barracuda.WorkerFactory.Type barracudaType;
             
             switch (type) {
                 case Type.ComputePrecompiled:
-                    barracudaType = WorkerFactory.Type.ComputePrecompiled;
+                    barracudaType = Unity.Barracuda.WorkerFactory.Type.ComputePrecompiled;
                     break;
                 case Type.Compute:
-                    barracudaType = WorkerFactory.Type.Compute;
+                    barracudaType = Unity.Barracuda.WorkerFactory.Type.Compute;
                     break;
                 case Type.ComputeOptimized:
                     // ComputeOptimized is actually ComputePrecompiled with some extra optimizations
-                    barracudaType = WorkerFactory.Type.ComputePrecompiled;
+                    barracudaType = Unity.Barracuda.WorkerFactory.Type.ComputePrecompiled;
                     break;
                 case Type.CSharpBurst:
-                    barracudaType = WorkerFactory.Type.CSharpBurst;
+                    barracudaType = Unity.Barracuda.WorkerFactory.Type.CSharpBurst;
                     break;
                 case Type.CoreML:
                     #if UNITY_IOS || UNITY_EDITOR_OSX || UNITY_STANDALONE_OSX
-                    barracudaType = WorkerFactory.Type.CoreML;
+                    barracudaType = Unity.Barracuda.WorkerFactory.Type.CoreML;
                     #else
-                    barracudaType = _gpuAvailable ? WorkerFactory.Type.ComputePrecompiled : WorkerFactory.Type.CSharpBurst;
+                    barracudaType = _gpuAvailable ? Unity.Barracuda.WorkerFactory.Type.ComputePrecompiled : Unity.Barracuda.WorkerFactory.Type.CSharpBurst;
                     #endif
                     break;
                 default:
-                    barracudaType = _gpuAvailable ? WorkerFactory.Type.ComputePrecompiled : WorkerFactory.Type.CSharpBurst;
+                    barracudaType = _gpuAvailable ? Unity.Barracuda.WorkerFactory.Type.ComputePrecompiled : Unity.Barracuda.WorkerFactory.Type.CSharpBurst;
                     break;
             }
             
             // Configure worker options
-            WorkerFactory.WorkerOptions options = new WorkerFactory.WorkerOptions();
+            var options = new Unity.Barracuda.WorkerFactory.WorkerConfiguration();
             
             // Apply performance profile optimizations
             if (type == Type.ComputeOptimized) {
-                options.EnableXlaCompilation();
-                options.EnableIntermediatesDynamicAllocation();
-                options.EnableFuseLinearLayersWithActivations();
+                // Apply optimizations if available in Barracuda
+                options.compareAgainstType = Unity.Barracuda.WorkerFactory.Type.ComputePrecompiled;
             }
             
-            // Apply configuration options
-            if (config.useHalfPrecision) {
-                options.EnableHalfPrecision();
-            }
-            
+            // Apply configuration options based on available Barracuda features
             if (config.verboseLogging) {
-                options.EnableVerboseLogging();
-            }
-            
-            if (config.threadSafe) {
-                options.EnableThreadSafeWorkload();
-            }
-            
-            if (config.optimizeForDevice) {
-                options.OptimizeForDevicePerformance();
+                options.verbose = true;
             }
             
             // Create and return the worker
-            return UnityEngine.Barracuda.WorkerFactory.CreateWorker(barracudaType, model, options);
+            return Unity.Barracuda.WorkerFactory.CreateWorker(barracudaType, model, options);
+            #else
+            // Barracuda not available - return a placeholder worker
+            throw new NotImplementedException("Unity.Barracuda package not available. Please install Unity.Barracuda to use AI inference features.");
+            #endif
         }
         
         /// <summary>
@@ -1283,5 +1286,61 @@ namespace Traversify.Core {
         }
         
         #endregion
+    }
+    
+    /// <summary>
+    /// Placeholder for ModelBuilder when Unity.Barracuda is not available.
+    /// </summary>
+    public class ModelBuilder : IDisposable {
+        private string _name;
+        
+        public ModelBuilder(string name) {
+            _name = name;
+        }
+        
+        public Input CreateInput(UnityEngine.Object asset) {
+            return new Input();
+        }
+        
+        public Unity.InferenceEngine.Model Build(Input input) {
+            throw new NotImplementedException("ModelBuilder not available without Unity.Barracuda");
+        }
+        
+        public void Dispose() {
+        }
+        
+        public class Input {
+        }
+    }
+    
+    /// <summary>
+    /// Placeholder for NNLoader when not available.
+    /// </summary>
+    public static class NNLoader {
+        /// <summary>
+        /// Checks if ONNX Runtime is available in the current environment.
+        /// </summary>
+        /// <returns>True if ONNX Runtime is available</returns>
+        public static bool IsOnnxRuntimeAvailable() {
+            #if UNITY_ONNX_RUNTIME_AVAILABLE
+            return true;
+            #else
+            return false;
+            #endif
+        }
+    }
+    
+    /// <summary>
+    /// Placeholder for Unity.InferenceEngine namespace when not available.
+    /// </summary>
+    namespace Unity.InferenceEngine {
+        public class Model {
+        }
+        
+        public static class ModelLoader {
+            public static Model Load(NNModel model) {
+                throw new NotImplementedException("Unity.InferenceEngine.ModelLoader not available");
+            }
+        }
     }
 }

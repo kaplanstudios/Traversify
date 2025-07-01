@@ -10,7 +10,9 @@
  *************************************************************************/
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using Traversify.Core;
 
@@ -476,10 +478,10 @@ namespace Traversify.Terrain {
                     // Sample source heightmap
                     int sx = Mathf.Clamp(Mathf.FloorToInt(u * sourceWidth), 0, sourceWidth - 1);
                     int sy = Mathf.Clamp(Mathf.FloorToInt(v * sourceHeight), 0, sourceHeight - 1);
-                    float sourceHeight = sourceColors[sy * sourceWidth + sx].r;
+                    float heightValue = sourceColors[sy * sourceWidth + sx].r;
                     
                     // Apply base height and variation
-                    float modHeight = baseHeight + (sourceHeight - 0.5f) * heightVariation;
+                    float modHeight = baseHeight + (heightValue - 0.5f) * heightVariation;
                     
                     // Apply mask if available
                     float maskValue = 1f;
@@ -1033,3 +1035,4 @@ namespace Traversify.Terrain {
         }
     }
 }
+

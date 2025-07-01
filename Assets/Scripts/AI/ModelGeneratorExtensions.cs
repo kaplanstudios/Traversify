@@ -1246,6 +1246,28 @@ namespace Traversify {
             };
         }
         
+        private static List<PathSegment> ConvertTerrainFeaturesToPathSegments(List<TerrainFeature> features) {
+            List<PathSegment> segments = new List<PathSegment>();
+            
+            foreach (var feature in features) {
+                // Create a path segment for each terrain feature
+                PathSegment segment = new PathSegment();
+                segment.points = new List<Vector2>();
+                
+                // Sample points along the feature bounding box
+                for (float x = feature.boundingBox.x; x < feature.boundingBox.xMax; x += 0.1f) {
+                    for (float y = feature.boundingBox.y; y < feature.boundingBox.yMax; y += 0.1f) {
+                        segment.points.Add(new Vector2(x, y));
+                    }
+                }
+                
+                if (segment.points.Count > 0) {
+                    segments.Add(segment);
+                }
+            }
+            
+            return segments;
+        }
         #endregion
     }
 }

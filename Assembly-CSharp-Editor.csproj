@@ -49,8 +49,8 @@
     <Compile Include="Assets/Scripts/Editor/PackageUtility.cs" />
     <Compile Include="Assets/Scripts/Editor/SymbolDefinitionManager.cs" />
     <Compile Include="Assets/Scripts/Editor/TraversifySetup.cs" />
-    <Compile Include="Assets/Scripts/Editor/RequiredPackagesWindow.cs" />
     <Compile Include="Assets/Scripts/Editor/TraversifyPackageReinstaller.cs" />
+    <Compile Include="Assets/Scripts/Editor/RequiredPackagesWindow.cs" />
     <Compile Include="Assets/Editor/MathExtensionsForUnity.cs" />
     <Compile Include="Assets/Editor/FixAssemblyLoading.cs" />
     <Compile Include="Assets/Scripts/Editor/PackageDependencyNotification.cs" />
@@ -852,14 +852,17 @@
     <Reference Include="UnityEditor.UI">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/UnityEditor.UI.dll</HintPath>
     </Reference>
-    <Reference Include="Unity.AI.Navigation">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.AI.Navigation.dll</HintPath>
-    </Reference>
     <Reference Include="Unity.Rider.Editor">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Rider.Editor.dll</HintPath>
     </Reference>
+    <Reference Include="Unity.Sentis.iOSBLAS">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Sentis.iOSBLAS.dll</HintPath>
+    </Reference>
     <Reference Include="Unity.Collections.Editor">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Collections.Editor.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.TerrainTools.Editor">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.TerrainTools.Editor.dll</HintPath>
     </Reference>
     <Reference Include="Unity.Multiplayer.Center.Common">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Multiplayer.Center.Common.dll</HintPath>
@@ -867,32 +870,38 @@
     <Reference Include="Unity.AI.Navigation.Updater">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.AI.Navigation.Updater.dll</HintPath>
     </Reference>
-    <Reference Include="Unity.InferenceEngine">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.InferenceEngine.dll</HintPath>
+    <Reference Include="Unity.Sentis">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Sentis.dll</HintPath>
+    </Reference>
+    <Reference Include="glTFast.dots">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/glTFast.dots.dll</HintPath>
     </Reference>
     <Reference Include="Unity.TextMeshPro">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.TextMeshPro.dll</HintPath>
     </Reference>
-    <Reference Include="Unity.InferenceEngine.iOSBLAS">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.InferenceEngine.iOSBLAS.dll</HintPath>
+    <Reference Include="Unity.AI.Navigation">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.AI.Navigation.dll</HintPath>
     </Reference>
     <Reference Include="Unity.EditorCoroutines.Editor">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.EditorCoroutines.Editor.dll</HintPath>
     </Reference>
-    <Reference Include="Unity.InferenceEngine.ONNX.Editor">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.InferenceEngine.ONNX.Editor.dll</HintPath>
+    <Reference Include="Unity.TerrainTools">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.TerrainTools.dll</HintPath>
     </Reference>
-    <Reference Include="Unity.InferenceEngine.MacBLAS">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.InferenceEngine.MacBLAS.dll</HintPath>
+    <Reference Include="Unity.Sentis.Editor">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Sentis.Editor.dll</HintPath>
+    </Reference>
+    <Reference Include="glTFast">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/glTFast.dll</HintPath>
     </Reference>
     <Reference Include="Unity.AI.Navigation.Editor">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.AI.Navigation.Editor.dll</HintPath>
     </Reference>
-    <Reference Include="UnityEngine.UI">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/UnityEngine.UI.dll</HintPath>
-    </Reference>
     <Reference Include="Unity.Mathematics">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Mathematics.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/UnityEngine.UI.dll</HintPath>
     </Reference>
     <Reference Include="Unity.Multiplayer.Center.Editor">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Multiplayer.Center.Editor.dll</HintPath>
@@ -902,9 +911,6 @@
     </Reference>
     <Reference Include="Unity.AI.Navigation.Editor.ConversionSystem">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.AI.Navigation.Editor.ConversionSystem.dll</HintPath>
-    </Reference>
-    <Reference Include="Unity.InferenceEngine.Editor">
-      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.InferenceEngine.Editor.dll</HintPath>
     </Reference>
     <Reference Include="Unity.TextMeshPro.Editor">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.TextMeshPro.Editor.dll</HintPath>
@@ -918,11 +924,28 @@
     <Reference Include="Unity.Burst">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Burst.dll</HintPath>
     </Reference>
+    <Reference Include="glTFast.Editor">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/glTFast.Editor.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.Sentis.MacBLAS">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Sentis.MacBLAS.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.Sentis.ONNX">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/ScriptAssemblies/Unity.Sentis.ONNX.dll</HintPath>
+    </Reference>
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="Assembly-CSharp.csproj">
       <Project>{58d145a1-c71a-a1c5-b116-7fd60f7ce0c0}</Project>
       <Name>Assembly-CSharp</Name>
+    </ProjectReference>
+    <ProjectReference Include="tripoforunity.Editor.csproj">
+      <Project>{7f21fb3c-95b9-7b8a-50ec-8ceb303121fc}</Project>
+      <Name>tripoforunity.Editor</Name>
+    </ProjectReference>
+    <ProjectReference Include="tripoforunity.Runtime.csproj">
+      <Project>{e8440458-707c-7364-0518-ad460acb9317}</Project>
+      <Name>tripoforunity.Runtime</Name>
     </ProjectReference>
     <ProjectReference Include="Piglet.csproj">
       <Project>{36c21c8e-64ce-a22c-c82b-4d354fe56783}</Project>

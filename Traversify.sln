@@ -9,6 +9,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Assembly-CSharp", "Assembly
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PigletEditor", "PigletEditor.csproj", "{7a00335e-d025-1f88-72be-6004e793699b}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "tripoforunity.Editor", "tripoforunity.Editor.csproj", "{7f21fb3c-95b9-7b8a-50ec-8ceb303121fc}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "tripoforunity.Runtime", "tripoforunity.Runtime.csproj", "{e8440458-707c-7364-0518-ad460acb9317}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -22,6 +26,10 @@ Global
 		{58d145a1-c71a-a1c5-b116-7fd60f7ce0c0}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7a00335e-d025-1f88-72be-6004e793699b}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{7a00335e-d025-1f88-72be-6004e793699b}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7f21fb3c-95b9-7b8a-50ec-8ceb303121fc}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7f21fb3c-95b9-7b8a-50ec-8ceb303121fc}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{e8440458-707c-7364-0518-ad460acb9317}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{e8440458-707c-7364-0518-ad460acb9317}.Debug|Any CPU.Build.0 = Debug|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

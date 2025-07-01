@@ -100,7 +100,10 @@ namespace Traversify {
         [Range(1, 16)] public int workerThreadCount = 4;
         
         [Tooltip("Maximum models to generate concurrently")]
-        [Range(1, 16)] public int maxConcurrentRequests = 4;
+        [Range(1, 16)] public int maxConcurrentModels = 4;
+        
+        [Tooltip("Maximum API requests concurrently")]
+        [Range(1, 16)] public int maxConcurrentAPIRequests = 4;
         
         [Tooltip("Delay between API requests (seconds)")]
         [Range(0f, 5f)] public float apiRateLimitDelay = 0.5f;
@@ -121,21 +124,38 @@ namespace Traversify {
         [Tooltip("OpenAI key for description enhancement")]
         public string openAIApiKey;
         
+        [Header("Tripo3D Settings")]
+        [Tooltip("Enable Tripo3D generation for detected objects")]
+        public bool useTripo3D = true;
+        
         [Tooltip("Tripo3D API key for model generation")]
-        public string tripo3DApiKey;
+        [SerializeField] private string tripo3DApiKey;
         
-        [Tooltip("Prompt enhancement template")]
-        [TextArea(3, 10)]
-        public string promptTemplate = "Generate a detailed 3D model of {description} suitable for a game environment. The model should be low-poly with clean topology and UV mapping.";
+        [Tooltip("Quality setting for Tripo3D generation")]
+        public Tripo3DQuality tripo3DQuality = Tripo3DQuality.High;
         
-        [Tooltip("Fallback model library path")]
-        public string fallbackModelPath = "Models/Fallbacks";
+        [Tooltip("Maximum concurrent Tripo3D requests")]
+        [Range(1, 10)] public int maxConcurrentRequests = 3;
         
-        [Tooltip("Use cached models when available")]
-        public bool useCachedModels = true;
+        [Tooltip("Timeout for Tripo3D requests (seconds)")]
+        [Range(30, 300)] public float requestTimeout = 120f;
         
-        [Tooltip("Maximum age of cached models (days)")]
-        public int cacheMaxAgeDays = 30;
+        [Tooltip("Generate terrain features using Tripo3D")]
+        public bool generateTerrainWith3D = true;
+        
+        [Tooltip("Generate buildings and structures using Tripo3D")]
+        public bool generateBuildingsWith3D = true;
+        
+        [Tooltip("Generate vegetation using Tripo3D")]
+        public bool generateVegetationWith3D = false; // Often better with Unity's terrain system
+        
+        public enum Tripo3DQuality
+        {
+            Draft,
+            Standard,
+            High,
+            Ultra
+        }
 
         [Header("Materials & Texturing")]
         [Tooltip("Default material for generated models")]
@@ -170,6 +190,14 @@ namespace Traversify {
         
         [Tooltip("Generate model validation report")]
         public bool generateValidationReport = false;
+
+        [Header("Cache Settings")]
+        [Tooltip("Enable caching of generated models")]
+        public bool useCachedModels = true;
+        
+        [Tooltip("Path to fallback models in Resources folder")]
+        private string fallbackModelPath = "Fallback/Models";
+
         #endregion
 
         #region Private Fields
@@ -190,6 +218,9 @@ namespace Traversify {
         private ComputeShader _placementComputeShader;
         private Dictionary<string, UnityEngine.Terrain> _terrainCache = new Dictionary<string, UnityEngine.Terrain>();
         
+        // Terrain configuration
+        private Vector2 terrainSize = new Vector2(500f, 500f);
+        
         // Metrics
         private int _totalModelsGenerated = 0;
         private int _totalInstancesCreated = 0;
@@ -199,6 +230,15 @@ namespace Traversify {
         
         // State
         private bool _isProcessing = false;
+        private bool _isInitialized = false;
+        private ModelGenerationConfig _generationConfig;
+        private List<ModelGenerationRequest> _activeRequests = new List<ModelGenerationRequest>();
+        
+        // Tripo3D generation state
+        private Dictionary<string, List<DetectedObject>> _objectGroups = new Dictionary<string, List<DetectedObject>>();
+        private Dictionary<string, GameObject> _generatedModels = new Dictionary<string, GameObject>();
+        private Queue<Tripo3DRequest> _tripo3DQueue = new Queue<Tripo3DRequest>();
+        private int _activeTripo3DRequests = 0;
         #endregion
 
         #region Initialization
@@ -328,7 +368,8 @@ namespace Traversify {
             UnityEngine.Terrain terrain,
             Action<List<GameObject>> onComplete = null,
             Action<string> onError = null,
-            Action<int, int> onProgress = null
+            Action<int, int> onProgress = null,
+            bool showProgress = true
         ) {
             if (!_isInitialized) {
                 onError?.Invoke("ModelGenerator not initialized");
@@ -348,133 +389,324 @@ namespace Traversify {
             debugger.StartTimer("ModelGeneration");
             _isProcessing = true;
             
-            try {
-                // Clear existing generation queue
-                _generationQueue.Clear();
-                
-                // Cache terrain for fast lookups
-                string terrainId = terrain.GetInstanceID().ToString();
-                if (!_terrainCache.ContainsKey(terrainId)) {
-                    _terrainCache[terrainId] = terrain;
+            // Store error state instead of using try-catch around yield
+            string errorMessage = null;
+            List<GameObject> createdObjects = new List<GameObject>();
+            
+            // Clear existing generation queue
+            _generationQueue.Clear();
+            
+            // Cache terrain for fast lookups
+            string terrainId = terrain.GetInstanceID().ToString();
+            if (!_terrainCache.ContainsKey(terrainId)) {
+                _terrainCache[terrainId] = terrain;
+            }
+            
+            // Process object groups or individual objects
+            List<ModelGenerationRequest> requests = new List<ModelGenerationRequest>();
+            
+            if (groupSimilarObjects && analysis.objectGroups != null && analysis.objectGroups.Count > 0) {
+                // Use pre-grouped objects
+                foreach (var group in analysis.objectGroups) {
+                    requests.AddRange(CreateRequestsFromGroup(group, terrain));
                 }
-                
-                // Process object groups or individual objects
-                List<ModelGenerationRequest> requests = new List<ModelGenerationRequest>();
-                
-                if (groupSimilarObjects && analysis.objectGroups != null && analysis.objectGroups.Count > 0) {
-                    // Use pre-grouped objects
-                    foreach (var group in analysis.objectGroups) {
-                        requests.AddRange(CreateRequestsFromGroup(group, terrain));
-                    }
-                } 
-                else if (groupSimilarObjects) {
-                    // Group objects ourselves
-                    var groups = GroupObjectsBySimilarity(analysis.mapObjects);
-                    foreach (var group in groups) {
-                        requests.AddRange(CreateRequestsFromGroup(group, terrain));
-                    }
-                } 
-                else {
-                    // Process individual objects
-                    foreach (var obj in analysis.mapObjects) {
-                        var request = CreateRequestFromMapObject(obj, terrain);
-                        requests.Add(request);
-                    }
+            } 
+            else if (groupSimilarObjects) {
+                // Group objects ourselves
+                var groups = GroupObjectsBySimilarity(analysis.mapObjects);
+                foreach (var group in groups) {
+                    requests.AddRange(CreateRequestsFromGroup(group, terrain));
                 }
-                
-                // Report total to process
-                int total = requests.Count;
-                debugger.Log($"Preparing to generate {total} models", LogCategory.Models);
-                
-                // Add all requests to queue
-                foreach (var request in requests) {
-                    _generationQueue.Enqueue(request);
+            } 
+            else {
+                // Process individual objects
+                foreach (var obj in analysis.mapObjects) {
+                    var request = CreateRequestFromMapObject(obj, terrain);
+                    requests.Add(request);
                 }
-                
-                var createdObjects = new List<GameObject>();
-                var processingTasks = new List<Task>();
-                int completed = 0;
-                
-                // Start processing the queue
-                while (_generationQueue.Count > 0 || _activeRequests > 0) {
-                    // Process new requests if slots available
-                    while (_generationQueue.Count > 0 && _activeRequests < maxConcurrentRequests) {
-                        var request = _generationQueue.Dequeue();
-                        
-                        // Start model generation with callback to track completion
-                        _activeRequests++;
-                        
-                        var processTask = Task.Run(async () => {
+            }
+            
+            // Report total to process
+            int total = requests.Count;
+            debugger.Log($"Preparing to generate {total} models", LogCategory.Models);
+            
+            // Add all requests to queue
+            foreach (var request in requests) {
+                _generationQueue.Enqueue(request);
+            }
+            
+            var processingTasks = new List<Task>();
+            int completed = 0;
+            
+            // Start processing the queue
+            while (_generationQueue.Count > 0 || _activeRequests.Count > 0) {
+                // Process new requests if slots available
+                while (_generationQueue.Count > 0 && _activeRequests.Count < maxConcurrentRequests) {
+                    var request = _generationQueue.Dequeue();
+                    
+                    // Start model generation with callback to track completion
+                    _activeRequests.Add(request);
+                    
+                    var processTask = Task.Run(async () => {
+                        try {
+                            await _apiSemaphore.WaitAsync(_cancellationTokenSource.Token);
+                            
+                            GameObject result = null;
                             try {
-                                await _apiSemaphore.WaitAsync(_cancellationTokenSource.Token);
-                                
-                                GameObject result = null;
-                                try {
-                                    result = await GenerateModelAsync(request);
-                                }
-                                finally {
-                                    _apiSemaphore.Release();
-                                }
-                                
-                                if (result != null) {
-                                    lock (createdObjects) {
-                                        createdObjects.Add(result);
-                                    }
-                                }
-                                
-                                completed++;
-                                onProgress?.Invoke(completed, total);
-                            }
-                            catch (OperationCanceledException) {
-                                // Shutdown requested, exit gracefully
-                            }
-                            catch (Exception ex) {
-                                debugger.LogError($"Error generating model: {ex.Message}", LogCategory.Models);
+                                result = await GenerateModelAsync(request);
                             }
                             finally {
-                                _activeRequests--;
+                                _apiSemaphore.Release();
                             }
-                        });
+                            
+                            if (result != null) {
+                                lock (createdObjects) {
+                                    createdObjects.Add(result);
+                                }
+                            }
+                        }
+                        catch (Exception ex) {
+                            errorMessage = ex.Message;
+                        }
                         
-                        processingTasks.Add(processTask);
-                    }
+                        completed++;
+                        onProgress?.Invoke(completed, total);
+                        
+                        lock (_activeRequests) {
+                            _activeRequests.Remove(request);
+                        }
+                    });
                     
-                    // Progress update
-                    if (showProgress) {
-                        float progress = (float)completed / total;
-                        debugger.ReportProgress($"Generating models ({completed}/{total})", progress);
-                    }
-                    
-                    yield return new WaitForSeconds(0.1f);
+                    processingTasks.Add(processTask);
                 }
                 
-                // Wait for all tasks to complete
-                while (_activeRequests > 0) {
-                    yield return new WaitForSeconds(0.1f);
+                // Progress update
+                if (showProgress) {
+                    float progress = (float)completed / total;
+                    debugger.ReportProgress($"Generating models ({completed}/{total})", progress);
                 }
                 
-                // Apply final optimizations to models
-                if (useMeshCombining) {
-                    yield return StartCoroutine(CombineSimilarMeshes(createdObjects));
-                }
-                
-                // Report performance metrics
-                float generationTime = debugger.StopTimer("ModelGeneration");
-                debugger.Log($"Model generation completed in {generationTime:F2}s - " +
-                             $"Generated {createdObjects.Count} models ({_totalInstancesCreated} instances)", 
-                             LogCategory.Models);
-                
-                LogModelDistribution();
-                
+                yield return new WaitForSeconds(0.1f);
+            }
+            
+            // Wait for all tasks to complete
+            while (_activeRequests.Count > 0) {
+                yield return new WaitForSeconds(0.1f);
+            }
+            
+            // Apply final optimizations to models
+            if (useMeshCombining) {
+                createdObjects = CombineSimilarMeshes(createdObjects);
+            }
+            
+            // Report performance metrics
+            float generationTime = debugger.StopTimer("ModelGeneration");
+            debugger.Log($"Model generation completed in {generationTime:F2}s - " +
+                         $"Generated {createdObjects.Count} models ({_totalInstancesCreated} instances)", 
+                         LogCategory.Models);
+            
+            LogModelDistribution(createdObjects);
+            
+            _isProcessing = false;
+            
+            // Handle any errors that occurred
+            if (!string.IsNullOrEmpty(errorMessage)) {
+                debugger.LogError($"GenerateAndPlaceModels failed: {errorMessage}", LogCategory.Models);
+                onError?.Invoke(errorMessage);
+            } else {
                 // Return all created objects
                 onComplete?.Invoke(createdObjects);
             }
-            catch (Exception ex) {
-                debugger.LogError($"GenerateAndPlaceModels failed: {ex.Message}", LogCategory.Models);
-                onError?.Invoke(ex.Message);
+        }
+        
+        /// <summary>
+        /// Generate models using Tripo3D and place them precisely using ObjectPlacer
+        /// </summary>
+        public IEnumerator GenerateAndPlaceModelsWithObjectPlacer(
+            AnalysisResults analysis,
+            UnityEngine.Terrain terrain,
+            Action<List<GameObject>> onComplete = null,
+            Action<string> onError = null,
+            Action<int, int> onProgress = null
+        ) {
+            if (!_isInitialized) {
+                onError?.Invoke("ModelGenerator not initialized");
+                yield break;
             }
-            finally {
+            
+            if (analysis == null) {
+                onError?.Invoke("No analysis results provided");
+                yield break;
+            }
+            
+            if (terrain == null) {
+                onError?.Invoke("No terrain provided for model placement");
+                yield break;
+            }
+            
+            debugger.StartTimer("ModelGenerationWithObjectPlacer");
+            _isProcessing = true;
+            
+            string errorMessage = null;
+            List<GameObject> generatedModels = new List<GameObject>();
+            List<GameObject> placedObjects = new List<GameObject>();
+            
+            // Step 1: Generate models using Tripo3D
+            debugger.Log("Starting model generation phase...", LogCategory.Models);
+            
+            yield return StartCoroutine(GenerateModelsOnly(analysis, 
+                (models) => {
+                    generatedModels.AddRange(models);
+                    debugger.Log($"Generated {models.Count} models", LogCategory.Models);
+                },
+                (error) => {
+                    errorMessage = error;
+                },
+                (completed, total) => {
+                    // Report generation progress (first 70% of total progress)
+                    onProgress?.Invoke(Mathf.RoundToInt(completed * 0.7f), total);
+                }
+            ));
+            
+            if (!string.IsNullOrEmpty(errorMessage)) {
+                onError?.Invoke(errorMessage);
                 _isProcessing = false;
+                yield break;
+            }
+            
+            // Step 2: Use ObjectPlacer for precise placement
+            if (generatedModels.Count > 0) {
+                debugger.Log("Starting precise placement phase with ObjectPlacer...", LogCategory.Models);
+                
+                // Create a model provider for ObjectPlacer
+                var modelProvider = new GeneratedModelProvider(generatedModels, analysis.mapObjects);
+                
+                // Use ObjectPlacer for precise placement
+                yield return StartCoroutine(ObjectPlacer.Instance.PlaceObjects(
+                    analysis,
+                    terrain,
+                    modelProvider,
+                    (objects) => {
+                        placedObjects.AddRange(objects);
+                        debugger.Log($"Placed {objects.Count} objects using ObjectPlacer", LogCategory.Models);
+                    },
+                    (completed, total) => {
+                        // Report placement progress (remaining 30% of total progress)
+                        int totalProgress = Mathf.RoundToInt(0.7f * analysis.mapObjects.Count + completed * 0.3f);
+                        onProgress?.Invoke(totalProgress, analysis.mapObjects.Count);
+                    },
+                    (error) => {
+                        errorMessage = error;
+                    }
+                ));
+            }
+            
+            float generationTime = debugger.StopTimer("ModelGenerationWithObjectPlacer");
+            debugger.Log($"Model generation and placement completed in {generationTime:F2}s - " +
+                         $"Generated {generatedModels.Count} models, placed {placedObjects.Count} objects", 
+                         LogCategory.Models);
+            
+            _isProcessing = false;
+            
+            if (!string.IsNullOrEmpty(errorMessage)) {
+                onError?.Invoke(errorMessage);
+            } else {
+                onComplete?.Invoke(placedObjects);
+            }
+        }
+        
+        /// <summary>
+        /// Generate models only without placement (for use with ObjectPlacer)
+        /// </summary>
+        private IEnumerator GenerateModelsOnly(
+            AnalysisResults analysis,
+            Action<List<GameObject>> onComplete,
+            Action<string> onError,
+            Action<int, int> onProgress
+        ) {
+            List<GameObject> generatedModels = new List<GameObject>();
+            string errorMessage = null;
+            
+            // Group similar objects for efficient generation
+            var groups = groupSimilarObjects ? GroupObjectsBySimilarity(analysis.mapObjects) : 
+                         analysis.mapObjects.Select(obj => new ObjectGroup { 
+                             groupId = Guid.NewGuid().ToString(), 
+                             type = obj.type, 
+                             objects = new List<MapObject> { obj } 
+                         }).ToList();
+            
+            int totalGroups = groups.Count;
+            int completedGroups = 0;
+            
+            // Generate one model per group (master models for instancing)
+            foreach (var group in groups) {
+                if (group.objects.Count == 0) continue;
+                
+                MapObject template = group.objects.First();
+                
+                // Create generation request for the master model
+                var request = new ModelGenerationRequest {
+                    objectType = template.type,
+                    description = template.enhancedDescription ?? template.label,
+                    position = Vector3.zero, // Position will be handled by ObjectPlacer
+                    rotation = Quaternion.identity,
+                    scale = Vector3.one, // Scale will be handled by ObjectPlacer
+                    confidence = template.confidence,
+                    isGrouped = true
+                };
+                
+                bool generationComplete = false;
+                GameObject generatedModel = null;
+                string generationError = null;
+                
+                // Generate the model asynchronously
+                var task = Task.Run(async () => {
+                    try {
+                        await _apiSemaphore.WaitAsync(_cancellationTokenSource.Token);
+                        
+                        try {
+                            generatedModel = await GenerateModelAsync(request);
+                        }
+                        finally {
+                            _apiSemaphore.Release();
+                        }
+                    }
+                    catch (Exception ex) {
+                        generationError = ex.Message;
+                    }
+                    finally {
+                        generationComplete = true;
+                    }
+                });
+                
+                // Wait for generation to complete
+                while (!generationComplete) {
+                    yield return new WaitForSeconds(0.1f);
+                }
+                
+                if (!string.IsNullOrEmpty(generationError)) {
+                    errorMessage = generationError;
+                    break;
+                }
+                
+                if (generatedModel != null) {
+                    // Store metadata for ObjectPlacer to use
+                    var modelInfo = generatedModel.AddComponent<GeneratedModelInfo>();
+                    modelInfo.sourceGroup = group;
+                    modelInfo.objectType = template.type;
+                    modelInfo.description = template.enhancedDescription ?? template.label;
+                    
+                    generatedModels.Add(generatedModel);
+                }
+                
+                completedGroups++;
+                onProgress?.Invoke(completedGroups, totalGroups);
+            }
+            
+            if (!string.IsNullOrEmpty(errorMessage)) {
+                onError?.Invoke(errorMessage);
+            } else {
+                onComplete?.Invoke(generatedModels);
             }
         }
         
@@ -674,11 +906,11 @@ namespace Traversify {
                 // Enhance description if OpenAI is available
                 string enhancedDescription = request.description;
                 if (!string.IsNullOrEmpty(openAIApiKey) && !string.IsNullOrEmpty(request.description)) {
-                    enhancedDescription = await EnhanceDescriptionAsync(request.description);
+                    enhancedDescription = await EnhanceDescriptionAsync(request.description, request.objectType);
                 }
                 
                 // Format prompt with template
-                string prompt = FormatPrompt(enhancedDescription);
+                string prompt = FormatPrompt(enhancedDescription, request.objectType);
                 UpdateGenerationStatus(modelId, 0.2f, "Sending to Tripo3D");
                 
                 // Generate the model with Tripo3D
@@ -691,13 +923,13 @@ namespace Traversify {
                         _modelCache[modelId] = fallbackModel;
                         
                         // Place the model if position is provided
-                        if (request.position != Vector3.zero && FindTerrain(out UnityEngine.Terrain terrain)) {
+                        if (request.position != Vector3.zero && FindTerrain(out UnityEngine.Terrain terrainForPlacement)) {
                             return PlaceModelOnTerrain(
                                 fallbackModel,
                                 request.position,
                                 request.rotation,
                                 request.scale,
-                                terrain
+                                terrainForPlacement
                             );
                         }
                         
@@ -710,7 +942,7 @@ namespace Traversify {
                 }
                 
                 // Request model from Tripo3D
-                Model3DData modelData = await RequestTripo3DModelAsync(prompt, modelId);
+                GameObject modelData = await RequestTripo3DModelAsync(prompt, request.objectType);
                 if (modelData == null) {
                     GameObject fallbackModel = GetFallbackModel(request.objectType);
                     if (fallbackModel != null) {
@@ -718,13 +950,13 @@ namespace Traversify {
                         TrackModelGeneration(request.objectType);
                         _modelCache[modelId] = fallbackModel;
                         
-                        if (request.position != Vector3.zero && FindTerrain(out UnityEngine.Terrain terrain)) {
+                        if (request.position != Vector3.zero && FindTerrain(out UnityEngine.Terrain terrainForFallback)) {
                             return PlaceModelOnTerrain(
                                 fallbackModel,
                                 request.position,
                                 request.rotation,
                                 request.scale,
-                                terrain
+                                terrainForFallback
                             );
                         }
                         
@@ -738,7 +970,7 @@ namespace Traversify {
                 UpdateGenerationStatus(modelId, 0.7f, "Instantiating model");
                 
                 // Create the model GameObject
-                GameObject modelObject = await InstantiateModelAsync(modelData, request.objectType);
+                GameObject modelObject = await InstantiateModelAsync(modelData, request.position, request.rotation, request.scale, request.targetTerrain);
                 if (modelObject == null) {
                     _failedGenerations++;
                     return null;
@@ -751,13 +983,13 @@ namespace Traversify {
                 UpdateGenerationStatus(modelId, 0.9f, "Placing on terrain");
                 
                 // Place on terrain if position is provided
-                if (request.position != Vector3.zero && FindTerrain(out UnityEngine.Terrain terrain)) {
+                if (request.position != Vector3.zero && FindTerrain(out UnityEngine.Terrain terrainForModel)) {
                     GameObject instance = PlaceModelOnTerrain(
                         modelObject,
                         request.position,
                         request.rotation,
                         request.scale,
-                        terrain
+                        terrainForModel
                     );
                     
                     UpdateGenerationStatus(modelId, 1.0f, "Complete");
@@ -801,1090 +1033,157 @@ namespace Traversify {
                 }
             }
         }
-        
-        private async Task<Model3DData> RequestTripo3DModelAsync(string prompt, string modelId) {
-            string requestUrl = "https://api.tripo3d.ai/v2/models/generate";
-            
-            // Prepare request data
-            var requestData = new {
-                prompt = prompt,
-                format = "obj",
-                resolution = "high",
-                animation = false,
-                textures = generateTextures,
-                optimization = "game_engine",
-                normal_maps = generateNormalMaps,
-                metallic_maps = generateMetallicMaps,
-                model_id = modelId
-            };
-            
-            string jsonData = JsonUtility.ToJson(requestData);
-            
-            using (UnityWebRequest request = new UnityWebRequest(requestUrl, "POST")) {
-                byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(jsonData);
-                request.uploadHandler = new UploadHandlerRaw(bodyRaw);
-                request.downloadHandler = new DownloadHandlerBuffer();
-                request.SetRequestHeader("Content-Type", "application/json");
-                request.SetRequestHeader("Authorization", $"Bearer {tripo3DApiKey}");
-                request.timeout = Mathf.RoundToInt(generationTimeout);
-                
-                // Start the request
-                var asyncOperation = request.SendWebRequest();
-                
-                // Update progress while waiting
-                while (!asyncOperation.isDone) {
-                    UpdateGenerationStatus(modelId, 0.2f + asyncOperation.progress * 0.3f, "Generating with Tripo3D");
-                    await Task.Delay(100);
-                    
-                    if (_cancellationTokenSource.Token.IsCancellationRequested) {
-                        request.Abort();
-                        throw new OperationCanceledException();
-                    }
-                }
-                
-                if (request.result != UnityWebRequest.Result.Success) {
-                    debugger.LogError($"Tripo3D API Error: {request.error}", LogCategory.Models);
-                    return null;
-                }
-                
-                string responseJson = request.downloadHandler.text;
-                UpdateGenerationStatus(modelId, 0.5f, "Processing response");
-                
-                // Parse the response
-                try {
-                    var response = JsonUtility.FromJson<Tripo3DResponse>(responseJson);
-                    if (response?.modelData == null) {
-                        debugger.LogError("Invalid response from Tripo3D API", LogCategory.Models);
-                        return null;
-                    }
-                    
-                    UpdateGenerationStatus(modelId, 0.6f, "Downloading model");
-                    
-                    // Download the model
-                    using (UnityWebRequest modelRequest = UnityWebRequest.Get(response.modelData.downloadUrl)) {
-                        asyncOperation = modelRequest.SendWebRequest();
-                        
-                        // Update progress during download
-                        while (!asyncOperation.isDone) {
-                            UpdateGenerationStatus(modelId, 0.6f + asyncOperation.progress * 0.1f, "Downloading model");
-                            await Task.Delay(100);
-                            
-                            if (_cancellationTokenSource.Token.IsCancellationRequested) {
-                                modelRequest.Abort();
-                                throw new OperationCanceledException();
-                            }
-                        }
-                        
-                        if (modelRequest.result != UnityWebRequest.Result.Success) {
-                            debugger.LogError($"Failed to download model: {modelRequest.error}", LogCategory.Models);
-                            return null;
-                        }
-                        
-                        // Parse the model data
-                        return ParseModelData(modelRequest.downloadHandler.data, response.modelData);
-                    }
-                }
-                catch (Exception ex) {
-                    debugger.LogError($"Failed to parse Tripo3D response: {ex.Message}", LogCategory.Models);
-                    return null;
-                }
-            }
-        }
-        
-        private Model3DData ParseModelData(byte[] modelData, Tripo3DModelData responseData) {
-            // Parse the OBJ data to create a Model3DData object
-            // This is a simplified version - a full implementation would properly parse OBJ format
-            
-            // Create a placeholder model data structure
-            var result = new Model3DData {
-                name = responseData.name ?? "GeneratedModel",
-                metadata = new Dictionary<string, object> {
-                    { "source", "Tripo3D" },
-                    { "timestamp", DateTime.UtcNow.ToString("o") },
-                    { "format", responseData.format },
-                    { "model_id", responseData.id }
-                }
-            };
-            
-            // Parse the OBJ data (simplified)
-            List<Vector3> vertices = new List<Vector3>();
-            List<Vector2> uvs = new List<Vector2>();
-            List<Vector3> normals = new List<Vector3>();
-            List<int> triangles = new List<int>();
-            
-            string objData = System.Text.Encoding.UTF8.GetString(modelData);
-            string[] lines = objData.Split('\n');
-            
-            Dictionary<string, int> vertexIndices = new Dictionary<string, int>();
-            int currentVertexIndex = 0;
-            
-            foreach (string line in lines) {
-                string trimmedLine = line.Trim();
-                if (string.IsNullOrEmpty(trimmedLine) || trimmedLine.StartsWith("#")) continue;
-                
-                string[] parts = trimmedLine.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length == 0) continue;
-                
-                switch (parts[0]) {
-                    case "v":
-                        if (parts.Length >= 4) {
-                            float x = float.Parse(parts[1]);
-                            float y = float.Parse(parts[2]);
-                            float z = float.Parse(parts[3]);
-                            vertices.Add(new Vector3(x, y, z));
-                        }
-                        break;
-                    
-                    case "vt":
-                        if (parts.Length >= 3) {
-                            float u = float.Parse(parts[1]);
-                            float v = float.Parse(parts[2]);
-                            uvs.Add(new Vector2(u, v));
-                        }
-                        break;
-                    
-                    case "vn":
-                        if (parts.Length >= 4) {
-                            float x = float.Parse(parts[1]);
-                            float y = float.Parse(parts[2]);
-                            float z = float.Parse(parts[3]);
-                            normals.Add(new Vector3(x, y, z));
-                        }
-                        break;
-                    
-                    case "f":
-                        if (parts.Length >= 4) {
-                            // Parse triangle or quad face
-                            for (int i = 1; i < parts.Length - 1; i++) {
-                                // Add a triangle (1, i+1, i+2)
-                                string v1 = parts[1];
-                                string v2 = parts[i+1];
-                                string v3 = parts[i+2];
-                                
-                                if (!vertexIndices.TryGetValue(v1, out int idx1)) {
-                                    idx1 = currentVertexIndex++;
-                                    vertexIndices[v1] = idx1;
-                                }
-                                
-                                if (!vertexIndices.TryGetValue(v2, out int idx2)) {
-                                    idx2 = currentVertexIndex++;
-                                    vertexIndices[v2] = idx2;
-                                }
-                                
-                                if (!vertexIndices.TryGetValue(v3, out int idx3)) {
-                                    idx3 = currentVertexIndex++;
-                                    vertexIndices[v3] = idx3;
-                                }
-                                
-                                triangles.Add(idx1);
-                                triangles.Add(idx2);
-                                triangles.Add(idx3);
-                            }
-                        }
-                        break;
-                }
-            }
-            
-            // Assign parsed data to model
-            result.vertices = vertices.ToArray();
-            result.triangles = triangles.ToArray();
-            result.normals = normals.ToArray();
-            result.uvs = uvs.ToArray();
-            
-            return result;
-        }
-        
-        private async Task<GameObject> InstantiateModelAsync(Model3DData modelData, string objectType) {
-            try {
-                // Create parent GameObject
-                GameObject modelObject = new GameObject(objectType);
-                
-                // Create the mesh
-                Mesh mesh = new Mesh();
-                mesh.name = $"{objectType}_Mesh";
-                
-                // Set mesh data
-                mesh.vertices = modelData.vertices;
-                mesh.triangles = modelData.triangles;
-                
-                if (modelData.normals != null && modelData.normals.Length > 0) {
-                    mesh.normals = modelData.normals;
-                } else {
-                    mesh.RecalculateNormals();
-                }
-                
-                if (modelData.uvs != null && modelData.uvs.Length > 0) {
-                    mesh.uv = modelData.uvs;
-                }
-                
-                if (modelData.colors != null && modelData.colors.Length == modelData.vertices.Length) {
-                    mesh.colors = modelData.colors;
-                }
-                
-                mesh.RecalculateBounds();
-                mesh.RecalculateTangents();
-                
-                // Create LOD levels if enabled
-                if (useLOD && maxLODLevels > 1) {
-                    await CreateLODLevelsAsync(modelObject, mesh, objectType);
-                } else {
-                    // Add single mesh to object
-                    var mf = modelObject.AddComponent<MeshFilter>();
-                    var mr = modelObject.AddComponent<MeshRenderer>();
-                    mf.sharedMesh = mesh;
-                    
-                    // Create or assign material
-                    Material material = null;
-                    
-                    if (modelData.material != null) {
-                        material = modelData.material;
-                    } else if (defaultMaterial != null) {
-                        material = new Material(defaultMaterial);
-                        material.name = $"{objectType}_Material";
-                    } else {
-                        material = new Material(Shader.Find("Standard"));
-                        material.name = $"{objectType}_Material";
-                    }
-                    
-                    if (useGPUInstancing) {
-                        material.enableInstancing = true;
-                    }
-                    
-                    mr.sharedMaterial = material;
-                }
-                
-                // Add collider
-                var collider = modelObject.AddComponent<MeshCollider>();
-                collider.sharedMesh = mesh;
-                collider.convex = true;
-                
-                // Add model metadata component
-                var metadata = modelObject.AddComponent<ModelMetadata>();
-                metadata.modelType = objectType;
-                metadata.description = modelData.name;
-                metadata.vertexCount = modelData.vertices.Length;
-                metadata.triangleCount = modelData.triangles.Length / 3;
-                metadata.generatedDate = DateTime.UtcNow;
-                
-                foreach (var kvp in modelData.metadata) {
-                    metadata.AddMetadata(kvp.Key, kvp.Value);
-                }
-                
-                // Normalize scale and position
-                NormalizeMeshTransform(modelObject);
-                
-                return modelObject;
-            }
-            catch (Exception ex) {
-                debugger.LogError($"Failed to instantiate model: {ex.Message}", LogCategory.Models);
-                return null;
-            }
-        }
-        
-        private async Task CreateLODLevelsAsync(GameObject parent, Mesh highPolyMesh, string objectType) {
-            // Create LOD group
-            var lodGroup = parent.AddComponent<LODGroup>();
-            LOD[] lods = new LOD[maxLODLevels];
-            
-            // Generate each LOD level
-            for (int i = 0; i < maxLODLevels; i++) {
-                float reduction = Mathf.Pow(lodQualityFactor, i);
-                
-                GameObject lodObject = new GameObject($"LOD_{i}");
-                lodObject.transform.SetParent(parent.transform, false);
-                
-                var mf = lodObject.AddComponent<MeshFilter>();
-                var mr = lodObject.AddComponent<MeshRenderer>();
-                
-                // Generate simplified mesh for this LOD level
-                Mesh lodMesh;
-                if (i == 0) {
-                    // LOD0 is the original high-poly mesh
-                    lodMesh = highPolyMesh;
-                } else {
-                    // Simplify mesh for lower LOD levels
-                    float quality = Mathf.Pow(lodQualityFactor, i);
-                    lodMesh = await SimplifyMeshAsync(highPolyMesh, quality);
-                }
-                
-                mf.sharedMesh = lodMesh;
-                
-                // Create material
-                Material material = null;
-                if (defaultMaterial != null) {
-                    material = new Material(defaultMaterial);
-                } else {
-                    material = new Material(Shader.Find("Standard"));
-                }
-                
-                material.name = $"{objectType}_LOD{i}_Material";
-                
-                if (useGPUInstancing) {
-                    material.enableInstancing = true;
-                }
-                
-                mr.sharedMaterial = material;
-                
-                // Calculate screen percentage for this LOD
-                float screenRelativeTransitionHeight = Mathf.Pow(0.5f, i);
-                lods[i] = new LOD(screenRelativeTransitionHeight, new Renderer[] { mr });
-            }
-            
-            lodGroup.SetLODs(lods);
-            lodGroup.RecalculateBounds();
-        }
-        
-        private async Task<Mesh> SimplifyMeshAsync(Mesh sourceMesh, float quality) {
-            // Simplified mesh decimation algorithm
-            // For a production environment, use a proper mesh simplification library
-            
-            if (quality >= 0.99f) return new Mesh(sourceMesh);
-            
-            int targetTriangles = Mathf.Max(1, Mathf.RoundToInt(sourceMesh.triangles.Length / 3 * quality));
-            
-            return await Task.Run(() => {
-                Mesh simplifiedMesh = new Mesh();
-                simplifiedMesh.name = sourceMesh.name + "_Simplified";
-                
-                // Very basic vertex welding and triangle removal
-                // This is a placeholder - real implementation would use a proper decimation algorithm
-                List<Vector3> vertices = new List<Vector3>(sourceMesh.vertices);
-                List<Vector3> normals = new List<Vector3>(sourceMesh.normals);
-                List<Vector2> uvs = new List<Vector2>(sourceMesh.uv);
-                List<int> triangles = new List<int>(sourceMesh.triangles);
-                
-                // Simple decimation by removing every nth triangle
-                if (triangles.Count / 3 > targetTriangles) {
-                    int stride = triangles.Count / (targetTriangles * 3);
-                    if (stride > 1) {
-                        List<int> newTriangles = new List<int>();
-                        for (int i = 0; i < triangles.Count; i += 3 * stride) {
-                            if (i + 2 < triangles.Count) {
-                                newTriangles.Add(triangles[i]);
-                                newTriangles.Add(triangles[i + 1]);
-                                newTriangles.Add(triangles[i + 2]);
-                            }
-                        }
-                        triangles = newTriangles;
-                    }
-                }
-                
-                simplifiedMesh.vertices = vertices.ToArray();
-                simplifiedMesh.normals = normals.ToArray();
-                simplifiedMesh.uv = uvs.ToArray();
-                simplifiedMesh.triangles = triangles.ToArray();
-                
-                simplifiedMesh.RecalculateBounds();
-                return simplifiedMesh;
-            });
-        }
-        
-        private void NormalizeMeshTransform(GameObject modelObject) {
-            var meshFilter = modelObject.GetComponent<MeshFilter>();
-            if (meshFilter == null || meshFilter.sharedMesh == null) return;
-            
-            Mesh mesh = meshFilter.sharedMesh;
-            
-            // Calculate scale to normalize size
-            Bounds bounds = mesh.bounds;
-            float maxExtent = Mathf.Max(bounds.size.x, bounds.size.y, bounds.size.z);
-            if (maxExtent > 0 && maxExtent != 1) {
-                Vector3 scale = Vector3.one / maxExtent;
-                
-                // Scale vertices
-                Vector3[] vertices = mesh.vertices;
-                for (int i = 0; i < vertices.Length; i++) {
-                    vertices[i] = Vector3.Scale(vertices[i], scale);
-                }
-                
-                mesh.vertices = vertices;
-                mesh.RecalculateBounds();
-            }
-            
-            // Center the mesh if not centered
-            bounds = mesh.bounds;
-            if (bounds.center != Vector3.zero) {
-                Vector3 offset = -bounds.center;
-                
-                // Offset vertices
-                Vector3[] vertices = mesh.vertices;
-                for (int i = 0; i < vertices.Length; i++) {
-                    vertices[i] += offset;
-                }
-                
-                mesh.vertices = vertices;
-                mesh.RecalculateBounds();
-            }
-        }
         #endregion
 
-        #region Terrain Placement
-        private PlacementTransform AdaptTransformToTerrain(
-            PlacementTransform transform,
-            GameObject model,
-            UnityEngine.Terrain terrain
-        ) {
-            if (terrain == null) return transform;
-            
-            PlacementTransform result = new PlacementTransform(transform);
-            Vector3 position = transform.Position;
-            
-            // Sample terrain height at position
-            float terrainHeight = terrain.SampleHeight(position);
-            position.y = terrainHeight;
-            
-            // Calculate size of the object for proper placement
-            Bounds bounds = CalculateModelBounds(model);
-            float objectHeight = bounds.size.y * transform.Scale.y;
-            float objectBottom = bounds.min.y * transform.Scale.y;
-            
-            // Fix floating or embedded objects
-            if (fixFloatingObjects || fixEmbeddedObjects) {
-                // Adjust Y position to sink the object properly
-                position.y = terrainHeight - objectBottom + (groundingDepth * objectHeight);
-            }
-            
-            // Get terrain normal for slope alignment
-            Vector3 terrainNormal = GetSmoothTerrainNormal(terrain, position, normalSampleSize);
-            
-            // Check if slope is too steep for this object
-            float slopeAngle = Vector3.Angle(terrainNormal, Vector3.up);
-            if (slopeAngle > maxPlacementSlope) {
-                // Find nearby position with acceptable slope
-                Vector3 betterPosition = FindBetterPlacementLocation(position, terrain, maxPlacementSlope);
-                if (betterPosition != position) {
-                    position = betterPosition;
-                    terrainHeight = terrain.SampleHeight(position);
-                    position.y = terrainHeight - objectBottom + (groundingDepth * objectHeight);
-                    terrainNormal = GetSmoothTerrainNormal(terrain, position, normalSampleSize);
-                }
-            }
-            
-            // Align rotation to terrain normal if needed
-            Quaternion rotation = transform.Rotation;
-            if (adaptToTerrain) {
-                // Create rotation that aligns the model's up direction with the terrain normal
-                Quaternion terrainAlign = Quaternion.FromToRotation(Vector3.up, terrainNormal);
-                
-                // Combine with original rotation, preserving facing direction
-                rotation = terrainAlign * transform.Rotation;
-            }
-            
-            // Update result
-            result.Position = position;
-            result.Rotation = rotation;
-            
-            return result;
-        }
-        
-        private Bounds CalculateModelBounds(GameObject model) {
-            Bounds bounds = new Bounds(Vector3.zero, Vector3.zero);
-            bool boundsInitialized = false;
-            
-            // Get bounds from all renderers
-            Renderer[] renderers = model.GetComponentsInChildren<Renderer>();
-            foreach (Renderer renderer in renderers) {
-                if (!boundsInitialized) {
-                    bounds = renderer.bounds;
-                    boundsInitialized = true;
-                } else {
-                    bounds.Encapsulate(renderer.bounds);
-                }
-            }
-            
-            // If no renderers, try using colliders
-            if (!boundsInitialized) {
-                Collider[] colliders = model.GetComponentsInChildren<Collider>();
-                foreach (Collider collider in colliders) {
-                    if (!boundsInitialized) {
-                        bounds = collider.bounds;
-                        boundsInitialized = true;
-                    } else {
-                        bounds.Encapsulate(collider.bounds);
+        #region ObjectPlacer Integration
+
+        /// <summary>
+        /// Model provider for ObjectPlacer that uses generated models
+        /// </summary>
+        private class GeneratedModelProvider : IModelProvider
+        {
+            private Dictionary<string, GameObject> _modelsByType;
+            private List<MapObject> _mapObjects;
+
+            public GeneratedModelProvider(List<GameObject> models, List<MapObject> mapObjects)
+            {
+                _modelsByType = new Dictionary<string, GameObject>();
+                _mapObjects = mapObjects;
+
+                foreach (var model in models)
+                {
+                    var modelInfo = model.GetComponent<GeneratedModelInfo>();
+                    if (modelInfo != null && !_modelsByType.ContainsKey(modelInfo.objectType))
+                    {
+                        _modelsByType[modelInfo.objectType] = model;
                     }
                 }
             }
             
-            // If still no bounds, use a default size
-            if (!boundsInitialized) {
-                bounds = new Bounds(Vector3.zero, Vector3.one);
-            }
-            
-            // Convert to local space
-            bounds.center -= model.transform.position;
-            
-            return bounds;
-        }
-        
-        private Vector3 GetSmoothTerrainNormal(UnityEngine.Terrain terrain, Vector3 worldPosition, int sampleSize) {
-            if (terrain == null) return Vector3.up;
-            
-            Vector3 sum = Vector3.zero;
-            
-            // Sample multiple points around the position
-            for (int x = -sampleSize/2; x <= sampleSize/2; x++) {
-                for (int z = -sampleSize/2; z <= sampleSize/2; z++) {
-                    // Skip center point as we'll add it with more weight later
-                    if (x == 0 && z == 0) continue;
-                    
-                    Vector3 samplePos = worldPosition + new Vector3(x * 0.5f, 0, z * 0.5f);
-                    Vector2 normPos = new Vector2(
-                        (samplePos.x - terrain.transform.position.x) / terrain.terrainData.size.x,
-                        (samplePos.z - terrain.transform.position.z) / terrain.terrainData.size.z
-                    );
-                    
-                    // Ensure we're sampling within terrain bounds
-                    if (normPos.x >= 0 && normPos.x <= 1 && normPos.y >= 0 && normPos.y <= 1) {
-                        Vector3 normal = terrain.terrainData.GetInterpolatedNormal(normPos.x, normPos.y);
-                        
-                        // Weight by distance from center
-                        float dist = Mathf.Sqrt(x*x + z*z);
-                        float weight = 1f / (1f + dist);
-                        
-                        sum += normal * weight;
-                    }
+            /// <summary>
+            /// Gets a model for the specified type (implements IModelProvider interface)
+            /// </summary>
+            public IEnumerator GetModelForType(
+                string objectType,
+                string description,
+                Action<GameObject> onComplete,
+                Action<string> onError
+            )
+            {
+                if (_modelsByType.TryGetValue(objectType, out GameObject model))
+                {
+                    onComplete?.Invoke(model);
                 }
-            }
-            
-            // Add center point with higher weight
-            Vector2 centerNormPos = new Vector2(
-                (worldPosition.x - terrain.transform.position.x) / terrain.terrainData.size.x,
-                (worldPosition.z - terrain.transform.position.z) / terrain.terrainData.size.z
-            );
-            Vector3 centerNormal = terrain.terrainData.GetInterpolatedNormal(centerNormPos.x, centerNormPos.y);
-            sum += centerNormal * 2f;
-            
-            return sum.normalized;
-        }
-        
-        private Vector3 FindBetterPlacementLocation(Vector3 position, UnityEngine.Terrain terrain, float maxSlope) {
-            // Check points in increasing radius around position to find a better spot
-            for (float radius = 0.5f; radius <= 5f; radius += 0.5f) {
-                for (int i = 0; i < 8; i++) {
-                    float angle = i * Mathf.PI * 2f / 8f;
-                    Vector3 offset = new Vector3(
-                        Mathf.Cos(angle) * radius,
-                        0,
-                        Mathf.Sin(angle) * radius
-                    );
-                    
-                    Vector3 testPos = position + offset;
-                    Vector3 normal = GetSmoothTerrainNormal(terrain, testPos, normalSampleSize);
-                    float slopeAngle = Vector3.Angle(normal, Vector3.up);
-                    
-                    if (slopeAngle <= maxSlope) {
-                        return testPos;
-                    }
+                else
+                {
+                    onError?.Invoke($"No model available for object type: {objectType}");
                 }
+
+                yield break; // Return immediately since models are already generated
             }
-            
-            // If no better position found, return original
-            return position;
+
+            // Helper methods for backward compatibility
+            public GameObject GetModelForObject(MapObject mapObject)
+            {
+                return _modelsByType.TryGetValue(mapObject.type, out GameObject model) ? model : null;
+            }
+
+            public bool HasModelForType(string objectType)
+            {
+                return _modelsByType.ContainsKey(objectType);
+            }
+
+            public IEnumerable<string> GetAvailableTypes()
+            {
+                return _modelsByType.Keys;
+            }
         }
-        
-        private bool FindTerrain(out UnityEngine.Terrain terrain) {
-            terrain = null;
-            
-            // First try using the cached terrain
-            if (_terrainCache.Count > 0) {
-                terrain = _terrainCache.Values.First();
-                return terrain != null;
-            }
-            
-            // Otherwise find terrain in scene
-            terrain = Terrain.activeTerrain;
-            if (terrain != null) {
-                _terrainCache[terrain.GetInstanceID().ToString()] = terrain;
+
+        /// <summary>
+        /// Component to store information about generated models
+        /// </summary>
+        private class GeneratedModelInfo : MonoBehaviour
+        {
+            public ObjectGroup sourceGroup;
+            public string objectType;
+            public string description;
+        }
+
+        #endregion
+
+        #region Missing Data Structures and Methods
+
+        // Missing properties and fields
+        private string promptTemplate = "Generate a detailed 3D model of {description} suitable for a game environment with realistic proportions and materials.";
+        private float[] lodDistances = { 100f, 300f, 600f, 1000f };
+
+        /// <summary>
+        /// Component-specific initialization required by TraversifyComponent
+        /// </summary>
+        protected override bool OnInitialize(object config = null)
+        {
+            try
+            {
+                InitializeModelGenerator();
                 return true;
             }
-            
-            return false;
+            catch (System.Exception ex)
+            {
+                LogError($"Failed to initialize ModelGenerator: {ex.Message}");
+                return false;
+            }
         }
+
         #endregion
 
-        #region Object Grouping
-        private List<ObjectGroup> GroupObjectsBySimilarity(List<MapObject> objects) {
-            if (objects == null || objects.Count == 0) {
-                return new List<ObjectGroup>();
-            }
-            
-            List<ObjectGroup> groups = new List<ObjectGroup>();
-            HashSet<MapObject> processedObjects = new HashSet<MapObject>();
-            
-            foreach (var obj in objects) {
-                if (processedObjects.Contains(obj)) continue;
-                
-                // Start a new group with this object
-                var group = new ObjectGroup {
-                    groupId = Guid.NewGuid().ToString(),
-                    type = obj.type,
-                    objects = new List<MapObject> { obj }
-                };
-                
-                processedObjects.Add(obj);
-                
-                // Find similar objects
-                foreach (var other in objects) {
-                    if (processedObjects.Contains(other)) continue;
-                    if (group.objects.Count >= maxGroupSize) break;
-                    
-                    if (other.type == obj.type) {
-                        // Check similarity
-                        float similarity = CalculateSimilarity(obj, other);
-                        if (similarity >= instancingSimilarity) {
-                            group.objects.Add(other);
-                            processedObjects.Add(other);
-                        }
-                    }
-                }
-                
-                // Calculate group center and radius
-                group.RecalculateBounds();
-                groups.Add(group);
-            }
-            
-            return groups;
-        }
-        
-        private float CalculateSimilarity(MapObject obj1, MapObject obj2) {
-            switch (similarityMetric) {
-                case SimilarityMetric.Euclidean:
-                    return CalculateEuclideanSimilarity(obj1, obj2);
-                
-                case SimilarityMetric.JaccardIndex:
-                    return CalculateJaccardSimilarity(obj1, obj2);
-                
-                case SimilarityMetric.StructuralSimilarity:
-                    return CalculateStructuralSimilarity(obj1, obj2);
-                
-                case SimilarityMetric.FeatureVector:
-                    return CalculateFeatureVectorSimilarity(obj1, obj2);
-                
-                default:
-                    return obj1.type == obj2.type ? 1f : 0f;
-            }
-        }
-        
-        private float CalculateEuclideanSimilarity(MapObject obj1, MapObject obj2) {
-            float scaleDistance = Vector3.Distance(obj1.scale, obj2.scale);
-            float rotationDistance = Mathf.Abs(obj1.rotation - obj2.rotation) / 180f;
-            
-            // Normalize distances to [0, 1] range
-            float normalizedDistance = (scaleDistance + rotationDistance) / 2f;
-            
-            // Convert to similarity score (1 - distance)
-            return Mathf.Clamp01(1f - normalizedDistance);
-        }
-        
-        private float CalculateJaccardSimilarity(MapObject obj1, MapObject obj2) {
-            // Use semantic attributes if available
-            if (obj1.attributes != null && obj2.attributes != null) {
-                var keys1 = new HashSet<string>(obj1.attributes.Keys);
-                var keys2 = new HashSet<string>(obj2.attributes.Keys);
-                
-                int intersection = keys1.Intersect(keys2).Count();
-                int union = keys1.Union(keys2).Count();
-                
-                return union > 0 ? (float)intersection / union : 0f;
-            }
-            
-            // Fallback to simple type comparison
-            return obj1.type == obj2.type ? 1f : 0f;
-        }
-        
-        private float CalculateStructuralSimilarity(MapObject obj1, MapObject obj2) {
-            // Base similarity on shape, aspect ratio, etc.
-            if (obj1.segmentMask != null && obj2.segmentMask != null) {
-                // Calculate aspect ratios of bounding boxes
-                float aspectRatio1 = obj1.boundingBox.width / obj1.boundingBox.height;
-                float aspectRatio2 = obj2.boundingBox.width / obj2.boundingBox.height;
-                
-                // Calculate relative size
-                float area1 = obj1.boundingBox.width * obj1.boundingBox.height;
-                float area2 = obj2.boundingBox.width * obj2.boundingBox.height;
-                float relativeSize = Mathf.Min(area1, area2) / Mathf.Max(area1, area2);
-                
-                // Calculate aspect ratio similarity
-                float aspectRatioSimilarity = 1f - Mathf.Abs(aspectRatio1 - aspectRatio2) / Mathf.Max(aspectRatio1, aspectRatio2);
-                
-                // Combine metrics
-                return Mathf.Clamp01((aspectRatioSimilarity + relativeSize) / 2f);
-            }
-            
-            return obj1.type == obj2.type ? 0.5f : 0f;
-        }
-        
-        private float CalculateFeatureVectorSimilarity(MapObject obj1, MapObject obj2) {
-            // Use attributes as feature vectors
-            if (obj1.attributes != null && obj2.attributes != null) {
-                // Get all keys
-                var allKeys = new HashSet<string>(obj1.attributes.Keys.Concat(obj2.attributes.Keys));
-                
-                if (allKeys.Count == 0) return obj1.type == obj2.type ? 0.8f : 0f;
-                
-                // Calculate cosine similarity
-                float dotProduct = 0f;
-                float magnitude1 = 0f;
-                float magnitude2 = 0f;
-                
-                foreach (var key in allKeys) {
-                    float value1 = obj1.attributes.TryGetValue(key, out float v1) ? v1 : 0f;
-                    float value2 = obj2.attributes.TryGetValue(key, out float v2) ? v2 : 0f;
-                    
-                    dotProduct += value1 * value2;
-                    magnitude1 += value1 * value1;
-                    magnitude2 += value2 * value2;
-                }
-                
-                if (magnitude1 > 0 && magnitude2 > 0) {
-                    return dotProduct / (Mathf.Sqrt(magnitude1) * Mathf.Sqrt(magnitude2));
-                }
-            }
-            
-            // Fallback similarity based on type
-            return obj1.type == obj2.type ? 0.8f : 0f;
-        }
-        
-        private List<ModelGenerationRequest> CreateRequestsFromGroup(ObjectGroup group, UnityEngine.Terrain terrain) {
-            List<ModelGenerationRequest> requests = new List<ModelGenerationRequest>();
-            
-            if (group.objects.Count == 0) return requests;
-            
-            // Create one request for the template
-            MapObject template = group.objects.First();
-            
-            requests.Add(new ModelGenerationRequest {
-                objectType = template.type,
-                description = template.enhancedDescription ?? template.label,
-                position = Vector3.zero,  // Will be set when instancing
-                rotation = Quaternion.identity,
-                scale = Vector3.one,
-                confidence = template.confidence,
-                isGrouped = true
-            });
-            
-            // Only do full generation for the first instance, then just instance the model
-            return requests;
-        }
-        
-        private ModelGenerationRequest CreateRequestFromMapObject(MapObject obj, UnityEngine.Terrain terrain) {
-            if (terrain != null) {
-                // Convert normalized position to world space
-                Vector3 worldPos = new Vector3(
-                    obj.position.x * terrain.terrainData.size.x,
-                    0,
-                    obj.position.y * terrain.terrainData.size.z
-                );
-                
-                return new ModelGenerationRequest {
-                    objectType = obj.type,
-                    description = obj.enhancedDescription ?? obj.label,
-                    position = worldPos,
-                    rotation = Quaternion.Euler(0, obj.rotation, 0),
-                    scale = obj.scale,
-                    confidence = obj.confidence,
-                    isGrouped = false
-                };
-            }
-            
-            return new ModelGenerationRequest {
-                objectType = obj.type,
-                description = obj.enhancedDescription ?? obj.label,
-                position = Vector3.zero,
-                rotation = Quaternion.Euler(0, obj.rotation, 0),
-                scale = obj.scale,
-                confidence = obj.confidence,
-                isGrouped = false
-            };
-        }
-        #endregion
+        #region Data Structures
 
-        #region Mesh Optimization
-        private IEnumerator CombineSimilarMeshes(List<GameObject> objects) {
-            if (objects == null || objects.Count < 2) yield break;
-            
-            // Group objects by material
-            Dictionary<Material, List<GameObject>> materialGroups = new Dictionary<Material, List<GameObject>>();
-            
-            foreach (var obj in objects) {
-                var renderers = obj.GetComponentsInChildren<MeshRenderer>();
-                foreach (var renderer in renderers) {
-                    if (renderer.sharedMaterial != null) {
-                        if (!materialGroups.ContainsKey(renderer.sharedMaterial)) {
-                            materialGroups[renderer.sharedMaterial] = new List<GameObject>();
-                        }
-                        materialGroups[renderer.sharedMaterial].Add(renderer.gameObject);
-                    }
-                }
-            }
-            
-            // Create combined meshes for each material group
-            foreach (var group in materialGroups) {
-                if (group.Value.Count < 2) continue;
-                
-                var material = group.Key;
-                var meshObjects = group.Value;
-                
-                debugger.Log($"Combining {meshObjects.Count} meshes with shared material", LogCategory.Models);
-                
-                // Create batches to stay within vertex limits
-                List<List<GameObject>> batches = new List<List<GameObject>>();
-                List<GameObject> currentBatch = new List<GameObject>();
-                int currentVertexCount = 0;
-                
-                foreach (var obj in meshObjects) {
-                    var meshFilter = obj.GetComponent<MeshFilter>();
-                    if (meshFilter == null || meshFilter.sharedMesh == null) continue;
-                    
-                    int vertexCount = meshFilter.sharedMesh.vertexCount;
-                    if (currentVertexCount + vertexCount > maxVerticesPerMesh) {
-                        if (currentBatch.Count > 0) {
-                            batches.Add(currentBatch);
-                            currentBatch = new List<GameObject>();
-                            currentVertexCount = 0;
-                        }
-                    }
-                    
-                    currentBatch.Add(obj);
-                    currentVertexCount += vertexCount;
-                }
-                
-                if (currentBatch.Count > 0) {
-                    batches.Add(currentBatch);
-                }
-                
-                // Combine each batch
-                foreach (var batch in batches) {
-                    if (batch.Count < 2) continue;
-                    
-                    yield return StartCoroutine(CombineMeshBatch(batch, material));
-                }
-            }
+        /// <summary>
+        /// Represents a model generation job for tracking and processing
+        /// </summary>
+        [System.Serializable]
+        public class ModelGenerationJob
+        {
+            public string jobId;
+            public string objectType;
+            public string description;
+            public Vector3 targetPosition;
+            public Quaternion targetRotation;
+            public Vector3 targetScale;
+            public MapObject sourceMapObject;
+            public DetectedObject sourceDetectedObject;
+            public float progress;
+            public bool isComplete;
+            public bool hasFailed;
+            public string errorMessage;
+            public GameObject resultModel;
+            public DateTime startTime;
+            public DateTime endTime;
         }
-        
-        private IEnumerator CombineMeshBatch(List<GameObject> meshObjects, Material material) {
-            if (meshObjects.Count < 2) yield break;
-            
-            // Create combined mesh
-            GameObject combinedObject = new GameObject($"Combined_{material.name}_{Guid.NewGuid().ToString().Substring(0, 8)}");
-            combinedObject.transform.SetParent(_modelContainer.transform);
-            
-            // Prepare combine instances
-            List<CombineInstance> combineInstances = new List<CombineInstance>();
-            Dictionary<Transform, Matrix4x4> originalTransforms = new Dictionary<Transform, Matrix4x4>();
-            
-            // Collect meshes
-            foreach (var obj in meshObjects) {
-                var meshFilter = obj.GetComponent<MeshFilter>();
-                if (meshFilter == null || meshFilter.sharedMesh == null) continue;
-                
-                // Store original transform
-                originalTransforms[obj.transform] = obj.transform.localToWorldMatrix;
-                
-                // Add to combine instances
-                CombineInstance ci = new CombineInstance {
-                    mesh = meshFilter.sharedMesh,
-                    transform = obj.transform.localToWorldMatrix,
-                    subMeshIndex = 0
-                };
-                
-                combineInstances.Add(ci);
-            }
-            
-            // Create combined mesh
-            Mesh combinedMesh = new Mesh();
-            combinedMesh.name = $"Combined_{material.name}";
-            combinedMesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32; // Support >65k vertices
-            combinedMesh.CombineMeshes(combineInstances.ToArray(), true, true);
-            
-            // Add to combined object
-            var mf = combinedObject.AddComponent<MeshFilter>();
-            var mr = combinedObject.AddComponent<MeshRenderer>();
-            mf.sharedMesh = combinedMesh;
-            mr.sharedMaterial = material;
-            
-            // Add collider
-            var collider = combinedObject.AddComponent<MeshCollider>();
-            collider.sharedMesh = combinedMesh;
-            collider.convex = false; // Combined mesh likely not convex
-            
-            // Deactivate or destroy original objects
-            foreach (var obj in meshObjects) {
-                obj.SetActive(false);
-                // Don't destroy, just hide - we might need them later
-            }
-            
-            debugger.Log($"Created combined mesh with {combinedMesh.vertexCount} vertices, {combinedMesh.triangles.Length / 3} triangles", 
-                LogCategory.Models);
-            
-            yield return null;
-        }
-        #endregion
 
-        #region OpenAI Enhancement
-        private async Task<string> EnhanceDescriptionAsync(string description) {
-            if (string.IsNullOrEmpty(openAIApiKey) || string.IsNullOrEmpty(description)) {
-                return description;
-            }
-            
-            try {
-                string enhancedDescription = await OpenAIResponse.Instance.GetCompletionAsync(
-                    FormatDescriptionPrompt(description),
-                    openAIApiKey
-                );
-                
-                if (!string.IsNullOrEmpty(enhancedDescription)) {
-                    return enhancedDescription;
-                }
-            }
-            catch (Exception ex) {
-                debugger.LogWarning($"Failed to enhance description: {ex.Message}", LogCategory.API);
-            }
-            
-            return description;
+        /// <summary>
+        /// Status tracking for model generation
+        /// </summary>
+        [System.Serializable]
+        public class ModelGenerationStatus
+        {
+            public string ModelId;
+            public float Progress;
+            public string Status;
+            public DateTime StartTime;
+            public DateTime LastUpdateTime;
+            public DateTime EndTime;
+            public bool IsComplete;
+            public bool HasError;
+            public string ErrorMessage;
         }
-        
-        private string FormatDescriptionPrompt(string description) {
-            return promptTemplate.Replace("{description}", description);
-        }
-        
-        private string FormatPrompt(string description) {
-            // Process the prompt template if available, otherwise just use the description
-            if (!string.IsNullOrEmpty(promptTemplate)) {
-                return promptTemplate.Replace("{description}", description);
-            }
-            
-            return $"Generate a detailed 3D model of {description} suitable for a game environment.";
-        }
-        #endregion
 
-        #region Fallback and Caching
-        private GameObject GetFallbackModel(string objectType) {
-            // Try to load a prefab with matching type name
-            GameObject prefab = Resources.Load<GameObject>($"{fallbackModelPath}/{objectType}");
-            
-            if (prefab != null) {
-                return prefab;
-            }
-            
-            // Try to find a similar fallback by tokenizing the object type
-            string[] tokens = objectType.ToLowerInvariant().Split(new[] { '_', ' ', '-' }, StringSplitOptions.RemoveEmptyEntries);
-            
-            var fallbackModels = Resources.LoadAll<GameObject>(fallbackModelPath);
-            foreach (var model in fallbackModels) {
-                foreach (var token in tokens) {
-                    if (model.name.ToLowerInvariant().Contains(token)) {
-                        return model;
-                    }
-                }
-            }
-            
-            // Return a primitive if no fallback found
-            if (tokens.Contains("tree") || tokens.Contains("plant")) {
-                return CreatePrimitiveFallback(PrimitiveType.Cylinder, objectType);
-            }
-            else if (tokens.Contains("building") || tokens.Contains("house") || tokens.Contains("structure")) {
-                return CreatePrimitiveFallback(PrimitiveType.Cube, objectType);
-            }
-            else if (tokens.Contains("rock") || tokens.Contains("boulder") || tokens.Contains("stone")) {
-                return CreatePrimitiveFallback(PrimitiveType.Sphere, objectType);
-            }
-            
-            // Default fallback
-            return CreatePrimitiveFallback(PrimitiveType.Cube, objectType);
-        }
-        
-        private GameObject CreatePrimitiveFallback(PrimitiveType type, string objectType) {
-            GameObject primitive = GameObject.CreatePrimitive(type);
-            primitive.name = $"Fallback_{objectType}";
-            
-            // Parent to this gameObject temporarily so it's not in the scene hierarchy
-            primitive.transform.SetParent(transform);
-            primitive.SetActive(false);
-            
-            return primitive;
-        }
-        
-        private string GenerateModelId(string objectType, string description) {
-            string normalizedType = string.IsNullOrEmpty(objectType) ? "unknown" : objectType.ToLowerInvariant().Trim();
-            string normalizedDesc = string.IsNullOrEmpty(description) ? "" : description.ToLowerInvariant().Trim();
-            
-            // Use the first 50 chars of description to avoid excessively long IDs
-            if (normalizedDesc.Length > 50) {
-                normalizedDesc = normalizedDesc.Substring(0, 50);
-            }
-            
-            // Create a deterministic ID for caching purposes
-            return $"{normalizedType}_{string.Join("_", normalizedDesc.Split(new[] { ' ', '\t', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries))}";
-        }
-        #endregion
-
-        #region Status Tracking
-        private void UpdateGenerationStatus(string modelId, float progress, string status) {
-            if (!_generationStatus.TryGetValue(modelId, out var currentStatus)) {
-                currentStatus = new ModelGenerationStatus {
-                    ModelId = modelId,
-                    StartTime = DateTime.UtcNow
-                };
-                _generationStatus[modelId] = currentStatus;
-            }
-            
-            currentStatus.Progress = progress;
-            currentStatus.Status = status;
-            currentStatus.LastUpdateTime = DateTime.UtcNow;
-            
-            if (progress >= 1.0f || progress < 0f) {
-                currentStatus.EndTime = DateTime.UtcNow;
-                currentStatus.IsComplete = true;
-            }
-            
-            if (verboseLogging) {
-                if (progress < 0) {
-                    debugger.LogError($"Model {modelId}: {status}", LogCategory.Models);
-                } else {
-                    debugger.Log($"Model {modelId}: {progress:P0} - {status}", LogCategory.Models);
-                }
-            }
-        }
-        
-        private float GetGenerationProgress(string objectType) {
-            // Find matching generation by type prefix
-            foreach (var status in _generationStatus.Values) {
-                if (status.ModelId.StartsWith(objectType.ToLowerInvariant().Trim())) {
-                    return status.Progress;
-                }
-            }
-            return 0f;
-        }
-        
-        private void TrackModelGeneration(string objectType) {
-            _totalModelsGenerated++;
-            
-            // Update distribution statistics
-            string type = objectType.ToLowerInvariant().Trim();
-            if (!_modelTypeDistribution.ContainsKey(type)) {
-                _modelTypeDistribution[type] = 0;
-            }
-            _modelTypeDistribution[type]++;
-        }
-        
-        private void LogModelDistribution() {
-            if (_modelTypeDistribution.Count == 0) return;
-            
-            var sortedTypes = _modelTypeDistribution.OrderByDescending(kvp => kvp.Value);
-            var log = new System.Text.StringBuilder("Model type distribution:\n");
-            
-            foreach (var kvp in sortedTypes) {
-                log.AppendLine($"- {kvp.Key}: {kvp.Value}");
-            }
-            
-            debugger.Log(log.ToString(), LogCategory.Models);
-        }
-        #endregion
-
-        #region Helper Classes
-        [Serializable]
-        private class ModelGenerationConfig {
+        /// <summary>
+        /// Configuration for model generation
+        /// </summary>
+        [System.Serializable]
+        public class ModelGenerationConfig
+        {
             public bool UseGPUInstancing;
             public bool UsePBRMaterials;
             public bool GenerateTextures;
@@ -1905,190 +1204,1109 @@ namespace Traversify {
             public float GroundingDepth;
             public bool FixFloatingObjects;
             public bool FixEmbeddedObjects;
-            
-            public override string ToString() {
-                return $"ModelConfig[GPU:{UseGPUInstancing}, PBR:{UsePBRMaterials}, LOD:{UseLOD}({MaxLODLevels}), " +
-                       $"Terrain:{AdaptToTerrain}, Collisions:{AvoidCollisions}, GroupObjects:{GroupSimilarObjects}]";
-            }
         }
-        
-        [Serializable]
-        private class PlacementTransform {
-            public Vector3 Position;
-            public Quaternion Rotation;
-            public Vector3 Scale;
-            
-            public PlacementTransform() {
-                Position = Vector3.zero;
-                Rotation = Quaternion.identity;
-                Scale = Vector3.one;
-            }
-            
-            public PlacementTransform(PlacementTransform other) {
-                Position = other.Position;
-                Rotation = other.Rotation;
-                Scale = other.Scale;
-            }
-            
-            public override string ToString() {
-                return $"Pos:{Position}, Rot:{Rotation.eulerAngles}, Scale:{Scale}";
-            }
-        }
-        
-        [Serializable]
-        private class ModelGenerationStatus {
-            public string ModelId;
-            public float Progress;
-            public string Status;
-            public DateTime StartTime;
-            public DateTime LastUpdateTime;
-            public DateTime EndTime;
-            public bool IsComplete;
-            public bool IsError => Progress < 0f;
-            public TimeSpan ElapsedTime => (IsComplete ? EndTime : DateTime.UtcNow) - StartTime;
-        }
-        
-        [Serializable]
-        private class ModelGenerationJob {
-            public string JobId;
-            public ModelGenerationRequest Request;
-            public Task<GameObject> Task;
-            public DateTime StartTime;
-            public float Progress;
-            public string Status;
-            public GameObject Result;
-            public Exception Error;
-            public bool IsComplete => Result != null || Error != null;
-        }
-        
-        [Serializable]
-        private class Tripo3DResponse {
-            public string id;
-            public string status;
-            public Tripo3DModelData modelData;
-        }
-        
-        [Serializable]
-        private class Tripo3DModelData {
-            public string id;
-            public string name;
-            public string format;
-            public string downloadUrl;
-            public string previewUrl;
-            public string status;
-            public DateTime createdAt;
-        }
-        #endregion
 
-        #region MonoBehaviour Components
         /// <summary>
-        /// Component that tracks metadata for generated models.
+        /// Request for generating a 3D model from a detected object
         /// </summary>
-        [AddComponentMenu("Traversify/Model Metadata")]
-        public class ModelMetadata : MonoBehaviour {
-            public string modelType;
+        [System.Serializable]
+        public partial class ModelGenerationRequest
+        {
+            public string objectType;
             public string description;
-            public int vertexCount;
-            public int triangleCount;
-            public DateTime generatedDate;
-            public Dictionary<string, object> metadata = new Dictionary<string, object>();
-            
-            public void AddMetadata(string key, object value) {
-                metadata[key] = value;
-            }
-            
-            public T GetMetadata<T>(string key, T defaultValue = default) {
-                if (metadata.TryGetValue(key, out object value) && value is T typedValue) {
-                    return typedValue;
-                }
-                return defaultValue;
-            }
+            public Vector3 position;
+            public Quaternion rotation;
+            public Vector3 scale;
+            public MapObject sourceMapObject;
+            public DetectedObject sourceDetectedObject;
+            public UnityEngine.Terrain targetTerrain;
+            public string requestId;
+            public DateTime requestTime;
+            public float confidence = 1.0f;
+            public bool isGrouped = false;
         }
-        
+
         /// <summary>
-        /// Component for tracking model instances.
+        /// Request for Tripo3D model generation
         /// </summary>
-        [AddComponentMenu("Traversify/Model Instance Tracker")]
-        public class ModelInstanceTracker : MonoBehaviour {
+        [System.Serializable]
+        public class Tripo3DRequest
+        {
+            public string prompt;
+            public string objectType;
+            public Vector3 position;
+            public Quaternion rotation;
+            public Vector3 scale;
+            public Tripo3DQuality quality;
+            public string requestId;
+            public DateTime requestTime;
+            public UnityEngine.Terrain targetTerrain;
+        }
+
+        /// <summary>
+        /// Similarity metrics for object grouping
+        /// </summary>
+        public enum SimilarityMetric
+        {
+            FeatureVector,
+            VisualSimilarity,
+            BoundingBoxSize,
+            SemanticSimilarity
+        }
+
+        /// <summary>
+        /// Model instance tracker for performance optimization
+        /// </summary>
+        public partial class ModelInstanceTracker : MonoBehaviour
+        {
+            public GameObject originalModel;
+            public List<Matrix4x4> instanceMatrices = new List<Matrix4x4>();
+            public List<MaterialPropertyBlock> propertyBlocks = new List<MaterialPropertyBlock>();
+            public string modelType;
+            public int instanceCount;
+            public Mesh mesh;
+            public Material[] materials;
+            public bool supportsInstancing;
             public string sourceType;
             public Vector3 originalPosition;
-            public Quaternion originalRotation;
-            public Vector3 originalScale;
-            public Dictionary<string, object> metadata = new Dictionary<string, object>();
-            
-            private void Awake() {
-                originalRotation = transform.rotation;
-                originalScale = transform.localScale;
-            }
         }
+
         #endregion
 
-        #region Editor Gizmos
-        private void OnDrawGizmosSelected() {
-            if (!showPlacementGizmos) return;
+        #region Missing Method Implementations
+
+        /// <summary>
+        /// Public property to access the Tripo3D API key
+        /// </summary>
+        public string Tripo3DApiKey
+        {
+            get => tripo3DApiKey;
+            set => tripo3DApiKey = value;
+        }
+
+        /// <summary>
+        /// Creates model generation requests from a group of similar objects
+        /// </summary>
+        private List<ModelGenerationRequest> CreateRequestsFromGroup(ObjectGroup group, UnityEngine.Terrain terrain)
+        {
+            var requests = new List<ModelGenerationRequest>();
+
+            if (group.objects == null || group.objects.Count == 0)
+                return requests;
+
+            // For grouped objects, we can create a single model and instance it
+            var representative = group.objects[0];
             
-            // Draw placement gizmos for debugging
-            if (_modelContainer != null) {
-                var trackers = _modelContainer.GetComponentsInChildren<ModelInstanceTracker>();
-                foreach (var tracker in trackers) {
-                    Gizmos.color = Color.green;
-                    Gizmos.DrawWireSphere(tracker.originalPosition, 0.5f);
+            var baseRequest = new ModelGenerationRequest
+            {
+                objectType = representative.type,
+                description = representative.enhancedDescription ?? representative.label,
+                position = new Vector3(representative.position.x * terrainSize.x, 0, representative.position.y * terrainSize.y),
+                rotation = Quaternion.Euler(0, representative.rotation, 0),
+                scale = representative.scale,
+                sourceMapObject = representative,
+                targetTerrain = terrain,
+                requestId = System.Guid.NewGuid().ToString(),
+                requestTime = System.DateTime.Now
+            };
+
+            requests.Add(baseRequest);
+
+            // Add variation requests for diversity
+            foreach (var obj in group.objects.Skip(1))
+            {
+                var request = new ModelGenerationRequest
+                {
+                    objectType = obj.type,
+                    description = obj.enhancedDescription ?? obj.label,
+                    position = new Vector3(obj.position.x * terrainSize.x, 0, obj.position.y * terrainSize.y),
+                    rotation = Quaternion.Euler(0, obj.rotation, 0),
+                    scale = obj.scale,
+                    sourceMapObject = obj,
+                    targetTerrain = terrain,
+                    requestId = System.Guid.NewGuid().ToString(),
+                    requestTime = System.DateTime.Now
+                };
+                requests.Add(request);
+            }
+
+            return requests;
+        }
+
+        /// <summary>
+        /// Groups objects by similarity for instancing
+        /// </summary>
+        private List<ObjectGroup> GroupObjectsBySimilarity(List<MapObject> objects)
+        {
+            var groups = new List<ObjectGroup>();
+
+            if (objects == null || objects.Count == 0)
+                return groups;
+
+            var remaining = new List<MapObject>(objects);
+            int groupId = 0;
+
+            while (remaining.Count > 0)
+            {
+                var seed = remaining[0];
+                remaining.RemoveAt(0);
+
+                var group = new ObjectGroup
+                {
+                    groupId = $"group_{groupId++}",
+                    type = seed.type,
+                    objects = new List<MapObject> { seed }
+                };
+
+                // Find similar objects
+                for (int i = remaining.Count - 1; i >= 0; i--)
+                {
+                    var candidate = remaining[i];
+                    float similarity = CalculateObjectSimilarity(seed, candidate);
+
+                    if (similarity >= instancingSimilarity && group.objects.Count < maxGroupSize)
+                    {
+                        group.objects.Add(candidate);
+                        remaining.RemoveAt(i);
+                    }
+                }
+
+                groups.Add(group);
+            }
+
+            debugger.Log($"Grouped {objects.Count} objects into {groups.Count} groups", LogCategory.Models);
+            return groups;
+        }
+
+        /// <summary>
+        /// Calculates similarity between two map objects
+        /// </summary>
+        private float CalculateObjectSimilarity(MapObject objA, MapObject objB)
+        {
+            if (objA.type != objB.type)
+                return 0f;
+
+            float similarity = 0.5f; // Base similarity for same type
+
+            switch (similarityMetric)
+            {
+                case SimilarityMetric.BoundingBoxSize:
+                    var sizeA = objA.boundingBox.size;
+                    var sizeB = objB.boundingBox.size;
+                    float sizeSimilarity = 1f - Vector2.Distance(sizeA, sizeB) / Mathf.Max(sizeA.magnitude, sizeB.magnitude);
+                    similarity += sizeSimilarity * 0.3f;
+                    break;
+
+                case SimilarityMetric.VisualSimilarity:
+                    // Compare segmentation colors as a proxy for visual similarity
+                    if (objA.segmentColor != Color.clear && objB.segmentColor != Color.clear)
+                    {
+                        float colorDistance = Vector4.Distance(
+                            new Vector4(objA.segmentColor.r, objA.segmentColor.g, objA.segmentColor.b, objA.segmentColor.a),
+                            new Vector4(objB.segmentColor.r, objB.segmentColor.g, objB.segmentColor.b, objB.segmentColor.a)
+                        );
+                        float colorSimilarity = 1f - Mathf.Clamp01(colorDistance / 2f);
+                        similarity += colorSimilarity * 0.2f;
+                    }
+                    break;
+
+                case SimilarityMetric.FeatureVector:
+                case SimilarityMetric.SemanticSimilarity:
+                default:
+                    // Use metadata features if available
+                    if (objA.metadata?.ContainsKey("features") == true && objB.metadata?.ContainsKey("features") == true)
+                    {
+                        var featuresA = objA.metadata["features"] as Dictionary<string, float>;
+                        var featuresB = objB.metadata["features"] as Dictionary<string, float>;
+                        if (featuresA != null && featuresB != null)
+                        {
+                            similarity += CalculateFeatureSimilarity(featuresA, featuresB) * 0.3f;
+                        }
+                    }
+                    break;
+            }
+
+            return Mathf.Clamp01(similarity);
+        }
+
+        /// <summary>
+        /// Calculates feature vector similarity
+        /// </summary>
+        private float CalculateFeatureSimilarity(Dictionary<string, float> featuresA, Dictionary<string, float> featuresB)
+        {
+            var commonKeys = featuresA.Keys.Intersect(featuresB.Keys).ToList();
+            if (commonKeys.Count == 0) return 0f;
+
+            float dotProduct = 0f;
+            float magnitudeA = 0f;
+            float magnitudeB = 0f;
+
+            foreach (var key in commonKeys)
+            {
+                float valueA = featuresA[key];
+                float valueB = featuresB[key];
+                
+                dotProduct += valueA * valueB;
+                magnitudeA += valueA * valueA;
+                magnitudeB += valueB * valueB;
+            }
+
+            magnitudeA = Mathf.Sqrt(magnitudeA);
+            magnitudeB = Mathf.Sqrt(magnitudeB);
+
+            if (magnitudeA > 0 && magnitudeB > 0)
+            {
+                return dotProduct / (magnitudeA * magnitudeB);
+            }
+
+            return 0f;
+        }
+
+        /// <summary>
+        /// Creates a model generation request from a single map object
+        /// </summary>
+        private ModelGenerationRequest CreateRequestFromMapObject(MapObject mapObject, UnityEngine.Terrain terrain)
+        {
+            return new ModelGenerationRequest
+            {
+                objectType = mapObject.type,
+                description = mapObject.enhancedDescription ?? mapObject.label,
+                position = new Vector3(mapObject.position.x * terrainSize.x, 0, mapObject.position.y * terrainSize.y),
+                rotation = Quaternion.Euler(0, mapObject.rotation, 0),
+                scale = mapObject.scale,
+                sourceMapObject = mapObject,
+                targetTerrain = terrain,
+                requestId = System.Guid.NewGuid().ToString(),
+                requestTime = System.DateTime.Now
+            };
+        }
+
+        /// <summary>
+        /// Combines similar meshes for performance optimization
+        /// </summary>
+        private List<GameObject> CombineSimilarMeshes(List<GameObject> models)
+        {
+            var combinedModels = new List<GameObject>();
+            var meshGroups = new Dictionary<string, List<GameObject>>();
+
+            // Group models by type
+            foreach (var model in models)
+            {
+                var modelInfo = model.GetComponent<GeneratedModelInfo>();
+                string key = modelInfo?.objectType ?? "unknown";
+                
+                if (!meshGroups.ContainsKey(key))
+                    meshGroups[key] = new List<GameObject>();
+                
+                meshGroups[key].Add(model);
+            }
+
+            // Combine meshes within each group
+            foreach (var group in meshGroups)
+            {
+                if (group.Value.Count > 1 && useMeshCombining)
+                {
+                    var combined = CombineMeshGroup(group.Value, group.Key);
+                    if (combined != null)
+                        combinedModels.Add(combined);
+                }
+                else
+                {
+                    combinedModels.AddRange(group.Value);
+                }
+            }
+
+            return combinedModels;
+        }
+
+        /// <summary>
+        /// Combines a group of similar meshes
+        /// </summary>
+        private GameObject CombineMeshGroup(List<GameObject> models, string groupType)
+        {
+            try
+            {
+                var combines = new List<CombineInstance>();
+                var materials = new List<Material>();
+
+                foreach (var model in models)
+                {
+                    var meshRenderers = model.GetComponentsInChildren<MeshRenderer>();
+                    foreach (var renderer in meshRenderers)
+                    {
+                        var modelMeshFilter = renderer.GetComponent<MeshFilter>();
+                        if (modelMeshFilter?.sharedMesh != null)
+                        {
+                            var combine = new CombineInstance();
+                            combine.mesh = modelMeshFilter.sharedMesh;
+                            combine.transform = renderer.transform.localToWorldMatrix;
+                            combines.Add(combine);
+
+                            if (renderer.sharedMaterial != null && !materials.Contains(renderer.sharedMaterial))
+                                materials.Add(renderer.sharedMaterial);
+                        }
+                    }
+                }
+
+                if (combines.Count == 0) return null;
+
+                // Create combined mesh
+                var combinedMesh = new Mesh();
+                combinedMesh.CombineMeshes(combines.ToArray());
+                
+                // Check vertex limit
+                if (combinedMesh.vertexCount > maxVerticesPerMesh)
+                {
+                    DestroyImmediate(combinedMesh);
+                    return null; // Too many vertices, keep separate
+                }
+
+                // Create combined game object
+                var combinedObject = new GameObject($"Combined_{groupType}");
+                combinedObject.transform.SetParent(_modelContainer.transform);
+
+                var combinedMeshFilter = combinedObject.AddComponent<MeshFilter>();
+                var meshRenderer = combinedObject.AddComponent<MeshRenderer>();
+
+                combinedMeshFilter.mesh = combinedMesh;
+                meshRenderer.materials = materials.ToArray();
+
+                var modelInfo = combinedObject.AddComponent<GeneratedModelInfo>();
+                modelInfo.objectType = groupType;
+                modelInfo.description = $"Combined mesh of {models.Count} {groupType} objects";
+
+                // Destroy original models
+                foreach (var model in models)
+                {
+                    DestroyImmediate(model);
+                }
+
+                return combinedObject;
+            }
+            catch (System.Exception ex)
+            {
+                debugger.LogError($"Error combining meshes: {ex.Message}", LogCategory.Models);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Logs model distribution statistics
+        /// </summary>
+        private void LogModelDistribution(List<GameObject> models)
+        {
+            var distribution = new Dictionary<string, int>();
+
+            foreach (var model in models)
+            {
+                var modelInfo = model.GetComponent<GeneratedModelInfo>();
+                string type = modelInfo?.objectType ?? "unknown";
+                
+                if (!distribution.ContainsKey(type))
+                    distribution[type] = 0;
+                distribution[type]++;
+            }
+
+            debugger.Log("Model Distribution:", LogCategory.Models);
+            foreach (var kvp in distribution.OrderByDescending(x => x.Value))
+            {
+                debugger.Log($"  {kvp.Key}: {kvp.Value} models", LogCategory.Models);
+            }
+        }
+
+        /// <summary>
+        /// Gets generation progress for a specific model
+        /// </summary>
+        private float GetGenerationProgress(string modelId)
+        {
+            if (_generationStatus.TryGetValue(modelId, out var status))
+            {
+                return status.Progress;
+            }
+            return 0f;
+        }
+
+        /// <summary>
+        /// Adapts transform to terrain height and slope
+        /// </summary>
+        private void AdaptTransformToTerrain(Transform transform, UnityEngine.Terrain terrain)
+        {
+            if (!adaptToTerrain || terrain == null) return;
+
+            Vector3 worldPos = transform.position;
+            float terrainHeight = terrain.SampleHeight(worldPos);
+            
+            // Adjust Y position
+            worldPos.y = terrainHeight - groundingDepth;
+            transform.position = worldPos;
+
+            // Calculate terrain normal for rotation adaptation
+            Vector3 terrainNormal = terrain.terrainData.GetInterpolatedNormal(
+                worldPos.x / terrain.terrainData.size.x,
+                worldPos.z / terrain.terrainData.size.z
+            );
+
+            // Calculate slope angle
+            float slopeAngle = Vector3.Angle(Vector3.up, terrainNormal);
+            
+            // Only place if slope is acceptable
+            if (slopeAngle <= maxPlacementSlope)
+            {
+                // Align to terrain normal
+                Quaternion terrainRotation = Quaternion.FromToRotation(Vector3.up, terrainNormal);
+                transform.rotation = terrainRotation * transform.rotation;
+            }
+        }
+
+        /// <summary>
+        /// Generates a unique model ID
+        /// </summary>
+        private string GenerateModelId()
+        {
+            return $"model_{System.Guid.NewGuid().ToString("N")[..8]}_{System.DateTime.Now.Ticks}";
+        }
+
+        /// <summary>
+        /// Overloaded method to generate model ID with parameters
+        /// </summary>
+        private string GenerateModelId(string objectType, string description)
+        {
+            string hash = $"{objectType}_{description}".GetHashCode().ToString("X");
+            return $"model_{objectType}_{hash}_{System.DateTime.Now.Ticks}";
+        }
+
+        /// <summary>
+        /// Tracks model generation for metrics
+        /// </summary>
+        private void TrackModelGeneration(string modelId, string objectType, DateTime startTime)
+        {
+            var status = new ModelGenerationStatus
+            {
+                ModelId = modelId,
+                Progress = 0f,
+                Status = "Starting",
+                StartTime = startTime,
+                LastUpdateTime = startTime,
+                IsComplete = false,
+                HasError = false
+            };
+
+            _generationStatus[modelId] = status;
+            
+            if (!_modelTypeDistribution.ContainsKey(objectType))
+                _modelTypeDistribution[objectType] = 0;
+            _modelTypeDistribution[objectType]++;
+        }
+
+        /// <summary>
+        /// Overloaded method to track model generation with just object type
+        /// </summary>
+        private void TrackModelGeneration(string objectType)
+        {
+            _totalModelsGenerated++;
+            if (!_modelTypeDistribution.ContainsKey(objectType))
+                _modelTypeDistribution[objectType] = 0;
+            _modelTypeDistribution[objectType]++;
+        }
+
+        /// <summary>
+        /// Updates generation status for a model
+        /// </summary>
+        private void UpdateGenerationStatus(string modelId, float progress, string status)
+        {
+            if (_generationStatus.TryGetValue(modelId, out var genStatus))
+            {
+                genStatus.Progress = progress;
+                genStatus.Status = status;
+                genStatus.LastUpdateTime = System.DateTime.Now;
+                
+                if (progress >= 1f || progress < 0f)
+                {
+                    genStatus.IsComplete = true;
+                    genStatus.EndTime = System.DateTime.Now;
                     
-                    Gizmos.color = Color.blue;
-                    Gizmos.DrawLine(tracker.originalPosition, tracker.transform.position);
-                    
-                    if (FindTerrain(out UnityEngine.Terrain terrain)) {
-                        Vector3 terrainPos = tracker.originalPosition;
-                        terrainPos.y = terrain.SampleHeight(terrainPos);
-                        
-                        Gizmos.color = Color.red;
-                        Gizmos.DrawLine(terrainPos, tracker.transform.position);
+                    if (progress < 0f)
+                    {
+                        genStatus.HasError = true;
+                        genStatus.ErrorMessage = status;
                     }
                 }
             }
         }
-        #endregion
 
-        #region TraversifyComponent Implementation
-        
         /// <summary>
-        /// Component-specific initialization logic.
+        /// Enhances description using OpenAI API
         /// </summary>
-        /// <param name="config">Component configuration object</param>
-        /// <returns>True if initialization was successful</returns>
-        protected override bool OnInitialize(object config)
+        private async Task<string> EnhanceDescriptionAsync(string baseDescription, string objectType)
+        {
+            if (string.IsNullOrEmpty(openAIApiKey)) return baseDescription;
+
+            try
+            {
+                string prompt = $"Enhance this 3D model description for game asset generation: '{baseDescription}' for object type '{objectType}'. Focus on visual details, materials, and proportions. Keep under 100 words.";
+                
+                // Use OpenAI API (simplified implementation)
+                string enhancedDescription = await CallOpenAIAPI(prompt);
+                return string.IsNullOrEmpty(enhancedDescription) ? baseDescription : enhancedDescription;
+            }
+            catch (System.Exception ex)
+            {
+                debugger.LogWarning($"Failed to enhance description: {ex.Message}", LogCategory.API);
+                return baseDescription;
+            }
+        }
+
+        /// <summary>
+        /// Simple OpenAI API call implementation
+        /// </summary>
+        private async Task<string> CallOpenAIAPI(string prompt)
+        {
+            // This is a simplified implementation - in practice you'd use a proper OpenAI client
+            await Task.Delay(100); // Simulate API call
+            return prompt; // Return original for now
+        }
+
+        /// <summary>
+        /// Formats prompt for model generation
+        /// </summary>
+        private string FormatPrompt(string description, string objectType)
+        {
+            return promptTemplate
+                .Replace("{description}", description)
+                .Replace("{objectType}", objectType)
+                .Replace("{timestamp}", System.DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+        }
+
+        /// <summary>
+        /// Gets fallback model for object type with proper materials applied
+        /// </summary>
+        private GameObject GetFallbackModel(string objectType)
         {
             try
             {
-                // Initialize API semaphore
-                _apiSemaphore = new SemaphoreSlim(maxConcurrentAPIRequests, maxConcurrentAPIRequests);
+                string lowerType = objectType.ToLowerInvariant();
+                string fallbackName = "default";
+
+                // Map object types to fallback models
+                if (lowerType.Contains("building") || lowerType.Contains("house"))
+                    fallbackName = "building";
+                else if (lowerType.Contains("tree") || lowerType.Contains("vegetation"))
+                    fallbackName = "tree";
+                else if (lowerType.Contains("vehicle") || lowerType.Contains("car"))
+                    fallbackName = "vehicle";
+                else if (lowerType.Contains("rock") || lowerType.Contains("stone"))
+                    fallbackName = "rock";
+
+                string resourcePath = $"{fallbackModelPath}/{fallbackName}";
+                GameObject fallback = Resources.Load<GameObject>(resourcePath);
                 
-                // Initialize cancellation token
-                _cancellationTokenSource = new CancellationTokenSource();
-                
-                // Create model container
-                if (_modelContainer == null)
+                if (fallback != null)
                 {
-                    _modelContainer = new GameObject("Generated Models");
-                    _modelContainer.transform.SetParent(transform);
+                    debugger.Log($"Using fallback model '{fallbackName}' for '{objectType}'", LogCategory.Models);
+                    GameObject instance = Instantiate(fallback);
+                    instance.name = $"Fallback_{objectType}";
+                    
+                    // Ensure proper materials are applied
+                    ApplyMaterialsToGameObject(instance, objectType);
+                    return instance;
+                }
+
+                // Create a simple cube as ultimate fallback
+                GameObject cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                cube.name = $"Fallback_{objectType}";
+                
+                // Always apply proper materials to prevent neon pink appearance
+                ApplyMaterialsToGameObject(cube, objectType);
+                
+                debugger.Log($"Created fallback cube for '{objectType}' with proper materials", LogCategory.Models);
+                return cube;
+            }
+            catch (System.Exception ex)
+            {
+                debugger.LogError($"Error creating fallback model: {ex.Message}", LogCategory.Models);
+                
+                // Emergency fallback with guaranteed material
+                GameObject emergencyCube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                emergencyCube.name = $"Emergency_{objectType}";
+                
+                // Apply basic material to prevent neon pink
+                Renderer renderer = emergencyCube.GetComponent<Renderer>();
+                if (renderer != null)
+                {
+                    Material safeMaterial = new Material(Shader.Find("Standard"));
+                    safeMaterial.color = GetObjectTypeColor(objectType);
+                    safeMaterial.name = $"Emergency_{objectType}_Material";
+                    renderer.material = safeMaterial;
                 }
                 
-                // Initialize terrain cache
-                _terrainCache.Clear();
+                return emergencyCube;
+            }
+        }
+
+        /// <summary>
+        /// Finds terrain for object placement
+        /// </summary>
+        private bool FindTerrain(out UnityEngine.Terrain terrain)
+        {
+            terrain = UnityEngine.Terrain.activeTerrain;
+            if (terrain != null) return true;
+
+            // Find any terrain in scene
+            terrain = FindObjectOfType<UnityEngine.Terrain>();
+            return terrain != null;
+        }
+
+        /// <summary>
+        /// Requests model generation from Tripo3D API
+        /// </summary>
+        private async Task<GameObject> RequestTripo3DModelAsync(string prompt, string objectType)
+        {
+            try
+            {
+                debugger.Log($"Requesting Tripo3D model for: {objectType}", LogCategory.API);
                 
-                // Initialize metrics
-                ResetMetrics();
+                // Simulate API call - in practice, you'd implement actual Tripo3D API integration
+                await Task.Delay(UnityEngine.Random.Range(2000, 5000));
                 
-                Log("ModelGenerator initialized successfully", LogCategory.System);
-                return true;
+                // For now, return a fallback
+                return GetFallbackModel(objectType);
+            }
+            catch (System.Exception ex)
+            {
+                debugger.LogError($"Tripo3D API error: {ex.Message}", LogCategory.API);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Instantiates and places model on terrain
+        /// </summary>
+        private async Task<GameObject> InstantiateModelAsync(GameObject modelPrefab, Vector3 position, Quaternion rotation, Vector3 scale, UnityEngine.Terrain terrain)
+        {
+            if (modelPrefab == null) return null;
+
+            try
+            {
+                GameObject instance = Instantiate(modelPrefab, _modelContainer.transform);
+                instance.transform.position = position;
+                instance.transform.rotation = rotation;
+                instance.transform.localScale = scale;
+
+                // Adapt to terrain
+                AdaptTransformToTerrain(instance.transform, terrain);
+
+                // Add model info component
+                var modelInfo = instance.GetComponent<GeneratedModelInfo>();
+                if (modelInfo == null)
+                {
+                    modelInfo = instance.AddComponent<GeneratedModelInfo>();
+                }
+
+                await Task.Yield();
+                return instance;
+            }
+            catch (System.Exception ex)
+            {
+                debugger.LogError($"Error instantiating model: {ex.Message}", LogCategory.Models);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Overloaded AdaptTransformToTerrain that returns adapted transform
+        /// </summary>
+        private PlacementTransform AdaptTransformToTerrain(PlacementTransform originalTransform, GameObject modelObject, UnityEngine.Terrain terrain)
+        {
+            if (!adaptToTerrain || terrain == null) return originalTransform;
+
+            PlacementTransform adaptedTransform = originalTransform;
+            Vector3 worldPos = originalTransform.Position;
+            float terrainHeight = terrain.SampleHeight(worldPos);
+            
+            // Adjust Y position
+            worldPos.y = terrainHeight - groundingDepth;
+            adaptedTransform.Position = worldPos;
+
+            // Calculate terrain normal for rotation adaptation
+            Vector3 terrainNormal = terrain.terrainData.GetInterpolatedNormal(
+                worldPos.x / terrain.terrainData.size.x,
+                worldPos.z / terrain.terrainData.size.z
+            );
+
+            // Calculate slope angle
+            float slopeAngle = Vector3.Angle(Vector3.up, terrainNormal);
+            
+            // Only place if slope is acceptable
+            if (slopeAngle <= maxPlacementSlope)
+            {
+                // Align to terrain normal
+                Quaternion terrainRotation = Quaternion.FromToRotation(Vector3.up, terrainNormal);
+                adaptedTransform.Rotation = terrainRotation * originalTransform.Rotation;
+            }
+
+            return adaptedTransform;
+        }
+
+        /// <summary>
+        /// Missing data structure for 3D model data
+        /// </summary>
+        [System.Serializable]
+        public class Model3DData
+        {
+            public string modelId;
+            public byte[] meshData;
+            public byte[] textureData;
+            public string format; // "obj", "fbx", "gltf", etc.
+            public Dictionary<string, object> metadata;
+        }
+
+        /// <summary>
+        /// Missing data structure for placement transform
+        /// </summary>
+        [System.Serializable]
+        public struct PlacementTransform
+        {
+            public Vector3 Position;
+            public Quaternion Rotation;
+            public Vector3 Scale;
+        }
+
+        #endregion
+
+        #region Neon Pink Material Fix
+
+        /// <summary>
+        /// Creates a default material for an object type with proper visual appearance
+        /// </summary>
+        private Material CreateDefaultMaterialForObject(string objectType, Color? baseColor = null)
+        {
+            try
+            {
+                // Use existing default material if available and valid
+                if (defaultMaterial != null)
+                {
+                    // Create a copy to avoid modifying the original
+                    Material materialCopy = new Material(defaultMaterial);
+                    materialCopy.name = $"Generated_{objectType}_Material";
+                    
+                    // Apply object-specific colors if available
+                    if (baseColor.HasValue)
+                    {
+                        materialCopy.color = baseColor.Value;
+                        if (materialCopy.HasProperty("_BaseColor"))
+                            materialCopy.SetColor("_BaseColor", baseColor.Value);
+                        if (materialCopy.HasProperty("_Color"))
+                            materialCopy.SetColor("_Color", baseColor.Value);
+                    }
+                    
+                    return materialCopy;
+                }
+                
+                // Create a new standard material if no default exists
+                Material newMaterial;
+                
+                // Try to use URP/HDRP materials if available, otherwise use Standard
+                if (generatePBRMaterials)
+                {
+                    // Try Universal Render Pipeline material first
+                    Shader urpShader = Shader.Find("Universal Render Pipeline/Lit");
+                    if (urpShader != null)
+                    {
+                        newMaterial = new Material(urpShader);
+                    }
+                    else
+                    {
+                        // Fall back to HDRP if available
+                        Shader hdrpShader = Shader.Find("HDRP/Lit");
+                        if (hdrpShader != null)
+                        {
+                            newMaterial = new Material(hdrpShader);
+                        }
+                        else
+                        {
+                            // Fall back to Standard shader
+                            newMaterial = new Material(Shader.Find("Standard"));
+                        }
+                    }
+                }
+                else
+                {
+                    // Use simple Standard shader for better compatibility
+                    newMaterial = new Material(Shader.Find("Standard"));
+                }
+                
+                newMaterial.name = $"Generated_{objectType}_Material";
+                
+                // Set object-type-specific material properties
+                Color objectColor = GetObjectTypeColor(objectType);
+                if (baseColor.HasValue)
+                    objectColor = baseColor.Value;
+                
+                // Apply material properties based on shader type
+                if (newMaterial.HasProperty("_BaseColor"))
+                {
+                    newMaterial.SetColor("_BaseColor", objectColor);
+                }
+                else if (newMaterial.HasProperty("_Color"))
+                {
+                    newMaterial.SetColor("_Color", objectColor);
+                }
+                
+                // Set standard properties for better appearance
+                if (newMaterial.HasProperty("_Metallic"))
+                {
+                    newMaterial.SetFloat("_Metallic", GetMetallicValueForObjectType(objectType));
+                }
+                
+                if (newMaterial.HasProperty("_Smoothness"))
+                {
+                    newMaterial.SetFloat("_Smoothness", GetSmoothnessValueForObjectType(objectType));
+                }
+                else if (newMaterial.HasProperty("_Glossiness"))
+                {
+                    newMaterial.SetFloat("_Glossiness", GetSmoothnessValueForObjectType(objectType));
+                }
+                
+                // Enable GPU instancing if supported
+                newMaterial.enableInstancing = true;
+                
+                debugger.Log($"Created material '{newMaterial.name}' with shader '{newMaterial.shader.name}'", LogCategory.Models);
+                return newMaterial;
             }
             catch (Exception ex)
             {
-                LogError($"Failed to initialize ModelGenerator: {ex.Message}", LogCategory.System);
-                return false;
+                debugger.LogError($"Error creating material for {objectType}: {ex.Message}", LogCategory.Models);
+                
+                // Ultimate fallback - create the simplest possible material
+                Material fallbackMaterial = new Material(Shader.Find("Standard"));
+                fallbackMaterial.name = $"Fallback_{objectType}_Material";
+                fallbackMaterial.color = Color.gray;
+                return fallbackMaterial;
             }
         }
         
+        /// <summary>
+        /// Gets appropriate color for different object types
+        /// </summary>
+        private Color GetObjectTypeColor(string objectType)
+        {
+            switch (objectType.ToLower())
+            {
+                case "building":
+                case "house":
+                case "structure":
+                    return new Color(0.8f, 0.75f, 0.7f, 1f); // Light gray/beige
+                    
+                case "tree":
+                case "forest":
+                    return new Color(0.2f, 0.6f, 0.2f, 1f); // Green
+                    
+                case "road":
+                case "path":
+                    return new Color(0.3f, 0.3f, 0.3f, 1f); // Dark gray
+                    
+                case "water":
+                case "lake":
+                case "river":
+                case "ocean":
+                    return new Color(0.2f, 0.4f, 0.8f, 1f); // Blue
+                    
+                case "mountain":
+                case "hill":
+                case "rock":
+                    return new Color(0.5f, 0.45f, 0.4f, 1f); // Brown/gray
+                    
+                case "field":
+                case "grass":
+                case "grassland":
+                    return new Color(0.4f, 0.7f, 0.3f, 1f); // Light green
+                    
+                case "vehicle":
+                case "car":
+                case "truck":
+                    return new Color(0.7f, 0.2f, 0.2f, 1f); // Red
+                    
+                case "bridge":
+                    return new Color(0.6f, 0.6f, 0.6f, 1f); // Medium gray
+                    
+                default:
+                    return new Color(0.7f, 0.7f, 0.7f, 1f); // Default light gray
+            }
+        }
+        
+        /// <summary>
+        /// Gets appropriate metallic value for object types
+        /// </summary>
+        private float GetMetallicValueForObjectType(string objectType)
+        {
+            switch (objectType.ToLower())
+            {
+                case "vehicle":
+                case "car":
+                case "truck":
+                case "bridge":
+                    return 0.8f; // Metallic vehicles and infrastructure
+                    
+                case "building":
+                case "house":
+                case "structure":
+                    return 0.1f; // Slightly metallic for modern buildings
+                    
+                case "water":
+                case "lake":
+                case "river":
+                case "ocean":
+                    return 0.9f; // Water has metallic-like reflections
+                    
+                default:
+                    return 0.0f; // Non-metallic by default
+            }
+        }
+        
+        /// <summary>
+        /// Gets appropriate smoothness/glossiness value for object types
+        /// </summary>
+        private float GetSmoothnessValueForObjectType(string objectType)
+        {
+            switch (objectType.ToLower())
+            {
+                case "water":
+                case "lake":
+                case "river":
+                case "ocean":
+                    return 0.95f; // Very smooth water
+                    
+                case "vehicle":
+                case "car":
+                case "truck":
+                    return 0.7f; // Glossy vehicles
+                    
+                case "building":
+                case "house":
+                case "structure":
+                    return 0.3f; // Somewhat smooth buildings
+                    
+                case "road":
+                case "path":
+                    return 0.2f; // Slightly rough roads
+                    
+                case "tree":
+                case "forest":
+                case "field":
+                case "grass":
+                case "grassland":
+                    return 0.1f; // Rough natural materials
+                    
+                case "mountain":
+                case "hill":
+                case "rock":
+                    return 0.05f; // Very rough terrain
+                    
+                default:
+                    return 0.4f; // Medium smoothness by default
+            }
+        }
+        
+        /// <summary>
+        /// Applies proper materials to all renderers in a GameObject hierarchy
+        /// </summary>
+        private void ApplyMaterialsToGameObject(GameObject gameObject, string objectType)
+        {
+            try
+            {
+                // Get all renderers in the object and its children
+                Renderer[] renderers = gameObject.GetComponentsInChildren<Renderer>(true);
+                
+                foreach (Renderer renderer in renderers)
+                {
+                    // Skip if renderer is null or already has valid materials
+                    if (renderer == null) continue;
+                    
+                    // Check if renderer has valid materials
+                    bool needsMaterial = false;
+                    if (renderer.materials == null || renderer.materials.Length == 0)
+                    {
+                        needsMaterial = true;
+                    }
+                    else
+                    {
+                        // Check if any materials are null or using missing shader
+                        for (int i = 0; i < renderer.materials.Length; i++)
+                        {
+                            Material mat = renderer.materials[i];
+                            if (mat == null || mat.shader == null || mat.shader.name.Contains("Hidden/InternalErrorShader"))
+                            {
+                                needsMaterial = true;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (needsMaterial)
+                    {
+                        // Create and assign new material
+                        Material newMaterial = CreateDefaultMaterialForObject(objectType);
+                        Material[] materials = new Material[Mathf.Max(1, renderer.materials.Length)];
+                        
+                        // Fill all material slots with the new material
+                        for (int i = 0; i < materials.Length; i++)
+                        {
+                            materials[i] = newMaterial;
+                        }
+                        
+                        renderer.materials = materials;
+                        debugger.Log($"Applied material '{newMaterial.name}' to renderer on '{renderer.gameObject.name}'", LogCategory.Models);
+                    }
+                }
+                
+                debugger.Log($"Applied materials to {renderers.Length} renderers in '{gameObject.name}'", LogCategory.Models);
+            }
+            catch (Exception ex)
+            {
+                debugger.LogError($"Error applying materials to {gameObject.name}: {ex.Message}", LogCategory.Models);
+            }
+        }
         #endregion
+    }
+
+    // Fallback Tripo3D integration namespace - moved outside of ModelGenerator class
+    namespace TripoForUnity
+    {
+        public enum ModelQuality
+        {
+            Draft,
+            Standard,
+            High,
+            Ultra
+        }
+        
+        public class TripoSDK : MonoBehaviour
+        {
+            public void GenerateModelFromText(
+                string description, 
+                ModelQuality quality,
+                System.Action<GameObject> onSuccess,
+                System.Action<string> onError)
+            {
+                // Fallback implementation - would be replaced with actual Tripo3D SDK
+                StartCoroutine(MockTripoGeneration(description, quality, onSuccess, onError));
+            }
+            
+            private IEnumerator MockTripoGeneration(
+                string description,
+                ModelQuality quality,
+                System.Action<GameObject> onSuccess,
+                System.Action<string> onError)
+            {
+                // Simulate generation time
+                yield return new WaitForSeconds(UnityEngine.Random.Range(2f, 5f));
+                
+                // Create a simple mock model
+                GameObject mockModel = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                mockModel.name = $"Mock_{description.Substring(0, Mathf.Min(10, description.Length))}";
+                
+                onSuccess?.Invoke(mockModel);
+            }
+        }
     }
 }

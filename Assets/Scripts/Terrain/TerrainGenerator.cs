@@ -2,11 +2,12 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.AI;
+using Unity.AI.Navigation;
 using Unity.Jobs;
 using Unity.Collections;
 using Unity.Mathematics;
 using Unity.Burst;
+using Unity.Sentis;
 using Traversify.AI;
 using Traversify.Core;
 
@@ -222,11 +223,27 @@ namespace Traversify {
             public Vector3 position;
             public float width;
             public PathType type;
-            public List<PathNode> connections;
+            [SerializeReference]
+            public List<int> connectionIds = new List<int>(); // Use IDs instead of direct references
+            public int nodeId; // Unique identifier for this node
             public float elevation;
             public float curvature;
             public bool isBridge;
             public bool isTunnel;
+            
+            // Non-serialized helper for runtime connections
+            [System.NonSerialized]
+            private List<PathNode> _runtimeConnections;
+            
+            public List<PathNode> GetConnections()
+            {
+                return _runtimeConnections ?? new List<PathNode>();
+            }
+            
+            public void SetRuntimeConnections(List<PathNode> connections)
+            {
+                _runtimeConnections = connections;
+            }
         }
         
         public enum PathType {
@@ -278,6 +295,7 @@ namespace Traversify {
         private JobHandle _currentJob;
         private NativeArray<float> _heightsNative;
         private NativeArray<float2> _gradientsNative;
+        private float _generationProgress;
         #endregion
 
         #region Initialization
@@ -293,8 +311,8 @@ namespace Traversify {
         
         private void Initialize() {
             // Get components
-            _terrain = GetComponent<Terrain>();
-            if (_terrain == null) _terrain = gameObject.AddComponent<Terrain>();
+            _terrain = GetComponent<UnityEngine.Terrain>();
+            if (_terrain == null) _terrain = gameObject.AddComponent<UnityEngine.Terrain>();
             
             _terrainCollider = GetComponent<TerrainCollider>();
             if (_terrainCollider == null) _terrainCollider = gameObject.AddComponent<TerrainCollider>();
@@ -434,82 +452,97 @@ namespace Traversify {
             _isGenerating = true;
             debugger?.StartTimer("TerrainGeneration");
             
-            try {
-                // Step 1: Setup terrain data
-                onProgress?.Invoke(0.05f, "Initializing terrain data");
-                SetupTerrainData(request);
-                
-                // Step 2: Generate base heightmap
-                onProgress?.Invoke(0.1f, "Generating base heightmap");
-                yield return GenerateBaseHeightmap(request, onProgress);
-                
-                // Step 3: Apply terrain features
-                if (request.analysisResults != null) {
-                    onProgress?.Invoke(0.3f, "Applying terrain features from analysis");
-                    yield return ApplyAnalysisResults(request.analysisResults, onProgress);
-                }
-                
-                // Step 4: Generate biomes
-                if (generateBiomes) {
-                    onProgress?.Invoke(0.4f, "Generating biomes");
-                    yield return GenerateBiomes(onProgress);
-                }
-                
-                // Step 5: Apply erosion
-                if (applyErosion) {
-                    onProgress?.Invoke(0.5f, "Simulating erosion");
-                    yield return SimulateErosion(onProgress);
-                }
-                
-                // Step 6: Generate water features
-                if (generateWater || generateRivers) {
-                    onProgress?.Invoke(0.6f, "Creating water features");
-                    yield return GenerateWaterFeatures(onProgress);
-                }
-                
-                // Step 7: Generate paths
-                if (generateRoads || request.pathNodes != null) {
-                    onProgress?.Invoke(0.7f, "Generating paths");
-                    yield return GeneratePaths(request.pathNodes, onProgress);
-                }
-                
-                // Step 8: Apply final smoothing
-                onProgress?.Invoke(0.8f, "Applying final touches");
-                yield return FinalizeHeightmap(onProgress);
-                
-                // Step 9: Generate vegetation
-                if (generateVegetation) {
-                    onProgress?.Invoke(0.85f, "Placing vegetation");
-                    yield return GenerateVegetation(onProgress);
-                }
-                
-                // Step 10: Build navigation mesh
-                if (generateNavMesh) {
-                    onProgress?.Invoke(0.9f, "Building navigation mesh");
-                    yield return BuildNavigationMesh();
-                }
-                
-                // Step 11: Setup LODs if enabled
-                if (useLOD) {
-                    onProgress?.Invoke(0.95f, "Setting up LODs");
-                    SetupTerrainLODs();
-                }
-                
-                // Complete
-                ApplyTerrainData();
-                float generationTime = debugger?.StopTimer("TerrainGeneration") ?? 0f;
-                debugger?.Log($"Terrain generation completed in {generationTime:F2}s", LogCategory.Terrain);
-                
-                onProgress?.Invoke(1f, "Terrain generation complete");
-                onComplete?.Invoke(_terrain);
-                
-            } catch (Exception ex) {
-                debugger?.LogError($"Terrain generation failed: {ex.Message}", LogCategory.Terrain);
-                onError?.Invoke(ex.Message);
-            } finally {
-                _isGenerating = false;
-                CleanupResources();
+            // Use SafeCoroutine to handle the main logic with error handling
+            yield return SafeCoroutine.Wrap(
+                InnerGenerateTerrain(request, onComplete, onProgress),
+                ex => {
+                    debugger?.LogError($"Terrain generation failed: {ex.Message}", LogCategory.Terrain);
+                    onError?.Invoke(ex.Message);
+                    _isGenerating = false;
+                    CleanupResources();
+                },
+                LogCategory.Terrain
+            );
+        }
+        
+        /// <summary>
+        /// Internal implementation of terrain generation without try-catch around yields.
+        /// </summary>
+        private IEnumerator InnerGenerateTerrain(
+            TerrainGenerationRequest request,
+            Action<UnityEngine.Terrain> onComplete,
+            Action<float, string> onProgress
+        ) {
+            // Step 1: Setup terrain data
+            onProgress?.Invoke(0.05f, "Initializing terrain data");
+            SetupTerrainData(request);
+            
+            // Step 2: Generate base heightmap
+            onProgress?.Invoke(0.1f, "Generating base heightmap");
+            yield return GenerateBaseHeightmap(request, onProgress);
+            
+            // Step 3: Apply terrain features
+            if (request.analysisResults != null) {
+                onProgress?.Invoke(0.3f, "Applying terrain features from analysis");
+                yield return ApplyAnalysisResults(request.analysisResults, onProgress);
             }
+            
+            // Step 4: Generate biomes
+            if (generateBiomes) {
+                onProgress?.Invoke(0.4f, "Generating biomes");
+                yield return GenerateBiomes(onProgress);
+            }
+            
+            // Step 5: Apply erosion
+            if (applyErosion) {
+                onProgress?.Invoke(0.5f, "Simulating erosion");
+                yield return SimulateErosion(onProgress);
+            }
+            
+            // Step 6: Generate water features
+            if (generateWater || generateRivers) {
+                onProgress?.Invoke(0.6f, "Creating water features");
+                yield return GenerateWaterFeatures(onProgress);
+            }
+            
+            // Step 7: Generate paths
+            if (generateRoads || request.pathNodes != null) {
+                onProgress?.Invoke(0.7f, "Generating paths");
+                yield return GeneratePaths(request.pathNodes, onProgress);
+            }
+            
+            // Step 8: Apply final smoothing
+            onProgress?.Invoke(0.8f, "Applying final touches");
+            yield return FinalizeHeightmap(onProgress);
+            
+            // Step 9: Generate vegetation
+            if (generateVegetation) {
+                onProgress?.Invoke(0.85f, "Placing vegetation");
+                yield return GenerateVegetation(onProgress);
+            }
+            
+            // Step 10: Build navigation mesh
+            if (generateNavMesh) {
+                onProgress?.Invoke(0.9f, "Building navigation mesh");
+                yield return BuildNavigationMesh();
+            }
+            
+            // Step 11: Setup LODs if enabled
+            if (useLOD) {
+                onProgress?.Invoke(0.95f, "Setting up LODs");
+                SetupTerrainLODs();
+            }
+            
+            // Complete
+            ApplyTerrainData();
+            float generationTime = debugger?.StopTimer("TerrainGeneration") ?? 0f;
+            debugger?.Log($"Terrain generation completed in {generationTime:F2}s", LogCategory.Terrain);
+            
+            onProgress?.Invoke(1f, "Terrain generation complete");
+            onComplete?.Invoke(_terrain);
+            
+            _isGenerating = false;
+            CleanupResources();
         }
         
         public IEnumerator ApplyTerrainModifications(
@@ -671,7 +704,7 @@ namespace Traversify {
                     
                 case TerrainGenerationMode.FromHeightmap:
                     if (request.heightmapTexture != null) {
-                        yield return ImportHeightmap(request.heightmapTexture, onProgress);
+                        yield return ImportHeightmapTexture(request.heightmapTexture, onProgress);
                     } else {
                         yield return GenerateProceduralHeightmap(onProgress);
                     }
@@ -854,18 +887,18 @@ namespace Traversify {
         
         private float SimplexNoise(float x, float y) {
             // Simplified 2D simplex noise implementation
-            const float F2 = 0.5f * (Mathf.Sqrt(3f) - 1f);
-            const float G2 = (3f - Mathf.Sqrt(3f)) / 6f;
+            const float f2 = 0.366025403f; // 0.5f * (Mathf.Sqrt(3f) - 1f)
+            const float g2 = 0.211324865f; // (3f - Mathf.Sqrt(3f)) / 6f
             
-            float s = (x + y) * F2;
+            float s = (x + y) * f2;
             int i = Mathf.FloorToInt(x + s);
             int j = Mathf.FloorToInt(y + s);
             
-            float t = (i + j) * G2;
-            float X0 = i - t;
-            float Y0 = j - t;
-            float x0 = x - X0;
-            float y0 = y - Y0;
+            float t = (i + j) * g2;
+            float x0Temp = i - t;
+            float y0Temp = j - t;
+            float x0 = x - x0Temp;
+            float y0 = y - y0Temp;
             
             int i1, j1;
             if (x0 > y0) {
@@ -874,10 +907,10 @@ namespace Traversify {
                 i1 = 0; j1 = 1;
             }
             
-            float x1 = x0 - i1 + G2;
-            float y1 = y0 - j1 + G2;
-            float x2 = x0 - 1f + 2f * G2;
-            float y2 = y0 - 1f + 2f * G2;
+            float x1 = x0 - i1 + g2;
+            float y1 = y0 - j1 + g2;
+            float x2 = x0 - 1f + 2f * g2;
+            float y2 = y0 - 1f + 2f * g2;
             
             int gi0 = Hash(i, j) % 8;
             int gi1 = Hash(i + i1, j + j1) % 8;
@@ -1041,6 +1074,13 @@ namespace Traversify {
                 // Generate procedural as fallback
                 yield return GenerateProceduralHeightmap(onProgress);
             }
+        }
+        
+        private IEnumerator ImportHeightmapTexture(Texture2D heightmapTexture, Action<float, string> onProgress) {
+            onProgress?.Invoke(0.15f, "Importing heightmap texture");
+            _heightmap = TextureToHeightmap(heightmapTexture);
+            onProgress?.Invoke(0.2f, "Heightmap import complete");
+            yield return null;
         }
         
         private float[,] TextureToHeightmap(Texture2D texture) {
@@ -1270,7 +1310,8 @@ namespace Traversify {
                         float sum = 0;
                         for (int dz = -1; dz <= 1; dz++) {
                             for (int dx = -1; dx <= 1; dx++) {
-                                sum += temp[z + dz, x + dx] * w;
+                                float weight = dx == 0 && dz == 0 ? 4f : 1f;
+                                sum += temp[z + dz, x + dx] * weight;
                             }
                         }
                         map[z, x] = sum / 9f;
@@ -1816,11 +1857,12 @@ namespace Traversify {
                     width = width,
                     type = PathType.River,
                     elevation = height,
-                    connections = new List<PathNode>()
+                    connectionIds = new List<int>(),
+                    nodeId = path.Count // Unique ID based on order of creation
                 };
                 
                 if (path.Count > 0) {
-                    path[path.Count - 1].connections.Add(node);
+                    path[path.Count - 1].connectionIds.Add(node.nodeId);
                 }
                 
                 path.Add(node);
@@ -2115,12 +2157,13 @@ namespace Traversify {
                     width = pathType == PathType.Road ? 5f : 3f,
                     type = pathType,
                     elevation = _heightmap[current.y, current.x],
-                    connections = new List<PathNode>()
+                    connectionIds = new List<int>(),
+                    nodeId = path.Count // Unique ID based on order of creation
                 };
                 
                 if (path.Count > 0) {
-                    node.connections.Add(path[0]);
-                    path[0].connections.Add(node);
+                    node.connectionIds.Add(path[0].nodeId);
+                    path[0].connectionIds.Add(node.nodeId);
                 }
                 
                 path.Insert(0, node);
@@ -2204,7 +2247,7 @@ namespace Traversify {
             for (int i = 0; i < vegetationLayers.Count; i++) {
                 var layer = vegetationLayers[i];
                 prototypes[i] = new DetailPrototype {
-                    prefab = layer.prefabs.Length > 0 ? layer.prefabs[0] : null,
+                    prototype = layer.prefabs.Length > 0 ? layer.prefabs[0] : null,
                     prototypeTexture = null,
                     minWidth = layer.minScale,
                     maxWidth = layer.maxScale,

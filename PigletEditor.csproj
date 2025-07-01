@@ -47,8 +47,8 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Assets/Piglet/Editor/ProjectBrowser/ProjectBrowserGltfImporter.cs" />
-    <Compile Include="Assets/Piglet/Editor/PigletOptionsWindow/DragAndDropOptions.cs" />
     <Compile Include="Assets/Piglet/Editor/PigletOptionsWindow/PigletOptionsWindow.cs" />
+    <Compile Include="Assets/Piglet/Editor/PigletOptionsWindow/DragAndDropOptions.cs" />
     <Compile Include="Assets/Piglet/Editor/PigletOptionsWindow/PigletOptions.cs" />
     <Compile Include="Assets/Piglet/Editor/PigletOptionsWindow/PostImportOptions.cs" />
     <None Include="Assets/Piglet/Editor/PigletEditor.asmdef" />

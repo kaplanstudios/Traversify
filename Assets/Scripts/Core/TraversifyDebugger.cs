@@ -374,7 +374,7 @@ namespace Traversify.Core {
                 textRect.offsetMax = Vector2.zero;
                 
                 _logText = textObj.AddComponent<Text>();
-                _logText.font = _debugFont ? _debugFont : Resources.GetBuiltinResource<Font>("Arial.ttf");
+                _logText.font = _debugFont ? _debugFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
                 _logText.fontSize = _fontSize;
                 _logText.color = Color.white;
                 _logText.supportRichText = true;
@@ -424,7 +424,7 @@ namespace Traversify.Core {
             titleRect.offsetMax = new Vector2(-5, 0);
             
             Text titleText = titleObj.AddComponent<Text>();
-            titleText.font = _debugFont ? _debugFont : Resources.GetBuiltinResource<Font>("Arial.ttf");
+            titleText.font = _debugFont ? _debugFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             titleText.fontSize = _fontSize;
             titleText.color = Color.white;
             titleText.text = "Performance (ms/frame)";
@@ -490,7 +490,7 @@ namespace Traversify.Core {
             labelRect.offsetMax = new Vector2(50, 12);
             
             Text labelText = label.AddComponent<Text>();
-            labelText.font = _debugFont ? _debugFont : Resources.GetBuiltinResource<Font>("Arial.ttf");
+            labelText.font = _debugFont ? _debugFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             labelText.fontSize = Mathf.Max(10, _fontSize - 2);
             labelText.text = $"{thresholdMs}ms";
             labelText.color = color;
@@ -1583,3 +1583,4 @@ namespace Traversify.Core {
         Critical = 4
     }
 }
+

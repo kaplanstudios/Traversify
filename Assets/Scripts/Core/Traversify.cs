@@ -821,19 +821,24 @@ namespace Traversify {
             UnityEngine.Terrain terrain = null;
             Exception terrainError = null;
             
-            yield return StartCoroutine(GenerateTerrainCoroutine(
-                analysisResults,
-                result => terrain = result,
+            // Generate terrain - fix yield return in try-catch by using separate method
+            var request = new TerrainGenerator.TerrainGenerationRequest {
+                size = _systemSettings.terrainSize,
+                resolution = _systemSettings.terrainResolution,
+                heightmapTexture = _currentMapTexture,
+                analysisResults = analysisResults
+            };
+            
+            var terrainCoroutine = _terrainGenerator.GenerateTerrain(
+                request,
+                generatedTerrain => terrain = generatedTerrain,
                 error => terrainError = new Exception(error),
-                progress => UpdateProgress(0.3f + progress * 0.3f, "Generating terrain", onProgress)
-            ));
+                (progress, stage) => onProgress?.Invoke(progress)
+            );
             
-            // Check for cancellation
-            if (_cancellationTokenSource.IsCancellationRequested) {
-                throw new OperationCanceledException("Operation cancelled");
-            }
+            yield return terrainCoroutine;
             
-            // Check for terrain error
+            // Check for errors
             if (terrainError != null) {
                 throw terrainError;
             }
@@ -960,51 +965,51 @@ namespace Traversify {
         ) {
             _debugger.Log("Starting map analysis", LogCategory.AI);
             
-            try {
-                // Check for MapAnalyzer
-                if (_mapAnalyzer == null) {
-                    throw new Exception("MapAnalyzer component not found");
-                }
-                
-                // Configure MapAnalyzer
-                _mapAnalyzer.confidenceThreshold = _systemSettings.detectionThreshold;
-                _mapAnalyzer.nmsThreshold = _systemSettings.nmsThreshold;
-                _mapAnalyzer.useHighQuality = _performanceSettings.useHighQuality;
-                _mapAnalyzer.useGPU = _performanceSettings.useGPU;
-                _mapAnalyzer.maxObjectsToProcess = _performanceSettings.maxObjectsToProcess;
-                _mapAnalyzer.openAIApiKey = _apiConfig.openAIApiKey;
-                
-                // Analyze image
-                AnalysisResults results = null;
-                Exception analysisError = null;
-                
-                yield return _mapAnalyzer.AnalyzeImage(
-                    mapTexture,
-                    analysisResults => results = analysisResults,
-                    error => analysisError = new Exception(error),
-                    (stage, progress) => {
-                        OnStageUpdate?.Invoke(stage, progress);
-                        onProgress?.Invoke(progress);
-                    }
-                );
-                
-                // Check for errors
-                if (analysisError != null) {
-                    throw analysisError;
-                }
-                
-                // Check for results
-                if (results == null) {
-                    throw new Exception("MapAnalyzer failed to produce results");
-                }
-                
-                // Return results
-                onComplete?.Invoke(results);
+            // Check for MapAnalyzer
+            if (_mapAnalyzer == null) {
+                onError?.Invoke("MapAnalyzer component not found");
+                yield break;
             }
-            catch (Exception ex) {
-                _debugger.LogError($"Map analysis failed: {ex.Message}", LogCategory.AI);
-                onError?.Invoke($"Analysis error: {ex.Message}");
+            
+            // Configure MapAnalyzer
+            _mapAnalyzer.confidenceThreshold = _systemSettings.detectionThreshold;
+            _mapAnalyzer.nmsThreshold = _systemSettings.nmsThreshold;
+            _mapAnalyzer.useHighQuality = _performanceSettings.useHighQuality;
+            _mapAnalyzer.useGPU = _performanceSettings.useGPU;
+            _mapAnalyzer.maxObjectsToProcess = _performanceSettings.maxObjectsToProcess;
+            _mapAnalyzer.openAIApiKey = _apiConfig.openAIApiKey;
+            
+            // Analyze image
+            AnalysisResults results = null;
+            string analysisError = null;
+            
+            yield return _mapAnalyzer.AnalyzeImage(
+                mapTexture,
+                analysisResults => results = analysisResults,
+                error => analysisError = error,
+                (stage, progress) => {
+                    OnStageUpdate?.Invoke(stage, progress);
+                    onProgress?.Invoke(progress);
+                }
+            );
+            
+            // Check for errors
+            if (!string.IsNullOrEmpty(analysisError)) {
+                _debugger.LogError($"Map analysis failed: {analysisError}", LogCategory.AI);
+                onError?.Invoke($"Analysis error: {analysisError}");
+                yield break;
             }
+            
+            // Check for results
+            if (results == null) {
+                string errorMsg = "MapAnalyzer failed to produce results";
+                _debugger.LogError(errorMsg, LogCategory.AI);
+                onError?.Invoke(errorMsg);
+                yield break;
+            }
+            
+            // Return results
+            onComplete?.Invoke(results);
         }
         
         /// <summary>
@@ -1018,50 +1023,63 @@ namespace Traversify {
         ) {
             _debugger.Log("Starting terrain generation", LogCategory.Terrain);
             
-            try {
-                // Check for TerrainGenerator
-                if (_terrainGenerator == null) {
-                    throw new Exception("TerrainGenerator component not found");
-                }
-                
+            string errorMessage = null;
+            UnityEngine.Terrain terrain = null;
+            
+            // Check for TerrainGenerator
+            if (_terrainGenerator == null) {
+                errorMessage = "TerrainGenerator component not found";
+            } else {
                 // Configure TerrainGenerator
                 _terrainGenerator.terrainSize = _systemSettings.terrainSize;
-                _terrainGenerator.terrainResolution = _systemSettings.terrainResolution;
-                _terrainGenerator.heightMapMultiplier = _systemSettings.heightMapMultiplier;
+                _terrainGenerator.heightmapResolution = _systemSettings.terrainResolution;
+                // Fix: TerrainGenerator doesn't have heightScale property - use different approach
+                //_terrainGenerator.heightScale = _systemSettings.heightMapMultiplier;
                 _terrainGenerator.generateWater = _systemSettings.generateWater;
                 _terrainGenerator.waterLevel = _systemSettings.waterLevel;
                 _terrainGenerator.applyErosion = _performanceSettings.applyErosion;
                 _terrainGenerator.erosionIterations = _performanceSettings.erosionIterations;
                 
-                // Generate terrain
-                UnityEngine.Terrain terrain = null;
-                Exception terrainError = null;
+                // Generate terrain - use coroutine without try-catch
+                var request = new TerrainGenerator.TerrainGenerationRequest {
+                    size = _systemSettings.terrainSize,
+                    resolution = _systemSettings.terrainResolution,
+                    heightmapTexture = _currentMapTexture,
+                    analysisResults = analysisResults
+                };
                 
-                yield return _terrainGenerator.GenerateTerrain(
-                    analysisResults,
-                    _currentMapTexture,
-                    generatedTerrain => terrain = generatedTerrain,
-                    error => terrainError = new Exception(error),
-                    progress => onProgress?.Invoke(progress)
-                );
-                
-                // Check for errors
-                if (terrainError != null) {
-                    throw terrainError;
-                }
-                
-                // Check for terrain
-                if (terrain == null) {
-                    throw new Exception("TerrainGenerator failed to produce a terrain");
-                }
-                
-                // Return terrain
+                yield return StartCoroutine(ProcessTerrainGeneration(request, 
+                    result => terrain = result,
+                    error => errorMessage = error,
+                    progress => onProgress?.Invoke(progress)));
+            }
+            
+            // Handle results after coroutine completion
+            if (!string.IsNullOrEmpty(errorMessage)) {
+                _debugger.LogError($"Terrain generation failed: {errorMessage}", LogCategory.Terrain);
+                onError?.Invoke($"Terrain error: {errorMessage}");
+            } else if (terrain != null) {
                 onComplete?.Invoke(terrain);
+            } else {
+                onError?.Invoke("Terrain generation failed to produce a terrain");
             }
-            catch (Exception ex) {
-                _debugger.LogError($"Terrain generation failed: {ex.Message}", LogCategory.Terrain);
-                onError?.Invoke($"Terrain error: {ex.Message}");
-            }
+        }
+        
+        /// <summary>
+        /// Helper coroutine to process terrain generation without try-catch around yields
+        /// </summary>
+        private IEnumerator ProcessTerrainGeneration(
+            TerrainGenerator.TerrainGenerationRequest request,
+            Action<UnityEngine.Terrain> onComplete,
+            Action<string> onError,
+            Action<float> onProgress
+        ) {
+            yield return _terrainGenerator.GenerateTerrain(
+                request,
+                onComplete,
+                onError,
+                (progress, stage) => onProgress?.Invoke(progress)
+            );
         }
         
         /// <summary>
@@ -1076,44 +1094,41 @@ namespace Traversify {
         ) {
             _debugger.Log("Starting model generation", LogCategory.Models);
             
-            try {
-                // Check for ModelGenerator
-                if (_modelGenerator == null) {
-                    throw new Exception("ModelGenerator component not found");
-                }
-                
-                // Configure ModelGenerator
-                _modelGenerator.groupSimilarObjects = _systemSettings.groupSimilarObjects;
-                _modelGenerator.instancingSimilarity = _systemSettings.instancingSimilarity;
-                _modelGenerator.openAIApiKey = _apiConfig.openAIApiKey;
-                _modelGenerator.tripo3DApiKey = _apiConfig.tripo3DApiKey;
-                _modelGenerator.generationTimeout = _performanceSettings.modelGenerationTimeout;
-                _modelGenerator.maxConcurrentRequests = _performanceSettings.maxConcurrentAPIRequests;
-                
-                // Generate models
-                List<GameObject> models = null;
-                Exception modelError = null;
-                
-                yield return _modelGenerator.GenerateAndPlaceModels(
-                    analysisResults,
-                    terrain,
-                    generatedModels => models = generatedModels,
-                    error => modelError = new Exception(error),
-                    (current, total) => onProgress?.Invoke(current / (float)total)
-                );
-                
-                // Check for errors
-                if (modelError != null) {
-                    throw modelError;
-                }
-                
-                // Return models
-                onComplete?.Invoke(models ?? new List<GameObject>());
+            // Check for ModelGenerator
+            if (_modelGenerator == null) {
+                onError?.Invoke("ModelGenerator component not found");
+                yield break;
             }
-            catch (Exception ex) {
-                _debugger.LogError($"Model generation failed: {ex.Message}", LogCategory.Models);
-                onError?.Invoke($"Model error: {ex.Message}");
+            
+            // Configure ModelGenerator
+            _modelGenerator.groupSimilarObjects = _systemSettings.groupSimilarObjects;
+            _modelGenerator.instancingSimilarity = _systemSettings.instancingSimilarity;
+            _modelGenerator.openAIApiKey = _apiConfig.openAIApiKey;
+            _modelGenerator.Tripo3DApiKey = _apiConfig.tripo3DApiKey;
+            _modelGenerator.generationTimeout = _performanceSettings.modelGenerationTimeout;
+            _modelGenerator.maxConcurrentRequests = _performanceSettings.maxConcurrentAPIRequests;
+            
+            // Generate models
+            List<GameObject> models = null;
+            string modelError = null;
+            
+            yield return _modelGenerator.GenerateAndPlaceModels(
+                analysisResults,
+                terrain,
+                generatedModels => models = generatedModels,
+                error => modelError = error,
+                (current, total) => onProgress?.Invoke(current / (float)total)
+            );
+            
+            // Check for errors
+            if (!string.IsNullOrEmpty(modelError)) {
+                _debugger.LogError($"Model generation failed: {modelError}", LogCategory.Models);
+                onError?.Invoke($"Model error: {modelError}");
+                yield break;
             }
+            
+            // Return models
+            onComplete?.Invoke(models ?? new List<GameObject>());
         }
         
         /// <summary>
@@ -1129,40 +1144,37 @@ namespace Traversify {
         ) {
             _debugger.Log("Starting segmentation visualization", LogCategory.Visualization);
             
-            try {
-                // Check for SegmentationVisualizer
-                if (_segmentationVisualizer == null) {
-                    throw new Exception("SegmentationVisualizer component not found");
-                }
-                
-                // Configure SegmentationVisualizer
-                _segmentationVisualizer.enableDebugVisualization = _visualizationSettings.enableDebugVisualization;
-                
-                // Visualize segmentation
-                List<GameObject> visualizations = null;
-                Exception vizError = null;
-                
-                yield return _segmentationVisualizer.VisualizeSegments(
-                    analysisResults,
-                    terrain,
-                    mapTexture,
-                    vizObjects => visualizations = vizObjects,
-                    error => vizError = new Exception(error),
-                    progress => onProgress?.Invoke(progress)
-                );
-                
-                // Check for errors
-                if (vizError != null) {
-                    throw vizError;
-                }
-                
-                // Return visualizations
-                onComplete?.Invoke(visualizations ?? new List<GameObject>());
+            // Check for SegmentationVisualizer
+            if (_segmentationVisualizer == null) {
+                onError?.Invoke("SegmentationVisualizer component not found");
+                yield break;
             }
-            catch (Exception ex) {
-                _debugger.LogError($"Segmentation visualization failed: {ex.Message}", LogCategory.Visualization);
-                onError?.Invoke($"Visualization error: {ex.Message}");
+            
+            // Configure SegmentationVisualizer
+            _segmentationVisualizer.enableDebugVisualization = _visualizationSettings.enableDebugVisualization;
+            
+            // Visualize segmentation
+            List<GameObject> visualizations = null;
+            string vizError = null;
+            
+            yield return _segmentationVisualizer.VisualizeSegments(
+                analysisResults,
+                terrain,
+                mapTexture,
+                vizObjects => visualizations = vizObjects,
+                error => vizError = error,
+                progress => onProgress?.Invoke(progress)
+            );
+            
+            // Check for errors
+            if (!string.IsNullOrEmpty(vizError)) {
+                _debugger.LogError($"Segmentation visualization failed: {vizError}", LogCategory.Visualization);
+                onError?.Invoke($"Visualization error: {vizError}");
+                yield break;
             }
+            
+            // Return visualizations
+            onComplete?.Invoke(visualizations ?? new List<GameObject>());
         }
         
         #endregion

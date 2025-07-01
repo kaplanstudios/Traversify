@@ -91,6 +91,11 @@ namespace Traversify.AI {
         /// </summary>
         public string id;
         
+        /// <summary>
+        /// Time when this object was detected.
+        /// </summary>
+        public DateTime detectionTime;
+        
         #endregion
         
         #region Constructors

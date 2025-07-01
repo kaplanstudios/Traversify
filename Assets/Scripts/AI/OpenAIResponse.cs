@@ -168,6 +168,18 @@ namespace Traversify.AI {
             public Dictionary<string, float> entityRelevance;
             public string currentFocus;
         }
+        
+        [Serializable]
+        public class ApiMetrics {
+            public int totalRequests;
+            public float totalResponseTime;
+            public float averageResponseTime;
+            public float maxResponseTime;
+            public float minResponseTime = float.MaxValue;
+            public int successfulRequests;
+            public int failedRequests;
+            public DateTime lastRequestTime;
+        }
         #endregion
 
         #region Private Fields
@@ -176,6 +188,7 @@ namespace Traversify.AI {
         private Dictionary<string, Task<string>> activeTasks;
         private SemanticCache cache;
         private ContextMemory contextMemory;
+        private ApiMetrics metrics;
         private int activeRequests = 0;
         private readonly object requestLock = new object();
         private Coroutine batchProcessor;
@@ -213,6 +226,7 @@ namespace Traversify.AI {
             activeTasks = new Dictionary<string, Task<string>>();
             batchBuffer = new List<EnhancementRequest>();
             averageResponseTimes = new Dictionary<EnhancementType, float>();
+            metrics = new ApiMetrics();
             
             if (enableContextMemory) {
                 contextMemory = new ContextMemory {
@@ -247,9 +261,18 @@ namespace Traversify.AI {
                 try {
                     string json = System.IO.File.ReadAllText(cachePath);
                     cache = JsonUtility.FromJson<SemanticCache>(json);
-                    debugger.Log($"Loaded semantic cache: {cache.responses.Count} entries", LogCategory.AI);
+                    
+                    // Ensure cache.responses is not null
+                    if (cache == null) {
+                        cache = new SemanticCache { responses = new Dictionary<string, CachedResponse>() };
+                    }
+                    else if (cache.responses == null) {
+                        cache.responses = new Dictionary<string, CachedResponse>();
+                    }
+                    
+                    debugger?.Log($"Loaded semantic cache: {cache.responses.Count} entries", LogCategory.AI);
                 } catch (Exception ex) {
-                    debugger.LogError($"Failed to load cache: {ex.Message}", LogCategory.AI);
+                    debugger?.LogError($"Failed to load cache: {ex.Message}", LogCategory.AI);
                     cache = new SemanticCache { responses = new Dictionary<string, CachedResponse>() };
                 }
             } else {
@@ -345,37 +368,47 @@ namespace Traversify.AI {
             activeRequests++;
             float startTime = Time.realtimeSinceStartup;
             
-            try {
-                // Check cache first
-                if (useSemanticCaching) {
-                    string cachedResponse = CheckCache(request.prompt, request.type);
-                    if (!string.IsNullOrEmpty(cachedResponse)) {
-                        cache.hitCount++;
-                        request.onSuccess?.Invoke(cachedResponse);
-                        yield break;
-                    }
-                    cache.missCount++;
+            // Store error state instead of using try-catch around yield
+            string errorMessage = null;
+            string response = null;
+            
+            // Check cache first
+            if (useSemanticCaching) {
+                string cachedResponse = CheckCache(request.prompt, request.type);
+                if (!string.IsNullOrEmpty(cachedResponse)) {
+                    cache.hitCount++;
+                    request.onSuccess?.Invoke(cachedResponse);
+                    activeRequests--;
+                    yield break;
                 }
-                
-                // Validate and sanitize input
-                if (sanitizeInputs) {
-                    request.prompt = SanitizeInput(request.prompt);
-                }
-                
-                // Build enhanced prompt
-                string enhancedPrompt = BuildEnhancedPrompt(request);
-                
-                // Create messages with context
-                var messages = BuildMessages(enhancedPrompt, request);
-                
-                // Send request
-                string response = null;
-                yield return SendChatRequest(messages, 
-                    res => response = res,
-                    err => request.onError?.Invoke(err)
-                );
-                
-                if (!string.IsNullOrEmpty(response)) {
+                cache.missCount++;
+            }
+            
+            // Validate and sanitize input
+            if (sanitizeInputs) {
+                request.prompt = SanitizeInput(request.prompt);
+            }
+            
+            // Build enhanced prompt
+            string enhancedPrompt = BuildEnhancedPrompt(request);
+            
+            // Create messages with context
+            var messages = BuildMessages(enhancedPrompt, request);
+            
+            // Send request
+            yield return SendChatRequest(messages, 
+                res => response = res,
+                err => errorMessage = err
+            );
+            
+            if (!string.IsNullOrEmpty(errorMessage)) {
+                request.onError?.Invoke(errorMessage);
+                activeRequests--;
+                yield break;
+            }
+            
+            if (!string.IsNullOrEmpty(response)) {
+                try {
                     // Process and validate response
                     if (validateResponses) {
                         response = ValidateAndCleanResponse(response, request.type);
@@ -398,28 +431,25 @@ namespace Traversify.AI {
                     
                     request.onSuccess?.Invoke(response);
                 }
-                
-            } catch (Exception ex) {
-                debugger.LogError($"Request processing error: {ex.Message}", LogCategory.AI);
-                request.onError?.Invoke(ex.Message);
-            } finally {
-                activeRequests--;
-                
-                // Track performance
-                float responseTime = Time.realtimeSinceStartup - startTime;
-                totalResponseTime += responseTime;
-                totalRequests++;
-                
-                if (!averageResponseTimes.ContainsKey(request.type)) {
-                    averageResponseTimes[request.type] = responseTime;
-                } else {
-                    averageResponseTimes[request.type] = 
-                        (averageResponseTimes[request.type] + responseTime) / 2f;
+                catch (Exception ex) {
+                    request.onError?.Invoke($"Response processing failed: {ex.Message}");
                 }
-                
-                // Process next request
-                ProcessNextRequest();
             }
+            else {
+                request.onError?.Invoke("Empty response received from OpenAI");
+            }
+            
+            // Update metrics
+            float responseTime = Time.realtimeSinceStartup - startTime;
+            metrics.totalRequests++;
+            metrics.totalResponseTime += responseTime;
+            metrics.averageResponseTime = metrics.totalResponseTime / metrics.totalRequests;
+            
+            if (responseTime > metrics.maxResponseTime) {
+                metrics.maxResponseTime = responseTime;
+            }
+            
+            activeRequests--;
         }
         
         private async Task ProcessRequestAsync(EnhancementRequest request) {

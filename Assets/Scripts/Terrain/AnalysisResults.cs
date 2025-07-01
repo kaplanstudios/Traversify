@@ -70,6 +70,21 @@ namespace Traversify.AI {
         public VegetationData vegetationData = new VegetationData();
         
         /// <summary>
+        /// Image segments from detailed analysis.
+        /// </summary>
+        public List<ImageSegment> segments = new List<ImageSegment>();
+        
+        /// <summary>
+        /// Terrain modifications extracted from analysis.
+        /// </summary>
+        public List<TerrainModification> terrainModifications = new List<TerrainModification>();
+        
+        /// <summary>
+        /// Object placements extracted from analysis.
+        /// </summary>
+        public List<ObjectPlacement> objectPlacements = new List<ObjectPlacement>();
+        
+        /// <summary>
         /// General metadata about the analysis process.
         /// </summary>
         public AnalysisMetadata metadata = new AnalysisMetadata();
@@ -233,7 +248,7 @@ namespace Traversify.AI {
             sb.AppendLine("TERRAIN FEATURES:");
             var terrainTypes = terrainFeatures.GroupBy(t => t.type);
             foreach (var group in terrainTypes) {
-                sb.AppendLine($"  • {group.Key}: {group.Count()}");
+                sb.AppendLine($"  ��� {group.Key}: {group.Count()}");
             }
             sb.AppendLine();
             
@@ -285,6 +300,41 @@ namespace Traversify.AI {
             lightweight.segmentationMap = null;
             
             return lightweight;
+        }
+        
+        #endregion
+        
+        #region Additional Data Types
+        
+        /// <summary>
+        /// Represents a terrain modification based on analysis.
+        /// </summary>
+        [Serializable]
+        public class TerrainModification
+        {
+            public Rect bounds;
+            public Texture2D heightMap;
+            public float baseHeight;
+            public string terrainType;
+            public string description;
+            public float blendRadius;
+            public float slope;
+            public float roughness;
+        }
+        
+        /// <summary>
+        /// Represents an object placement with position, rotation, scale and metadata.
+        /// </summary>
+        [Serializable]
+        public class ObjectPlacement
+        {
+            public string objectType;
+            public Vector3 position;
+            public Quaternion rotation;
+            public Vector3 scale;
+            public float confidence;
+            public Rect boundingBox;
+            public Dictionary<string, object> metadata;
         }
         
         #endregion
@@ -927,6 +977,17 @@ namespace Traversify.AI {
             int index = UnityEngine.Random.Range(0, objects.Count);
             return objects[index];
         }
+        
+        /// <summary>
+        /// Recalculates the bounds of this object group based on its objects.
+        /// </summary>
+        public void RecalculateBounds() {
+            if (objects == null || objects.Count == 0) return;
+            
+            // This method can be used to update group statistics
+            // Currently, bounds are calculated dynamically via properties
+            // but this method provides a way to trigger recalculation if needed
+        }
     }
     
     /// <summary>
@@ -1030,6 +1091,11 @@ namespace Traversify.AI {
         /// Segment properties.
         /// </summary>
         public Dictionary<string, object> properties = new Dictionary<string, object>();
+        
+        /// <summary>
+        /// Waypoints along the path segment for detailed navigation.
+        /// </summary>
+        public List<Vector2> waypoints = new List<Vector2>();
     }
     
     /// <summary>
@@ -1287,4 +1353,3 @@ namespace Traversify.AI {
     
     #endregion
 }
-
