@@ -17,10 +17,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 using Traversify.Core;
-using Traversify.AI;
-#if UNITY_EDITOR
-using UnityEditor;
-#endif
+using SimpleFileBrowser;
 
 namespace Traversify.UI {
     /// <summary>
@@ -291,22 +288,30 @@ namespace Traversify.UI {
         public void ExportSettings() {
             if (!_initialized) return;
             
-            #if UNITY_EDITOR
-            string path = EditorUtility.SaveFilePanel(
-                "Export Settings",
-                Application.dataPath,
-                "TraversifySettings.json",
-                "json"
-            );
+            // Set Simple File Browser properties
+            FileBrowser.SetFilters(true, new FileBrowser.Filter("JSON Files", ".json"));
+            FileBrowser.SetDefaultFilter(".json");
+            FileBrowser.SetExcludedExtensions(".lnk", ".tmp", ".zip", ".rar", ".exe");
             
-            if (!string.IsNullOrEmpty(path)) {
-                string json = JsonUtility.ToJson(_currentSettings, true);
-                File.WriteAllText(path, json);
-                Log($"Settings exported to {path}");
+            // Show save file dialog
+            StartCoroutine(ShowSaveFileDialog());
+        }
+        
+        private IEnumerator ShowSaveFileDialog() {
+            yield return FileBrowser.WaitForSaveDialog(FileBrowser.PickMode.Files, false, null, "TraversifySettings.json", "Export Settings", "Save");
+            
+            if (FileBrowser.Success) {
+                string path = FileBrowser.Result[0];
+                
+                try {
+                    string json = JsonUtility.ToJson(_currentSettings, true);
+                    File.WriteAllText(path, json);
+                    Log($"Settings exported to {path}");
+                }
+                catch (Exception ex) {
+                    LogError($"Error exporting settings: {ex.Message}");
+                }
             }
-            #else
-            LogWarning("Settings export is only available in the Unity Editor");
-            #endif
         }
         
         /// <summary>
@@ -315,27 +320,36 @@ namespace Traversify.UI {
         public void ImportSettings() {
             if (!_initialized) return;
             
-            #if UNITY_EDITOR
-            string path = EditorUtility.OpenFilePanel(
-                "Import Settings",
-                Application.dataPath,
-                "json"
-            );
+            // Set Simple File Browser properties
+            FileBrowser.SetFilters(true, new FileBrowser.Filter("JSON Files", ".json"));
+            FileBrowser.SetDefaultFilter(".json");
+            FileBrowser.SetExcludedExtensions(".lnk", ".tmp", ".zip", ".rar", ".exe");
             
-            if (!string.IsNullOrEmpty(path) && File.Exists(path)) {
-                try {
-                    string json = File.ReadAllText(path);
-                    _currentSettings = JsonUtility.FromJson<SettingsData>(json);
-                    UpdateUIFromSettings();
-                    Log($"Settings imported from {path}");
+            // Show load file dialog
+            StartCoroutine(ShowLoadFileDialog());
+        }
+        
+        private IEnumerator ShowLoadFileDialog() {
+            yield return FileBrowser.WaitForLoadDialog(FileBrowser.PickMode.Files, false, null, null, "Import Settings", "Load");
+            
+            if (FileBrowser.Success) {
+                string path = FileBrowser.Result[0];
+                
+                if (File.Exists(path)) {
+                    try {
+                        string json = File.ReadAllText(path);
+                        _currentSettings = JsonUtility.FromJson<SettingsData>(json);
+                        UpdateUIFromSettings();
+                        Log($"Settings imported from {path}");
+                    }
+                    catch (Exception ex) {
+                        LogError($"Error importing settings: {ex.Message}");
+                    }
                 }
-                catch (Exception ex) {
-                    LogError($"Error importing settings: {ex.Message}");
+                else {
+                    LogError($"File not found: {path}");
                 }
             }
-            #else
-            LogWarning("Settings import is only available in the Unity Editor");
-            #endif
         }
         
         /// <summary>
@@ -539,14 +553,20 @@ namespace Traversify.UI {
         }
         
         private void OnBrowseOutputPathButtonClicked() {
-            #if UNITY_EDITOR
-            string path = EditorUtility.SaveFolderPanel(
-                "Select Output Directory",
-                Application.dataPath,
-                ""
-            );
+            // Set Simple File Browser properties for folder selection
+            FileBrowser.SetFilters(false); // No file filters for folder selection
+            FileBrowser.SetExcludedExtensions(".lnk", ".tmp", ".zip", ".rar", ".exe");
             
-            if (!string.IsNullOrEmpty(path)) {
+            // Show folder selection dialog
+            StartCoroutine(ShowFolderSelectionDialog());
+        }
+        
+        private IEnumerator ShowFolderSelectionDialog() {
+            yield return FileBrowser.WaitForLoadDialog(FileBrowser.PickMode.Folders, false, null, null, "Select Output Directory", "Select");
+            
+            if (FileBrowser.Success) {
+                string path = FileBrowser.Result[0];
+                
                 // Convert to relative path if within Assets folder
                 if (path.StartsWith(Application.dataPath)) {
                     path = "Assets" + path.Substring(Application.dataPath.Length);
@@ -554,10 +574,8 @@ namespace Traversify.UI {
                 
                 _outputPathInput.text = path;
                 _currentSettings.outputPath = path;
+                Log($"Output path set to: {path}");
             }
-            #else
-            LogWarning("Browse feature is only available in the Unity Editor");
-            #endif
         }
         
         private void OnAutoSaveToggleChanged(bool isOn) {
@@ -1310,3 +1328,4 @@ namespace Traversify.UI {
         #endregion
     }
 }
+

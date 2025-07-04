@@ -1250,28 +1250,49 @@ namespace Traversify.AI {
         public float openAITime;
         
         /// <summary>
-        /// Heightmap generation time in seconds.
+        /// Analysis time in seconds.
         /// </summary>
-        public float heightmapTime;
+        public float analysisTime;
         
         /// <summary>
-        /// Detailed stage timings.
+        /// Segmentation time in seconds.
         /// </summary>
-        public Dictionary<string, float> stageTimes = new Dictionary<string, float>();
+        public float segmentationTime;
         
         /// <summary>
-        /// Gets the performance breakdown by percentage.
+        /// Terrain generation time in seconds.
         /// </summary>
-        /// <returns>Dictionary of stage names to percentage of total time</returns>
-        public Dictionary<string, float> GetPerformanceBreakdown() {
-            Dictionary<string, float> breakdown = new Dictionary<string, float>();
-            if (totalTime <= 0f) return breakdown;
-            
-            foreach (var entry in stageTimes) {
-                breakdown[entry.Key] = entry.Value / totalTime * 100f;
+        public float terrainGenerationTime;
+        
+        /// <summary>
+        /// Model generation time in seconds.
+        /// </summary>
+        public float modelGenerationTime;
+        
+        /// <summary>
+        /// Post processing time in seconds.
+        /// </summary>
+        public float postProcessingTime;
+        
+        /// <summary>
+        /// Default constructor.
+        /// </summary>
+        public AnalysisTimings() { }
+        
+        /// <summary>
+        /// Constructor that converts from ProcessingTimings.
+        /// </summary>
+        public AnalysisTimings(ProcessingTimings processingTimings)
+        {
+            if (processingTimings != null)
+            {
+                totalTime = processingTimings.totalTime;
+                analysisTime = processingTimings.analysisTime;
+                segmentationTime = processingTimings.segmentationTime;
+                terrainGenerationTime = processingTimings.terrainGenerationTime;
+                modelGenerationTime = processingTimings.modelGenerationTime;
+                postProcessingTime = processingTimings.postProcessingTime;
             }
-            
-            return breakdown;
         }
     }
     

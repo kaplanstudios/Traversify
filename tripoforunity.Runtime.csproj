@@ -418,17 +418,32 @@
     <Reference Include="UnityEditor.iOS.Extensions">
       <HintPath>/Applications/Unity/Hub/Editor/6000.1.8f1/PlaybackEngines/iOSSupport/UnityEditor.iOS.Extensions.dll</HintPath>
     </Reference>
+    <Reference Include="AiToolbox.Editor">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Assets/AI Toolbox/Editor/AiToolbox.Editor.dll</HintPath>
+    </Reference>
+    <Reference Include="ColorCode.HTML">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Assets/AI Toolbox/Editor/ColorCode.HTML.dll</HintPath>
+    </Reference>
     <Reference Include="Unity.Collections.LowLevel.ILSupport">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/PackageCache/com.unity.collections@56bff8827a7e/Unity.Collections.LowLevel.ILSupport/Unity.Collections.LowLevel.ILSupport.dll</HintPath>
     </Reference>
     <Reference Include="nunit.framework">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/PackageCache/com.unity.ext.nunit@031a54704bff/net40/unity-custom/nunit.framework.dll</HintPath>
     </Reference>
+    <Reference Include="AiToolbox.Runtime">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Assets/AI Toolbox/Runtime/AiToolbox.Runtime.dll</HintPath>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/PackageCache/com.unity.nuget.newtonsoft-json@74deb55db2a0/Runtime/Newtonsoft.Json.dll</HintPath>
+    </Reference>
     <Reference Include="Mono.Cecil">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/PackageCache/com.unity.nuget.mono-cecil@d6f9955a5d5f/Mono.Cecil.dll</HintPath>
     </Reference>
     <Reference Include="ICSharpCode.SharpZipLib">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Assets/Piglet/Dependencies/SharpZipLib/ICSharpCode.SharpZipLib.dll</HintPath>
+    </Reference>
+    <Reference Include="ColorCode.Core">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Assets/AI Toolbox/Editor/ColorCode.Core.dll</HintPath>
     </Reference>
     <Reference Include="Piglet.Newtonsoft.Json">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Assets/Piglet/Dependencies/Json.NET/Piglet.Newtonsoft.Json.dll</HintPath>

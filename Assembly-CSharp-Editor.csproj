@@ -54,6 +54,13 @@
     <Compile Include="Assets/Editor/MathExtensionsForUnity.cs" />
     <Compile Include="Assets/Editor/FixAssemblyLoading.cs" />
     <Compile Include="Assets/Scripts/Editor/PackageDependencyNotification.cs" />
+    <None Include="Assets/AI Toolbox/Editor/Layouts/ChatMessageAi.uxml" />
+    <None Include="Assets/AI Toolbox/Editor/Layouts/SidebarItem.uxml" />
+    <None Include="Assets/AI Toolbox/Editor/Layouts/ChatMessage.uxml" />
+    <None Include="Assets/AI Toolbox/Editor/Layouts/ChatWindow.uxml" />
+    <None Include="Assets/AI Toolbox/Editor/Layouts/TextBlockText.uxml" />
+    <None Include="Assets/AI Toolbox/Editor/Layouts/TextBlockCode.uxml" />
+    <None Include="Assets/AI Toolbox/Editor/Layouts/ChatMessageUser.uxml" />
     <Reference Include="UnityEngine">
       <HintPath>/Applications/Unity/Hub/Editor/6000.1.8f1/Unity.app/Contents/Managed/UnityEngine/UnityEngine.dll</HintPath>
     </Reference>
@@ -429,17 +436,32 @@
     <Reference Include="UnityEditor.iOS.Extensions">
       <HintPath>/Applications/Unity/Hub/Editor/6000.1.8f1/PlaybackEngines/iOSSupport/UnityEditor.iOS.Extensions.dll</HintPath>
     </Reference>
+    <Reference Include="AiToolbox.Editor">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Assets/AI Toolbox/Editor/AiToolbox.Editor.dll</HintPath>
+    </Reference>
+    <Reference Include="ColorCode.HTML">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Assets/AI Toolbox/Editor/ColorCode.HTML.dll</HintPath>
+    </Reference>
     <Reference Include="Unity.Collections.LowLevel.ILSupport">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/PackageCache/com.unity.collections@56bff8827a7e/Unity.Collections.LowLevel.ILSupport/Unity.Collections.LowLevel.ILSupport.dll</HintPath>
     </Reference>
     <Reference Include="nunit.framework">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/PackageCache/com.unity.ext.nunit@031a54704bff/net40/unity-custom/nunit.framework.dll</HintPath>
     </Reference>
+    <Reference Include="AiToolbox.Runtime">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Assets/AI Toolbox/Runtime/AiToolbox.Runtime.dll</HintPath>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/PackageCache/com.unity.nuget.newtonsoft-json@74deb55db2a0/Runtime/Newtonsoft.Json.dll</HintPath>
+    </Reference>
     <Reference Include="Mono.Cecil">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/PackageCache/com.unity.nuget.mono-cecil@d6f9955a5d5f/Mono.Cecil.dll</HintPath>
     </Reference>
     <Reference Include="ICSharpCode.SharpZipLib">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Assets/Piglet/Dependencies/SharpZipLib/ICSharpCode.SharpZipLib.dll</HintPath>
+    </Reference>
+    <Reference Include="ColorCode.Core">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Assets/AI Toolbox/Editor/ColorCode.Core.dll</HintPath>
     </Reference>
     <Reference Include="Piglet.Newtonsoft.Json">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Assets/Piglet/Dependencies/Json.NET/Piglet.Newtonsoft.Json.dll</HintPath>
@@ -938,6 +960,18 @@
     <ProjectReference Include="Assembly-CSharp.csproj">
       <Project>{58d145a1-c71a-a1c5-b116-7fd60f7ce0c0}</Project>
       <Name>Assembly-CSharp</Name>
+    </ProjectReference>
+    <ProjectReference Include="AiToolbox.csproj">
+      <Project>{efb5337e-767f-e4c4-1645-58a53f30335d}</Project>
+      <Name>AiToolbox</Name>
+    </ProjectReference>
+    <ProjectReference Include="SimpleFileBrowser.Runtime.csproj">
+      <Project>{5811658c-6e6c-642d-2eac-7db40dc00cfb}</Project>
+      <Name>SimpleFileBrowser.Runtime</Name>
+    </ProjectReference>
+    <ProjectReference Include="AiToolbox.Samples.csproj">
+      <Project>{e29c06bf-58d1-52da-1963-ed1132c55c86}</Project>
+      <Name>AiToolbox.Samples</Name>
     </ProjectReference>
     <ProjectReference Include="tripoforunity.Editor.csproj">
       <Project>{7f21fb3c-95b9-7b8a-50ec-8ceb303121fc}</Project>

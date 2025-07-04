@@ -3,11 +3,17 @@ Microsoft Visual Studio Solution File, Format Version 11.00
 # Visual Studio 2010
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Piglet", "Piglet.csproj", "{36c21c8e-64ce-a22c-c82b-4d354fe56783}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AiToolbox", "AiToolbox.csproj", "{efb5337e-767f-e4c4-1645-58a53f30335d}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Assembly-CSharp-Editor", "Assembly-CSharp-Editor.csproj", "{0da1fde5-c161-9b0a-9780-9a6db90328d0}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Assembly-CSharp", "Assembly-CSharp.csproj", "{58d145a1-c71a-a1c5-b116-7fd60f7ce0c0}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PigletEditor", "PigletEditor.csproj", "{7a00335e-d025-1f88-72be-6004e793699b}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AiToolbox.Samples", "AiToolbox.Samples.csproj", "{e29c06bf-58d1-52da-1963-ed1132c55c86}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SimpleFileBrowser.Runtime", "SimpleFileBrowser.Runtime.csproj", "{5811658c-6e6c-642d-2eac-7db40dc00cfb}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "tripoforunity.Editor", "tripoforunity.Editor.csproj", "{7f21fb3c-95b9-7b8a-50ec-8ceb303121fc}"
 EndProject
@@ -20,12 +26,18 @@ Global
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{36c21c8e-64ce-a22c-c82b-4d354fe56783}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{36c21c8e-64ce-a22c-c82b-4d354fe56783}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{efb5337e-767f-e4c4-1645-58a53f30335d}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{efb5337e-767f-e4c4-1645-58a53f30335d}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{0da1fde5-c161-9b0a-9780-9a6db90328d0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{0da1fde5-c161-9b0a-9780-9a6db90328d0}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{58d145a1-c71a-a1c5-b116-7fd60f7ce0c0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{58d145a1-c71a-a1c5-b116-7fd60f7ce0c0}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7a00335e-d025-1f88-72be-6004e793699b}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{7a00335e-d025-1f88-72be-6004e793699b}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{e29c06bf-58d1-52da-1963-ed1132c55c86}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{e29c06bf-58d1-52da-1963-ed1132c55c86}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5811658c-6e6c-642d-2eac-7db40dc00cfb}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5811658c-6e6c-642d-2eac-7db40dc00cfb}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7f21fb3c-95b9-7b8a-50ec-8ceb303121fc}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{7f21fb3c-95b9-7b8a-50ec-8ceb303121fc}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{e8440458-707c-7364-0518-ad460acb9317}.Debug|Any CPU.ActiveCfg = Debug|Any CPU

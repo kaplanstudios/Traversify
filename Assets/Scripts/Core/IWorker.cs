@@ -17,15 +17,116 @@ using System.Threading.Tasks;
 using UnityEngine;
 using Traversify.Core;
 using Traversify.AI;
-// Unity.InferenceEngine package - using conditional compilation
-#if UNITY_INFERENCE_ENGINE_AVAILABLE
-using Unity.InferenceEngine;
-using TensorType = Unity.InferenceEngine.Tensor;
-#else
-using TensorType = Traversify.AI.Tensor;
-#endif
+using USentis = Unity.Sentis;
 
 namespace Traversify.Core {
+    /// <summary>
+    /// Interface for AI inference workers used throughout the Traversify system
+    /// </summary>
+    public interface IWorker : IDisposable
+    {
+        /// <summary>
+        /// Execute the model with the given inputs
+        /// </summary>
+        void Execute(Dictionary<string, object> inputs);
+
+        /// <summary>
+        /// Gets the output tensor by name
+        /// </summary>
+        object PeekOutput(string name);
+    }
+
+    /// <summary>
+    /// Worker for AI model inference using Sentis backend
+    /// </summary>
+    public class SentisWorker : IWorker
+    {
+        private USentis.Worker worker;
+        private USentis.Model model;
+
+        /// <summary>
+        /// Create a new SentisWorker with the specified model and backend type
+        /// </summary>
+        public SentisWorker(USentis.ModelAsset modelAsset, USentis.BackendType backendType)
+        {
+            if (modelAsset == null)
+                throw new ArgumentNullException(nameof(modelAsset));
+                
+            model = USentis.ModelLoader.Load(modelAsset);
+            worker = new USentis.Worker(model, backendType);
+        }
+
+        /// <summary>
+        /// Execute the model with the given inputs
+        /// </summary>
+        public void Execute(Dictionary<string, object> inputs)
+        {
+            // Set inputs using the correct Sentis API
+            foreach (var kvp in inputs)
+            {
+                if (kvp.Value is USentis.Tensor tensor)
+                {
+                    worker.SetInput(kvp.Key, tensor);
+                }
+            }
+            worker.Schedule();
+        }
+
+        /// <summary>
+        /// Gets the output tensor by name
+        /// </summary>
+        public object PeekOutput(string name)
+        {
+            return worker.PeekOutput(name);
+        }
+
+        /// <summary>
+        /// Dispose of resources
+        /// </summary>
+        public void Dispose()
+        {
+            worker?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Wrapper for Unity Sentis Worker to implement IWorker interface
+    /// </summary>
+    public class SentisWorkerWrapper : IWorker
+    {
+        private readonly USentis.Worker _worker;
+        private readonly USentis.Model _model;
+
+        public SentisWorkerWrapper(USentis.Worker worker, USentis.Model model)
+        {
+            _worker = worker ?? throw new ArgumentNullException(nameof(worker));
+            _model = model ?? throw new ArgumentNullException(nameof(model));
+        }
+
+        public void Execute(Dictionary<string, object> inputs)
+        {
+            // Set inputs using the correct Sentis API
+            foreach (var kvp in inputs)
+            {
+                if (kvp.Value is USentis.Tensor tensor)
+                {
+                    _worker.SetInput(kvp.Key, tensor);
+                }
+            }
+            _worker.Schedule();
+        }
+
+        public object PeekOutput(string name)
+        {
+            return _worker.PeekOutput(name);
+        }
+
+        public void Dispose()
+        {
+            _worker?.Dispose();
+        }
+    }
+
     /// <summary>
     /// Type of worker execution device.
     /// </summary>
@@ -36,78 +137,6 @@ namespace Traversify.Core {
         Gpu,
         /// <summary>Hybrid CPU/GPU execution</summary>
         Hybrid
-    }
-    
-    /// <summary>
-    /// Interface for AI model inference workers.
-    /// Provides a standard API for executing models and retrieving outputs
-    /// regardless of the underlying implementation (CPU, GPU, etc.).
-    /// </summary>
-    public interface IWorker : IDisposable {
-        /// <summary>
-        /// Gets the name of the model this worker is using.
-        /// </summary>
-        string ModelName { get; }
-        
-        /// <summary>
-        /// Gets whether the worker is currently executing a model.
-        /// </summary>
-        bool IsExecuting { get; }
-        
-        /// <summary>
-        /// Gets the execution device type (CPU, GPU, etc.).
-        /// </summary>
-        WorkerType WorkerType { get; }
-        
-        /// <summary>
-        /// Executes the model with input tensors (required by IWorker interface).
-        /// </summary>
-        /// <param name="inputs">Dictionary of input tensors by name</param>
-        void Execute(Dictionary<string, Tensor> inputs);
-
-        /// <summary>
-        /// Gets the output tensor with the specified name (required by IWorker interface).
-        /// </summary>
-        /// <param name="name">Name of the output tensor</param>
-        /// <returns>The output tensor</returns>
-        Tensor PeekOutput(string name);
-        
-        /// <summary>
-        /// Executes the model with the given input tensor.
-        /// </summary>
-        /// <param name="input">Input tensor data</param>
-        /// <param name="cancellationToken">Cancellation token</param>
-        /// <returns>Output tensor data</returns>
-#if UNITY_AI_INFERENCE_AVAILABLE
-        Task<Tensor> ExecuteAsync(Tensor input, CancellationToken cancellationToken = default);
-#else
-        Task<float[]> ExecuteAsync(float[] input, CancellationToken cancellationToken = default);
-#endif
-        
-        /// <summary>
-        /// Executes the model with multiple input tensors.
-        /// </summary>
-        /// <param name="inputs">Dictionary of input tensors by name</param>
-        /// <param name="cancellationToken">Cancellation token</param>
-        /// <returns>Dictionary of output tensors by name</returns>
-#if UNITY_AI_INFERENCE_AVAILABLE
-        Task<Dictionary<string, Tensor>> ExecuteAsync(Dictionary<string, Tensor> inputs, CancellationToken cancellationToken = default);
-#else
-        Task<Dictionary<string, float[]>> ExecuteAsync(Dictionary<string, float[]> inputs, CancellationToken cancellationToken = default);
-#endif
-
-        /// <summary>
-        /// Executes the model synchronously with input tensors.
-        /// </summary>
-        /// <param name="inputs">Dictionary of input tensors by name</param>
-        void Run(Dictionary<string, TensorType> inputs);
-
-        /// <summary>
-        /// Fetches an output tensor by name after execution.
-        /// </summary>
-        /// <param name="outputName">Name of the output tensor</param>
-        /// <returns>Output tensor</returns>
-        TensorType Fetch(string outputName);
     }
     
     /// <summary>
@@ -129,422 +158,46 @@ namespace Traversify.Core {
     }
     
     /// <summary>
-    /// Represents a named tensor value for use with worker Execute methods.
+    /// Utility class for converting between WorkerFactory.Type and Unity.Sentis.BackendType
     /// </summary>
-    public readonly struct TensorValuePair {
+    public static class WorkerTypeConverter {
         /// <summary>
-        /// Name of the tensor.
+        /// Converts WorkerFactory.Type to Unity.Sentis.BackendType
         /// </summary>
-        public readonly string Name;
+        public static USentis.BackendType ToSentisBackendType(WorkerFactory.Type workerType) {
+            return workerType switch {
+                WorkerFactory.Type.ComputePrecompiled => USentis.BackendType.GPUCompute,
+                WorkerFactory.Type.CSharpBurst => USentis.BackendType.CPU,
+                _ => USentis.BackendType.CPU
+            };
+        }
         
         /// <summary>
-        /// The tensor value.
+        /// Converts Unity.Sentis.BackendType to WorkerFactory.Type
         /// </summary>
-#if UNITY_AI_INFERENCE_AVAILABLE
-        public readonly Tensor Value;
-        
-        public TensorValuePair(string name, Tensor value) {
-            Name = name;
-            Value = value;
+        public static WorkerFactory.Type FromSentisBackendType(USentis.BackendType backendType) {
+            return backendType switch {
+                USentis.BackendType.GPUCompute => WorkerFactory.Type.ComputePrecompiled,
+                USentis.BackendType.CPU => WorkerFactory.Type.CSharpBurst,
+                _ => WorkerFactory.Type.CSharpBurst
+            };
         }
-#else
-        public readonly float[] Value;
-        
-        public TensorValuePair(string name, float[] value) {
-            Name = name;
-            Value = value;
-        }
-#endif
     }
-    
+}
+
+// Essential types needed by TraversifyManager (keeping minimal set here)
+namespace Traversify.AI {
     /// <summary>
-    /// Base implementation of IWorker that provides common functionality.
-    /// Concrete worker implementations should inherit from this class.
+    /// Represents timing information for processing operations
     /// </summary>
-    public abstract class WorkerBase : IWorker {
-        /// <summary>
-        /// Dictionary of output tensors by name.
-        /// </summary>
-#if UNITY_AI_INFERENCE_AVAILABLE
-        protected Dictionary<string, Tensor> Outputs { get; } = new Dictionary<string, Tensor>();
-#else
-        protected Dictionary<string, float[]> Outputs { get; } = new Dictionary<string, float[]>();
-#endif
-        
-        /// <summary>
-        /// The model used by this worker.
-        /// </summary>
-        protected UnityEngine.Object Model { get; }
-        
-        /// <summary>
-        /// Whether this worker is currently executing.
-        /// </summary>
-        protected bool ExecutionInProgress { get; set; }
-        
-        /// <summary>
-        /// Whether this worker has been initialized.
-        /// </summary>
-        protected bool Initialized { get; set; }
-        
-        /// <summary>
-        /// Whether this worker has been disposed.
-        /// </summary>
-        protected bool Disposed { get; set; }
-        
-        /// <summary>
-        /// Gets the name of the model this worker is using.
-        /// </summary>
-        public string ModelName => Model?.name ?? "Unknown";
-        
-        /// <summary>
-        /// Gets the worker type (CPU, GPU, etc.).
-        /// </summary>
-        public abstract WorkerType WorkerType { get; }
-        
-        /// <summary>
-        /// Gets the backend type this worker is using.
-        /// </summary>
-        public abstract WorkerBackend BackendType { get; }
-        
-        /// <summary>
-        /// Gets whether this worker is using GPU acceleration.
-        /// </summary>
-        public abstract bool IsUsingGPU { get; }
-        
-        /// <summary>
-        /// Gets whether this worker has been initialized.
-        /// </summary>
-        public bool IsInitialized => Initialized;
-        
-        /// <summary>
-        /// Gets whether this worker is currently executing.
-        /// </summary>
-        public bool IsExecuting => ExecutionInProgress;
-        
-        /// <summary>
-        /// Creates a new worker with the specified model.
-        /// </summary>
-        /// <param name="model">The model to use</param>
-        protected WorkerBase(UnityEngine.Object model) {
-            Model = model ?? throw new ArgumentNullException(nameof(model));
-        }
-        
-        /// <summary>
-        /// Executes the model synchronously with input tensors.
-        /// </summary>
-        /// <param name="inputs">Dictionary of input tensors by name</param>
-        public void Run(Dictionary<string, TensorType> inputs)
-        {
-            if (inputs == null) throw new ArgumentNullException(nameof(inputs));
-            if (Disposed) throw new ObjectDisposedException(GetType().Name);
-            
-            ExecutionInProgress = true;
-            try
-            {
-#if UNITY_AI_INFERENCE_AVAILABLE
-                Execute(inputs);
-#else
-                // Convert to float array format for fallback implementation
-                var floatInputs = new Dictionary<string, float[]>();
-                foreach (var kvp in inputs)
-                {
-                    if (kvp.Value is Tensor tensor)
-                    {
-                        floatInputs[kvp.Key] = tensor.data.ToArray();
-                    }
-                }
-                Execute(floatInputs);
-#endif
-            }
-            finally
-            {
-                ExecutionInProgress = false;
-            }
-        }
-
-        /// <summary>
-        /// Executes the model with input tensors (required by IWorker interface).
-        /// </summary>
-        /// <param name="inputs">Dictionary of input tensors by name</param>
-        public virtual void Execute(Dictionary<string, Tensor> inputs)
-        {
-            if (inputs == null) throw new ArgumentNullException(nameof(inputs));
-            if (Disposed) throw new ObjectDisposedException(GetType().Name);
-            
-            ExecutionInProgress = true;
-            try
-            {
-                // Convert to TensorType format and delegate to Run method
-                var tensorInputs = new Dictionary<string, TensorType>();
-                foreach (var kvp in inputs)
-                {
-                    tensorInputs[kvp.Key] = kvp.Value;
-                }
-                
-                // Derived classes should implement the actual execution logic
-                ExecuteInternal(tensorInputs);
-            }
-            finally
-            {
-                ExecutionInProgress = false;
-            }
-        }
-
-        /// <summary>
-        /// Gets the output tensor with the specified name (required by IWorker interface).
-        /// </summary>
-        /// <param name="name">Name of the output tensor</param>
-        /// <returns>The output tensor</returns>
-        public virtual Tensor PeekOutput(string name)
-        {
-            if (string.IsNullOrEmpty(name)) throw new ArgumentException("Output name cannot be null or empty", nameof(name));
-            if (Disposed) throw new ObjectDisposedException(GetType().Name);
-
-#if UNITY_AI_INFERENCE_AVAILABLE
-            if (Outputs.TryGetValue(name, out Tensor tensor))
-            {
-                return tensor;
-            }
-#else
-            if (Outputs.TryGetValue(name, out float[] data))
-            {
-                // Create a fallback tensor from float array
-                return CreateTensorFromFloatArray(data);
-            }
-#endif
-            
-            throw new ArgumentException($"Output '{name}' not found", nameof(name));
-        }
-
-        /// <summary>
-        /// Fetches an output tensor by name after execution.
-        /// </summary>
-        /// <param name="outputName">Name of the output tensor</param>
-        /// <returns>Output tensor</returns>
-        public virtual TensorType Fetch(string outputName)
-        {
-            if (string.IsNullOrEmpty(outputName)) throw new ArgumentException("Output name cannot be null or empty", nameof(outputName));
-            if (Disposed) throw new ObjectDisposedException(GetType().Name);
-
-#if UNITY_AI_INFERENCE_AVAILABLE
-            if (Outputs.TryGetValue(outputName, out Tensor tensor))
-            {
-                return tensor;
-            }
-#else
-            if (Outputs.TryGetValue(outputName, out float[] data))
-            {
-                // For fallback mode, create a Tensor from float array
-                return CreateTensorFromFloatArray(data) as TensorType;
-            }
-#endif
-            
-            throw new ArgumentException($"Output '{outputName}' not found", nameof(outputName));
-        }
-
-        /// <summary>
-        /// Internal execution method that derived classes should implement.
-        /// </summary>
-        /// <param name="inputs">Input tensors</param>
-        protected abstract void ExecuteInternal(Dictionary<string, TensorType> inputs);
-
-#if !UNITY_AI_INFERENCE_AVAILABLE
-        /// <summary>
-        /// Creates a tensor from a float array when Sentis is not available.
-        /// </summary>
-        /// <param name="data">Float array data</param>
-        /// <returns>A tensor containing the data</returns>
-        protected virtual Tensor CreateTensorFromFloatArray(float[] data)
-        {
-            // This is a placeholder implementation - in a real scenario,
-            // you would create an appropriate tensor type
-            throw new NotImplementedException("Tensor creation from float array not implemented in fallback mode");
-        }
-#endif
-        
-#if UNITY_AI_INFERENCE_AVAILABLE
-        /// <summary>
-        /// Execute the model with a single input tensor.
-        /// </summary>
-        /// <param name="inputName">Name of the input tensor</param>
-        /// <param name="inputTensor">Input tensor</param>
-        public void Execute(string inputName, Tensor inputTensor) {
-            if (string.IsNullOrEmpty(inputName)) throw new ArgumentNullException(nameof(inputName));
-            if (inputTensor == null) throw new ArgumentNullException(nameof(inputTensor));
-            
-            var inputs = new Dictionary<string, Tensor> { { inputName, inputTensor } };
-            Execute(inputs);
-        }
-        
-        /// <summary>
-        /// Execute the model with a collection of input tensor key-value pairs.
-        /// </summary>
-        /// <param name="inputs">Input tensor key-value pairs</param>
-        public void Execute(params TensorValuePair[] inputs) {
-            if (inputs == null) throw new ArgumentNullException(nameof(inputs));
-            
-            var inputDict = new Dictionary<string, Tensor>();
-            foreach (var pair in inputs) {
-                inputDict[pair.Name] = pair.Value;
-            }
-            
-            Execute(inputDict);
-        }
-        
-        /// <summary>
-        /// Execute the model asynchronously with the given inputs.
-        /// </summary>
-        /// <param name="inputs">Dictionary of named input tensors</param>
-        /// <param name="cancellationToken">Optional cancellation token</param>
-        /// <returns>Task representing the asynchronous operation</returns>
-        public virtual async Task<Dictionary<string, Tensor>> ExecuteAsync(Dictionary<string, Tensor> inputs, CancellationToken cancellationToken = default) {
-            if (inputs == null) throw new ArgumentNullException(nameof(inputs));
-            if (Disposed) throw new ObjectDisposedException(GetType().Name);
-            
-            return await Task.Run(() => {
-                Execute(inputs);
-                return new Dictionary<string, Tensor>(Outputs);
-            }, cancellationToken);
-        }
-        
-        /// <summary>
-        /// Execute the model asynchronously with a single input.
-        /// </summary>
-        /// <param name="input">Input tensor</param>
-        /// <param name="cancellationToken">Cancellation token</param>
-        /// <returns>Output tensor</returns>
-        public virtual async Task<Tensor> ExecuteAsync(Tensor input, CancellationToken cancellationToken = default) {
-            var inputs = new Dictionary<string, Tensor> { { "input", input } };
-            var outputs = await ExecuteAsync(inputs, cancellationToken);
-            return outputs.Values.FirstOrDefault();
-        }
-        
-        /// <summary>
-        /// Execute the model synchronously with the given inputs.
-        /// </summary>
-        /// <param name="inputs">Dictionary of named input tensors</param>
-        public abstract void Execute(Dictionary<string, Tensor> inputs);
-        
-        /// <summary>
-        /// Retrieve an output tensor by name without copying it.
-        /// </summary>
-        /// <param name="name">Name of the output tensor</param>
-        /// <returns>The output tensor, or null if not found</returns>
-        public virtual Tensor PeekOutput(string name) {
-            if (string.IsNullOrEmpty(name)) throw new ArgumentNullException(nameof(name));
-            if (Disposed) throw new ObjectDisposedException(GetType().Name);
-            
-            return Outputs.TryGetValue(name, out var tensor) ? tensor : null;
-        }
-        
-        /// <summary>
-        /// Retrieve a copy of an output tensor by name.
-        /// </summary>
-        /// <param name="name">Name of the output tensor</param>
-        /// <returns>A copy of the output tensor, or null if not found</returns>
-        public virtual Tensor FetchOutput(string name) {
-            Tensor output = PeekOutput(name);
-            return output?.DeepCopy();
-        }
-#else
-        /// <summary>
-        /// Execute the model asynchronously with the given inputs.
-        /// </summary>
-        /// <param name="inputs">Dictionary of named input arrays</param>
-        /// <param name="cancellationToken">Optional cancellation token</param>
-        /// <returns>Task representing the asynchronous operation</returns>
-        public virtual async Task<Dictionary<string, float[]>> ExecuteAsync(Dictionary<string, float[]> inputs, CancellationToken cancellationToken = default) {
-            if (inputs == null) throw new ArgumentNullException(nameof(inputs));
-            if (Disposed) throw new ObjectDisposedException(GetType().Name);
-            
-            return await Task.Run(() => {
-                Execute(inputs);
-                return new Dictionary<string, float[]>(Outputs);
-            }, cancellationToken);
-        }
-        
-        /// <summary>
-        /// Execute the model asynchronously with a single input.
-        /// </summary>
-        /// <param name="input">Input array</param>
-        /// <param name="cancellationToken">Cancellation token</param>
-        /// <returns>Output array</returns>
-        public virtual async Task<float[]> ExecuteAsync(float[] input, CancellationToken cancellationToken = default) {
-            var inputs = new Dictionary<string, float[]> { { "input", input } };
-            var outputs = await ExecuteAsync(inputs, cancellationToken);
-            return outputs.Values.FirstOrDefault();
-        }
-        
-        /// <summary>
-        /// Execute the model synchronously with the given inputs.
-        /// </summary>
-        /// <param name="inputs">Dictionary of named input arrays</param>
-        public abstract void Execute(Dictionary<string, float[]> inputs);
-#endif
-        
-        /// <summary>
-        /// Check if an output tensor with the given name exists.
-        /// </summary>
-        /// <param name="name">Name of the output tensor to check</param>
-        /// <returns>True if the output tensor exists, otherwise false</returns>
-        public virtual bool HasOutput(string name) {
-            if (string.IsNullOrEmpty(name)) return false;
-            if (Disposed) return false;
-            
-            return Outputs.ContainsKey(name);
-        }
-        
-        /// <summary>
-        /// Get the names of all available output tensors.
-        /// </summary>
-        /// <returns>Array of output tensor names</returns>
-        public virtual string[] GetOutputNames() {
-            if (Disposed) return Array.Empty<string>();
-            
-            string[] names = new string[Outputs.Count];
-            Outputs.Keys.CopyTo(names, 0);
-            return names;
-        }
-        
-        /// <summary>
-        /// Reset the worker to its initial state, clearing any cached tensors.
-        /// </summary>
-        public virtual void Reset() {
-            if (Disposed) throw new ObjectDisposedException(GetType().Name);
-            
-#if UNITY_AI_INFERENCE_AVAILABLE
-            // Dispose all output tensors
-            foreach (var tensor in Outputs.Values) {
-                tensor?.Dispose();
-            }
-#endif
-            
-            Outputs.Clear();
-            ExecutionInProgress = false;
-        }
-        
-        /// <summary>
-        /// Dispose of all resources used by this worker.
-        /// </summary>
-        public virtual void Dispose() {
-            if (Disposed) return;
-            
-#if UNITY_AI_INFERENCE_AVAILABLE
-            // Dispose of all output tensors
-            foreach (var tensor in Outputs.Values) {
-                tensor?.Dispose();
-            }
-#endif
-            
-            Outputs.Clear();
-            Disposed = true;
-        }
-        
-        /// <summary>
-        /// Throws an ObjectDisposedException if the worker has been disposed.
-        /// </summary>
-        protected void ThrowIfDisposed() {
-            if (Disposed) throw new ObjectDisposedException(GetType().Name);
-        }
+    [System.Serializable]
+    public class ProcessingTimings
+    {
+        public float totalTime;
+        public float analysisTime;
+        public float segmentationTime;
+        public float terrainGenerationTime;
+        public float modelGenerationTime;
+        public float postProcessingTime;
     }
 }

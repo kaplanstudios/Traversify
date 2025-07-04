@@ -394,14 +394,14 @@ namespace Traversify {
                 // Configure worker factory
                 WorkerFactory.Initialize((message, category, level) => {
                     switch (level) {
-                        case LogLevel.Info:
+                        case global::Traversify.Core.LogLevel.Info:
                             _debugger.Log(message, category);
                             break;
-                        case LogLevel.Warning:
+                        case global::Traversify.Core.LogLevel.Warning:
                             _debugger.LogWarning(message, category);
                             break;
-                        case LogLevel.Error:
-                        case LogLevel.Critical:
+                        case global::Traversify.Core.LogLevel.Error:
+                        case global::Traversify.Core.LogLevel.Critical:
                             _debugger.LogError(message, category);
                             break;
                         default:
@@ -1101,12 +1101,19 @@ namespace Traversify {
             }
             
             // Configure ModelGenerator
-            _modelGenerator.groupSimilarObjects = _systemSettings.groupSimilarObjects;
-            _modelGenerator.instancingSimilarity = _systemSettings.instancingSimilarity;
-            _modelGenerator.openAIApiKey = _apiConfig.openAIApiKey;
-            _modelGenerator.Tripo3DApiKey = _apiConfig.tripo3DApiKey;
-            _modelGenerator.generationTimeout = _performanceSettings.modelGenerationTimeout;
-            _modelGenerator.maxConcurrentRequests = _performanceSettings.maxConcurrentAPIRequests;
+            if (_modelGenerator != null) {
+                // Set debugger reference if the component has this property
+                var debuggerProp = _modelGenerator.GetType().GetProperty("debugger");
+                if (debuggerProp != null) debuggerProp.SetValue(_modelGenerator, _debugger);
+                
+                _modelGenerator.groupSimilarObjects = _systemSettings.groupSimilarObjects;
+                _modelGenerator.instancingSimilarity = _systemSettings.instancingSimilarity;
+                _modelGenerator.openAIApiKey = _apiConfig.openAIApiKey;
+                _modelGenerator.Tripo3DApiKey = _apiConfig.tripo3DApiKey; // Use public property
+                SetPropertyIfExists(_modelGenerator, "generationTimeout", _performanceSettings.modelGenerationTimeout);
+                SetPropertyIfExists(_modelGenerator, "maxConcurrentRequests", _performanceSettings.maxConcurrentAPIRequests);
+                SetPropertyIfExists(_modelGenerator, "apiRateLimitDelay", _performanceSettings.apiRateLimitDelay);
+            }
             
             // Generate models
             List<GameObject> models = null;
@@ -1243,6 +1250,44 @@ namespace Traversify {
             }
             catch (Exception ex) {
                 _debugger.LogError($"Failed to save metadata: {ex.Message}", LogCategory.IO);
+            }
+        }
+        
+        /// <summary>
+        /// Helper method to set properties using reflection if they exist
+        /// </summary>
+        private void SetPropertyIfExists(object target, string propertyName, object value)
+        {
+            try
+            {
+                var prop = target.GetType().GetProperty(propertyName);
+                if (prop != null && prop.CanWrite)
+                {
+                    prop.SetValue(target, value);
+                }
+            }
+            catch (Exception ex)
+            {
+                _debugger?.LogWarning($"Could not set property {propertyName}: {ex.Message}", LogCategory.System);
+            }
+        }
+        
+        /// <summary>
+        /// Helper method to set field values using reflection if they exist
+        /// </summary>
+        private void SetFieldIfExists(object target, string fieldName, object value)
+        {
+            try
+            {
+                var field = target.GetType().GetField(fieldName, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                if (field != null)
+                {
+                    field.SetValue(target, value);
+                }
+            }
+            catch (Exception ex)
+            {
+                _debugger?.LogWarning($"Could not set field {fieldName}: {ex.Message}", LogCategory.System);
             }
         }
         

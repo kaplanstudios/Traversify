@@ -25,6 +25,9 @@ using Unity.Barracuda;
 #if UNITY_PROFILING_AVAILABLE
 using Unity.Profiling;
 #endif
+#if UNITY_SENTIS_AVAILABLE
+using Unity.Sentis;
+#endif
 
 using Traversify.AI;
 
@@ -915,7 +918,11 @@ namespace Traversify.Core {
         /// <param name="inputs">Input tensors</param>
         /// <param name="reportPerformance">Whether to report performance metrics</param>
         /// <returns>Execution report</returns>
-        public static WorkerExecutionReport ExecuteModel(IWorker worker, Dictionary<string, Tensor> inputs, bool reportPerformance = false) {
+#if UNITY_SENTIS_AVAILABLE
+        public static WorkerExecutionReport ExecuteModel(IWorker worker, Dictionary<string, Unity.Sentis.Tensor> inputs, bool reportPerformance = false) {
+#else
+        public static WorkerExecutionReport ExecuteModel(IWorker worker, Dictionary<string, object> inputs, bool reportPerformance = false) {
+#endif
             if (worker == null) {
                 throw new ArgumentNullException(nameof(worker));
             }
@@ -951,17 +958,33 @@ namespace Traversify.Core {
                 System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew();
                 
                 try {
-                    // Preprocess
+                    // Preprocess (input preparation should happen before this method call)
                     System.Diagnostics.Stopwatch preprocessTimer = System.Diagnostics.Stopwatch.StartNew();
-                    
-                    // Execute the model
-                    worker.Execute(inputs);
                     preprocessTimer.Stop();
                     report.preprocessTimeMs = (float)preprocessTimer.Elapsed.TotalMilliseconds;
                     
-                    // Measure inference time
+                    // Measure inference time (this is the actual model execution)
                     System.Diagnostics.Stopwatch inferenceTimer = System.Diagnostics.Stopwatch.StartNew();
-                    // Note: Execute already completed, this is just to isolate other costs
+                    
+                    // Execute the model
+#if UNITY_SENTIS_AVAILABLE
+                    worker.Execute(inputs);
+#else
+                    // When Sentis is not available, use reflection to call Execute with object dictionary
+                    var executeMethod = worker.GetType().GetMethod("Execute", new System.Type[] { typeof(Dictionary<string, object>) });
+                    if (executeMethod != null) {
+                        executeMethod.Invoke(worker, new object[] { inputs });
+                    } else {
+                        // Fallback: try to find any Execute method and invoke it
+                        var anyExecuteMethod = worker.GetType().GetMethod("Execute");
+                        if (anyExecuteMethod != null) {
+                            anyExecuteMethod.Invoke(worker, new object[] { inputs });
+                        } else {
+                            throw new InvalidOperationException("Worker does not have a compatible Execute method when Sentis is not available.");
+                        }
+                    }
+#endif
+                    
                     inferenceTimer.Stop();
                     report.inferenceTimeMs = (float)inferenceTimer.Elapsed.TotalMilliseconds;
                     

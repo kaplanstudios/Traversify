@@ -82,18 +82,25 @@
     <None Include="Assets/TextMesh Pro/Shaders/TMPro.cginc" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF-Mobile Overlay.shader" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF-Mobile-2-Pass.shader" />
+    <None Include="Assets/GeneratedTerrains/ForestEncampment_digital_day_grid_20250702_005055/ForestEncampment_digital_day_grid_20250702_005055_metadata.json" />
+    <None Include="Assets/___www.unityassetcollection.com___.txt" />
+    <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250702_001507/text-1-hw-terrain-4275x2600-1_20250702_001507_metadata.json" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_Bitmap.shader" />
     <None Include="Packages/com.unity.vast.tripoforunity@1.0.1/package.json" />
+    <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250701_235037/text-1-hw-terrain-4275x2600-1_20250701_235037_metadata.json" />
     <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250701_071808/metadata.json" />
     <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250701_072539/metadata.json" />
     <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250701_074132/metadata.json" />
     <None Include="Assets/TextMesh Pro/Shaders/TMPro_Mobile.cginc" />
+    <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250701_235301/text-1-hw-terrain-4275x2600-1_20250701_235301_metadata.json" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF SSD.shader" />
     <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250630_221438/metadata.json" />
     <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250701_121240/metadata.json" />
     <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250630_221647/metadata.json" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF-Surface-Mobile.shader" />
     <None Include="Assets/TextMesh Pro/Shaders/SDFFunctions.hlsl" />
+    <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250702_004445/text-1-hw-terrain-4275x2600-1_20250702_004445_metadata.json" />
+    <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250701_234601/text-1-hw-terrain-4275x2600-1_20250701_234601_metadata.json" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF-Surface.shader" />
     <None Include="Assets/TextMesh Pro/Sprites/EmojiOne Attribution.txt" />
     <None Include="Assets/FreeFlyCamera/readme.txt" />
@@ -110,6 +117,7 @@
     <None Include="Assets/TextMesh Pro/Resources/LineBreaking Following Characters.txt" />
     <None Include="Assets/Resources/Shaders/SegmentationCompute.compute" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF-Mobile Masking.shader" />
+    <None Include="Assets/GeneratedTerrains/text-1-hw-terrain-4275x2600-1_20250701_235437/text-1-hw-terrain-4275x2600-1_20250701_235437_metadata.json" />
     <None Include="Assets/Resources/Shaders/ObjectPlacementCompute.compute" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_SDF Overlay.shader" />
     <None Include="Assets/TextMesh Pro/Shaders/TMP_Bitmap-Mobile.shader" />
@@ -472,6 +480,12 @@
     </Reference>
     <Reference Include="nunit.framework">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/PackageCache/com.unity.ext.nunit@031a54704bff/net40/unity-custom/nunit.framework.dll</HintPath>
+    </Reference>
+    <Reference Include="AiToolbox.Runtime">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Assets/AI Toolbox/Runtime/AiToolbox.Runtime.dll</HintPath>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/PackageCache/com.unity.nuget.newtonsoft-json@74deb55db2a0/Runtime/Newtonsoft.Json.dll</HintPath>
     </Reference>
     <Reference Include="Mono.Cecil">
       <HintPath>/Users/davidkaplan/Documents/ModelSimulations/Codebase/Traversify/Library/PackageCache/com.unity.nuget.mono-cecil@d6f9955a5d5f/Mono.Cecil.dll</HintPath>
@@ -958,6 +972,18 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="AiToolbox.csproj">
+      <Project>{efb5337e-767f-e4c4-1645-58a53f30335d}</Project>
+      <Name>AiToolbox</Name>
+    </ProjectReference>
+    <ProjectReference Include="SimpleFileBrowser.Runtime.csproj">
+      <Project>{5811658c-6e6c-642d-2eac-7db40dc00cfb}</Project>
+      <Name>SimpleFileBrowser.Runtime</Name>
+    </ProjectReference>
+    <ProjectReference Include="AiToolbox.Samples.csproj">
+      <Project>{e29c06bf-58d1-52da-1963-ed1132c55c86}</Project>
+      <Name>AiToolbox.Samples</Name>
+    </ProjectReference>
     <ProjectReference Include="tripoforunity.Editor.csproj">
       <Project>{7f21fb3c-95b9-7b8a-50ec-8ceb303121fc}</Project>
       <Name>tripoforunity.Editor</Name>

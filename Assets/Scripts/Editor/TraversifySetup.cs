@@ -690,7 +690,7 @@ public class TraversifySetup : EditorWindow
         GameObject controllerObj = new GameObject("TraversifyController");
         
         // Add TraversifyManager component (the correct main component)
-        var traversifyManager = controllerObj.AddComponent<Traversify.TraversifyManager>();
+        var traversifyManager = controllerObj.AddComponent<Traversify.Core.TraversifyManager>();
         
         // Add required TraversifyDebugger component
         try
@@ -1799,7 +1799,7 @@ public class TraversifySetup : EditorWindow
         Debug.Log("[Traversify] Terrain system setup complete");
     }
     
-    private void ConnectUIReferences(Traversify.TraversifyManager controller, GameObject uiRoot)
+    private void ConnectUIReferences(Traversify.Core.TraversifyManager controller, GameObject uiRoot)
     {
         Debug.Log("[Traversify] Connecting UI references...");
         
@@ -1937,7 +1937,7 @@ public class TraversifySetup : EditorWindow
         }
     }
     
-    private void ConfigureTraversifyController(Traversify.TraversifyManager controller)
+    private void ConfigureTraversifyController(Traversify.Core.TraversifyManager controller)
     {
         Debug.Log("[Traversify] Configuring Traversify controller...");
         
@@ -1964,7 +1964,7 @@ public class TraversifySetup : EditorWindow
             var segmentationVisualizer = GetOrAddComponentByName(controller.gameObject, "SegmentationVisualizer");
             
             // Use reflection to set private serialized fields
-            var controllerType = typeof(Traversify.TraversifyManager);
+            var controllerType = typeof(Traversify.Core.TraversifyManager);
             
             // Set component references
             SetPrivateField(controller, "_debugger", debugger);
@@ -2031,7 +2031,7 @@ public class TraversifySetup : EditorWindow
         return null;
     }
     
-    private void LoadAndSetAIModels(Traversify.TraversifyManager controller)
+    private void LoadAndSetAIModels(Traversify.Core.TraversifyManager controller)
     {
         Debug.Log("[Traversify] Loading AI models...");
         
@@ -2066,8 +2066,8 @@ public class TraversifySetup : EditorWindow
         CreateClassLabelsAsset(controller);
     }
     
-    private void CreateClassLabelsAsset(Traversify.TraversifyManager controller)
- {
+    private void CreateClassLabelsAsset(Traversify.Core.TraversifyManager controller)
+    {
         // Create a class labels text asset with common COCO classes
         string classLabelsContent = @"person
 bicycle
@@ -2161,53 +2161,54 @@ toothbrush";
         Debug.Log("[Traversify] Class labels asset created and loaded");
     }
     
-    private void ConfigureAPISettings(Traversify.TraversifyManager controller)
+    private void ConfigureAPISettings(Traversify.Core.TraversifyManager controller)
     { 
         // Create API configuration with saved OpenAI key
-        var apiConfig = new Traversify.Traversify.APIConfiguration();
-        apiConfig.openAIApiKey = EditorPrefs.GetString("TraversifyOpenAIKey", "");
-        apiConfig.tripo3DApiKey = EditorPrefs.GetString("TraversifyTripo3DKey", "");
+        var apiConfig = new
+        {
+            openAIApiKey = EditorPrefs.GetString("TraversifyOpenAIKey", ""),
+            tripo3DApiKey = EditorPrefs.GetString("TraversifyTripo3DKey", "")
+        };
         
-        SetPrivateField(controller, "_apiConfig", apiConfig);
+        SetPrivateField(controller, "_openAIApiKey", apiConfig.openAIApiKey);
         Debug.Log("[Traversify] API configuration set");
     }
     
-    private void ConfigureSystemSettings(Traversify.TraversifyManager controller)
+    private void ConfigureSystemSettings(Traversify.Core.TraversifyManager controller)
     {
-        var systemSettings = new Traversify.Traversify.SystemSettings();
-        systemSettings.terrainSize = new Vector3(
+        // Set individual properties using reflection
+        SetPrivateField(controller, "_terrainSize", new Vector3(
             EditorPrefs.GetFloat("Traversify_terrainSize", 500f),
             EditorPrefs.GetFloat("Traversify_terrainHeight", 100f),
             EditorPrefs.GetFloat("Traversify_terrainSize", 500f)
-        );
-        systemSettings.terrainResolution = EditorPrefs.GetInt("Traversify_terrainResolution", 513);
-        systemSettings.heightMapMultiplier = EditorPrefs.GetFloat("Traversify_heightMultiplier", 30f);
-        systemSettings.detectionThreshold = EditorPrefs.GetFloat("Traversify_detectionThreshold", 0.5f);
-        systemSettings.nmsThreshold = EditorPrefs.GetFloat("Traversify_nmsThreshold", 0.45f);
-        systemSettings.generateWater = EditorPrefs.GetBool("Traversify_generateWater", true);
-        systemSettings.waterLevel = EditorPrefs.GetFloat("Traversify_waterHeight", 0.25f);
-        systemSettings.groupSimilarObjects = EditorPrefs.GetBool("Traversify_groupObjects", true);
-        systemSettings.instancingSimilarity = EditorPrefs.GetFloat("Traversify_groupingDistance", 0.8f);
+        ));
+        SetPrivateField(controller, "_terrainResolution", EditorPrefs.GetInt("Traversify_terrainResolution", 513));
+        SetPrivateField(controller, "_heightMapMultiplier", EditorPrefs.GetFloat("Traversify_heightMultiplier", 30f));
+        SetPrivateField(controller, "_detectionThreshold", EditorPrefs.GetFloat("Traversify_detectionThreshold", 0.2f));
+        SetPrivateField(controller, "_nmsThreshold", EditorPrefs.GetFloat("Traversify_nmsThreshold", 0.45f));
+        SetPrivateField(controller, "_generateWater", EditorPrefs.GetBool("Traversify_generateWater", true));
+        SetPrivateField(controller, "_waterHeight", EditorPrefs.GetFloat("Traversify_waterHeight", 0.25f));
+        SetPrivateField(controller, "_groupSimilarObjects", EditorPrefs.GetBool("Traversify_groupObjects", true));
+        SetPrivateField(controller, "_instancingSimilarity", EditorPrefs.GetFloat("Traversify_groupingDistance", 0.8f));
         
-        SetPrivateField(controller, "_systemSettings", systemSettings);
         Debug.Log("[Traversify] System settings configured");
     }
     
-    private void ConfigurePerformanceSettings(Traversify.TraversifyManager controller)
+    private void ConfigurePerformanceSettings(Traversify.Core.TraversifyManager controller)
     {
         // Note: PerformanceSettings would need to be implemented in the actual Traversify class
         // For now, just log that performance settings would be configured
         Debug.Log("[Traversify] Performance settings configured");
     }
     
-    private void ConfigureVisualizationSettings(Traversify.TraversifyManager controller)
+    private void ConfigureVisualizationSettings(Traversify.Core.TraversifyManager controller)
     {
         // Note: VisualizationSettings would need to be implemented in the actual Traversify class
         // For now, just log that visualization settings would be configured
         Debug.Log("[Traversify] Visualization settings configured");
     }
     
-    private void ConfigureOutputSettings(Traversify.TraversifyManager controller)
+    private void ConfigureOutputSettings(Traversify.Core.TraversifyManager controller)
     {
         // Note: These fields would need to be implemented in the actual Traversify class
         // For now, just log that output settings would be configured
@@ -2229,7 +2230,7 @@ toothbrush";
         }
     }
     
-    private void ConnectControllerEventsToUI(Traversify.TraversifyManager controller, GameObject uiRoot)
+    private void ConnectControllerEventsToUI(Traversify.Core.TraversifyManager controller, GameObject uiRoot)
     {
         Debug.Log("[Traversify] Connecting controller events to UI...");
         
@@ -2258,7 +2259,7 @@ toothbrush";
         }
     }
     
-    private void LoadImageAndNotifyController(string path, GameObject uiRoot, Traversify.TraversifyManager controller)
+    private void LoadImageAndNotifyController(string path, GameObject uiRoot, Traversify.Core.TraversifyManager controller)
     {
         try
         {

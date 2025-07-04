@@ -2051,6 +2051,305 @@ namespace Traversify {
         #endregion
         
         #endregion
+
+        #region Public Methods
+        
+        /// <summary>
+        /// Visualizes analysis results by creating overlays and labels for detected segments
+        /// </summary>
+        /// <param name="results">The analysis results to visualize</param>
+        /// <param name="terrain">The terrain to place visualizations on</param>
+        /// <param name="onComplete">Callback when visualization is complete</param>
+        /// <returns>Coroutine for the visualization process</returns>
+        public IEnumerator VisualizeResults(AnalysisResults results, UnityEngine.Terrain terrain, System.Action onComplete = null)
+        {
+            if (results == null)
+            {
+                debugger?.LogError("Analysis results are null", LogCategory.Visualization);
+                onComplete?.Invoke();
+                yield break;
+            }
+            
+            if (terrain == null)
+            {
+                debugger?.LogError("Terrain is null", LogCategory.Visualization);
+                onComplete?.Invoke();
+                yield break;
+            }
+            
+            debugger?.Log("Starting segmentation visualization", LogCategory.Visualization);
+            
+            // Clear any existing visualizations
+            ClearVisualization();
+            
+            int totalItems = (results.terrainFeatures?.Count ?? 0) + (results.mapObjects?.Count ?? 0);
+            int processedItems = 0;
+            
+            // Visualize terrain features as overlays
+            if (results.terrainFeatures != null)
+            {
+                foreach (var feature in results.terrainFeatures)
+                {
+                    CreateTerrainFeatureOverlay(feature, terrain);
+                    processedItems++;
+                    
+                    // Yield every few items to prevent frame drops
+                    if (processedItems % 5 == 0)
+                        yield return null;
+                }
+            }
+            
+            // Visualize map objects as labels/markers
+            if (results.mapObjects != null)
+            {
+                foreach (var mapObj in results.mapObjects)
+                {
+                    CreateMapObjectLabel(mapObj, terrain);
+                    processedItems++;
+                    
+                    // Yield every few items to prevent frame drops
+                    if (processedItems % 5 == 0)
+                        yield return null;
+                }
+            }
+            
+            debugger?.Log($"Visualization complete: {processedItems} items visualized", LogCategory.Visualization);
+            onComplete?.Invoke();
+        }
+        
+        /// <summary>
+        /// Clears all existing visualizations
+        /// </summary>
+        public void ClearVisualization()
+        {
+            // Find and destroy all existing overlay objects
+            var existingOverlays = GameObject.FindGameObjectsWithTag("TerrainOverlay");
+            foreach (var overlay in existingOverlays)
+            {
+                if (Application.isPlaying)
+                    Destroy(overlay);
+                else
+                    DestroyImmediate(overlay);
+            }
+            
+            // Find and destroy all existing label objects
+            var existingLabels = GameObject.FindGameObjectsWithTag("ObjectLabel");
+            foreach (var label in existingLabels)
+            {
+                if (Application.isPlaying)
+                    Destroy(label);
+                else
+                    DestroyImmediate(label);
+            }
+            
+            debugger?.Log("Visualization cleared", LogCategory.Visualization);
+        }
+        
+        #endregion
+        
+        #region Private Methods
+        
+        /// <summary>
+        /// Creates a visual overlay for a terrain feature
+        /// </summary>
+        private void CreateTerrainFeatureOverlay(TerrainFeature feature, UnityEngine.Terrain terrain)
+        {
+            if (feature == null || terrain == null) return;
+            
+            try
+            {
+                GameObject overlay = overlayPrefab ? Instantiate(overlayPrefab) : GameObject.CreatePrimitive(PrimitiveType.Quad);
+                overlay.name = $"Overlay_{feature.label}";
+                overlay.tag = "TerrainOverlay";
+                
+                // Position and scale the overlay based on the feature's bounding box
+                Vector3 terrainSize = terrain.terrainData.size;
+                Vector3 terrainPos = terrain.transform.position;
+                
+                // Convert bounding box to world coordinates
+                float worldX = terrainPos.x + (feature.boundingBox.x / 1000f) * terrainSize.x; // Assuming 1000px = terrain width
+                float worldZ = terrainPos.z + (feature.boundingBox.y / 1000f) * terrainSize.z;
+                float worldWidth = (feature.boundingBox.width / 1000f) * terrainSize.x;
+                float worldHeight = (feature.boundingBox.height / 1000f) * terrainSize.z;
+                
+                // Sample terrain height at the center
+                Vector3 centerPos = new Vector3(worldX + worldWidth/2, 0, worldZ + worldHeight/2);
+                float terrainHeight = terrain.SampleHeight(centerPos);
+                
+                // Position the overlay
+                overlay.transform.position = new Vector3(
+                    centerPos.x, 
+                    terrainHeight + overlayYOffset, 
+                    centerPos.z
+                );
+                
+                // Scale the overlay
+                overlay.transform.localScale = new Vector3(worldWidth, 1, worldHeight);
+                overlay.transform.rotation = Quaternion.Euler(90, 0, 0); // Flat on ground
+                
+                // Apply material and color
+                Renderer renderer = overlay.GetComponent<Renderer>();
+                if (renderer != null)
+                {
+                    Material mat = overlayMaterial ? Instantiate(overlayMaterial) : new Material(Shader.Find("Standard"));
+                    mat.color = feature.segmentColor;
+                    mat.SetFloat("_Mode", 3); // Transparent mode
+                    mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                    mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                    mat.SetInt("_ZWrite", 0);
+                    mat.renderQueue = 3000;
+                    renderer.material = mat;
+                }
+                
+                // Start fade-in animation if enabled
+                if (animateSegments)
+                {
+                    StartCoroutine(FadeInOverlay(overlay));
+                }
+                
+                debugger?.Log($"Created overlay for terrain feature: {feature.label}", LogCategory.Visualization);
+            }
+            catch (System.Exception ex)
+            {
+                debugger?.LogError($"Error creating terrain overlay for {feature.label}: {ex.Message}", LogCategory.Visualization);
+            }
+        }
+        
+        /// <summary>
+        /// Creates a label for a map object
+        /// </summary>
+        private void CreateMapObjectLabel(MapObject mapObj, UnityEngine.Terrain terrain)
+        {
+            if (mapObj == null || terrain == null) return;
+            
+            try
+            {
+                GameObject label = labelPrefab ? Instantiate(labelPrefab) : new GameObject($"Label_{mapObj.label}");
+                label.name = $"Label_{mapObj.label}";
+                label.tag = "ObjectLabel";
+                
+                // Convert normalized position to world position
+                Vector3 terrainSize = terrain.terrainData.size;
+                Vector3 terrainPos = terrain.transform.position;
+                
+                Vector3 worldPos = new Vector3(
+                    terrainPos.x + mapObj.position.x * terrainSize.x,
+                    0,
+                    terrainPos.z + mapObj.position.y * terrainSize.z
+                );
+                
+                // Sample terrain height and add offset
+                float terrainHeight = terrain.SampleHeight(worldPos);
+                worldPos.y = terrainHeight + labelYOffset;
+                
+                label.transform.position = worldPos;
+                
+                // Create or update text component
+                TMPro.TextMeshPro textMesh = label.GetComponent<TMPro.TextMeshPro>();
+                if (textMesh == null)
+                {
+                    textMesh = label.AddComponent<TMPro.TextMeshPro>();
+                }
+                
+                // Set text properties
+                textMesh.text = !string.IsNullOrEmpty(mapObj.enhancedDescription) ? mapObj.enhancedDescription : mapObj.label;
+                textMesh.fontSize = labelFontSize;
+                textMesh.color = labelTextColor;
+                textMesh.alignment = TMPro.TextAlignmentOptions.Center;
+                
+                if (labelFont != null)
+                {
+                    textMesh.font = labelFont;
+                }
+                
+                // Add billboard behavior if enabled
+                if (billboardLabels)
+                {
+                    Billboard billboard = label.GetComponent<Billboard>();
+                    if (billboard == null)
+                    {
+                        billboard = label.AddComponent<Billboard>();
+                    }
+                }
+                
+                // Add background quad if needed
+                if (labelBackgroundColor.a > 0)
+                {
+                    CreateLabelBackground(label, textMesh);
+                }
+                
+                debugger?.Log($"Created label for map object: {mapObj.label}", LogCategory.Visualization);
+            }
+            catch (System.Exception ex)
+            {
+                debugger?.LogError($"Error creating object label for {mapObj.label}: {ex.Message}", LogCategory.Visualization);
+            }
+        }
+        
+        /// <summary>
+        /// Creates a background for the label text
+        /// </summary>
+        private void CreateLabelBackground(GameObject label, TMPro.TextMeshPro textMesh)
+        {
+            GameObject background = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            background.name = "Background";
+            background.transform.SetParent(label.transform);
+            background.transform.localPosition = Vector3.back * 0.01f; // Slightly behind text
+            
+            // Size background to text bounds
+            Bounds textBounds = textMesh.bounds;
+            background.transform.localScale = new Vector3(textBounds.size.x * 1.2f, textBounds.size.y * 1.2f, 1f);
+            
+            // Apply background material
+            Renderer bgRenderer = background.GetComponent<Renderer>();
+            if (bgRenderer != null)
+            {
+                Material bgMat = new Material(Shader.Find("Standard"));
+                bgMat.color = labelBackgroundColor;
+                bgMat.SetFloat("_Mode", 3); // Transparent mode
+                bgMat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                bgMat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                bgMat.SetInt("_ZWrite", 0);
+                bgMat.renderQueue = 2999; // Behind text
+                bgRenderer.material = bgMat;
+            }
+        }
+        
+        /// <summary>
+        /// Fade-in animation for overlays
+        /// </summary>
+        private IEnumerator FadeInOverlay(GameObject overlay)
+        {
+            Renderer renderer = overlay.GetComponent<Renderer>();
+            if (renderer == null) yield break;
+            
+            Material mat = renderer.material;
+            Color originalColor = mat.color;
+            Color transparentColor = new Color(originalColor.r, originalColor.g, originalColor.b, 0f);
+            
+            // Start transparent
+            mat.color = transparentColor;
+            
+            float elapsed = 0f;
+            while (elapsed < fadeDuration)
+            {
+                elapsed += Time.deltaTime;
+                float t = elapsed / fadeDuration;
+                
+                // Apply animation curve if available
+                if (fadeInCurve != null)
+                    t = fadeInCurve.Evaluate(t);
+                
+                Color currentColor = Color.Lerp(transparentColor, originalColor, t);
+                mat.color = currentColor;
+                
+                yield return null;
+            }
+            
+            // Ensure final color is set
+            mat.color = originalColor;
+        }
+        
+        #endregion
     }
 }
-

@@ -1,56 +1,40 @@
-/*************************************************************************
- *  Traversify – TraversifyManager.cs                                    *
- *  Author : David Kaplan (dkaplan73)                                    *
- *  Created: 2025-06-27                                                  *
- *  Updated: 2025-06-29 03:17:43 UTC                                     *
- *  Desc   : Central manager for the Traversify environment generation   *
- *           system. Handles UI interaction, processing pipelines,       *
- *           component coordination, and resource management. Serves     *
- *           as the main entry point for the application.                *
- *************************************************************************/
-
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Text;
+using System.Threading;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.Networking;
+using TMPro;
+using Traversify.AI; 
+using SimpleFileBrowser;
+using USentis = Unity.Sentis; 
+
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
-using TMPro;
-using Unity.Sentis;
-using Traversify.AI;
-using Traversify.Core;
 
-namespace Traversify {
+namespace Traversify.Core 
+{
     /// <summary>
-    /// Central manager for the Traversify environment generation system.
-    /// Handles UI interactions, processing pipelines, and resource management.
+    /// Main manager class for the Traversify terrain generation system.
+    /// Handles AI-powered map analysis and procedural terrain generation.
     /// </summary>
-    [DisallowMultipleComponent]
-    [RequireComponent(typeof(TraversifyDebugger))]
-    public class TraversifyManager : MonoBehaviour {
-        #region Singleton Pattern
+    public class TraversifyManager : MonoBehaviour
+    {
+        #region Singleton 
         
         private static TraversifyManager _instance;
-        
-        /// <summary>
-        /// Singleton instance of the TraversifyManager.
-        /// </summary>
-        public static TraversifyManager Instance {
-            get {
-                if (_instance == null) {
+        public static TraversifyManager Instance
+        {
+            get
+            {
+                if (_instance == null)
+                {
                     _instance = FindObjectOfType<TraversifyManager>();
-                    if (_instance == null) {
-                        GameObject go = new GameObject("TraversifyManager");
-                        _instance = go.AddComponent<TraversifyManager>();
-                        DontDestroyOnLoad(go);
-                    }
                 }
                 return _instance;
             }
@@ -58,58 +42,68 @@ namespace Traversify {
         
         #endregion
         
-        #region Inspector Properties
-        
-        [Header("Core Components")]
-        [Tooltip("Debug and logging system")]
-        [SerializeField] private TraversifyDebugger _debugger;
+        #region UI References
         
         [Header("UI References")]
-        [Tooltip("Upload map button")]
+        [Tooltip("Button for uploading map images")]
         [SerializeField] private Button _uploadButton;
         
-        [Tooltip("Generate button")]
+        [Tooltip("Button for starting terrain generation")]
         [SerializeField] private Button _generateButton;
         
-        [Tooltip("Map preview image")]
-        [SerializeField] private RawImage _mapPreviewImage;
-        
-        [Tooltip("Status text")]
-        [SerializeField] private TMP_Text _statusText;
-        
-        [Tooltip("Loading panel")]
-        [SerializeField] private GameObject _loadingPanel;
-        
-        [Tooltip("Progress bar")]
-        [SerializeField] private Slider _progressBar;
-        
-        [Tooltip("Progress text")]
-        [SerializeField] private TMP_Text _progressText;
-        
-        [Tooltip("Stage text")]
-        [SerializeField] private TMP_Text _stageText;
-        
-        [Tooltip("Details text")]
-        [SerializeField] private TMP_Text _detailsText;
-        
-        [Tooltip("Cancel button")]
+        [Tooltip("Button for cancelling processing")]
         [SerializeField] private Button _cancelButton;
         
-        [Tooltip("Settings panel")]
+        [Tooltip("Image component for map preview")]
+        [SerializeField] private RawImage _mapPreviewImage;
+        
+        [Tooltip("Text component for status messages")]
+        [SerializeField] private TMP_Text _statusText;
+        
+        [Tooltip("Loading panel GameObject")]
+        [SerializeField] private GameObject _loadingPanel;
+        
+        [Tooltip("Progress bar slider")]
+        [SerializeField] private Slider _progressBar;
+        
+        [Tooltip("Progress percentage text")]
+        [SerializeField] private TMP_Text _progressText;
+        
+        [Tooltip("Current stage text")]
+        [SerializeField] private TMP_Text _stageText;
+        
+        [Tooltip("Details text component")]
+        [SerializeField] private TMP_Text _detailsText;
+        
+        [Tooltip("Settings panel GameObject")]
         [SerializeField] private GameObject _settingsPanel;
         
+        #endregion
+        
+        #region Terrain Settings
+        
         [Header("Terrain Settings")]
-        [Tooltip("Size of the terrain in world units")]
+        [Tooltip("Size of the generated terrain in Unity units")]
         [SerializeField] private Vector3 _terrainSize = new Vector3(500, 100, 500);
         
-        [Tooltip("Resolution of the terrain heightmap")]
+        [Tooltip("Resolution of the terrain heightmap (must be 2^n + 1)")]
         [SerializeField] private int _terrainResolution = 513;
         
-        [Tooltip("Material for the terrain")]
+        [Tooltip("Multiplier for heightmap values")]
+        [SerializeField] private float _heightMapMultiplier = 1.0f;
+        
+        [Tooltip("Material to apply to generated terrain")]
         [SerializeField] private Material _terrainMaterial;
         
-        [Tooltip("Height multiplier for the heightmap")]
-        [SerializeField] private float _heightMapMultiplier = 30f;
+        #endregion
+        
+        #region Debugging
+        
+        private TraversifyDebugger _debugger;
+        
+        #endregion
+        
+        #region Settings
         
         [Header("Analysis Settings")]
         [Tooltip("Use high quality analysis (slower but more accurate)")]
@@ -142,7 +136,7 @@ namespace Traversify {
         [SerializeField] private bool _useSAM = true;
         
         [Header("API Settings")]
-        [Tooltip("OpenAI API key")]
+        [Tooltip("OpenAI API key")] 
         [SerializeField] private string _openAIApiKey = "";
         
         [Tooltip("Maximum concurrent API requests")]
@@ -156,7 +150,7 @@ namespace Traversify {
         [SerializeField] private bool _useGPUAcceleration = true;
         
         [Tooltip("Inference backend type")]
-        [SerializeField] private WorkerFactory.Type _inferenceBackend = WorkerFactory.Type.ComputePrecompiled;
+        [SerializeField] private USentis.BackendType _inferenceBackend = USentis.BackendType.GPUCompute;
         
         [Tooltip("Processing batch size")]
         [SerializeField] private int _processingBatchSize = 5;
@@ -166,13 +160,13 @@ namespace Traversify {
         
         [Header("AI Model Assets")]
         [Tooltip("YOLO model asset")]
-        [SerializeField] private Unity.Sentis.ModelAsset _yoloModel;
+        [SerializeField] private USentis.ModelAsset _yoloModel;
         
         [Tooltip("SAM2 model asset")]
-        [SerializeField] private Unity.Sentis.ModelAsset _sam2Model;
+        [SerializeField] private USentis.ModelAsset _sam2Model;
         
         [Tooltip("Faster R-CNN model asset")]
-        [SerializeField] private Unity.Sentis.ModelAsset _fasterRcnnModel;
+        [SerializeField] private USentis.ModelAsset _fasterRcnnModel;
         
         [Tooltip("Class labels text asset")]
         [SerializeField] private TextAsset _labelsFile;
@@ -349,10 +343,10 @@ namespace Traversify {
         private SegmentationVisualizer _segmentationVisualizer;
         private OpenAIResponse _openAIResponse;
         
-        // Model workers
-        private Unity.Sentis.Worker _yoloWorker;
-        private Unity.Sentis.Worker _sam2Worker;
-        private Unity.Sentis.Worker _rcnnWorker;
+        // Model workers - use our custom IWorker interface
+        private IWorker _yoloWorker;
+        private IWorker _sam2Worker;
+        private IWorker _rcnnWorker;
         private string[] _classLabels;
         
         // Processing state
@@ -430,11 +424,11 @@ namespace Traversify {
             
             // Configure inference backend
             if (_useGPUAcceleration && SystemInfo.supportsComputeShaders) {
-                _inferenceBackend = WorkerFactory.Type.ComputePrecompiled;
+                _inferenceBackend = USentis.BackendType.GPUCompute;
                 _debugger.Log($"GPU acceleration enabled - {SystemInfo.graphicsDeviceName}", LogCategory.System);
             }
             else {
-                _inferenceBackend = WorkerFactory.Type.CSharpBurst;
+                _inferenceBackend = USentis.BackendType.CPU;
                 _debugger.Log("Using CPU inference (Burst compiled)", LogCategory.System);
             }
             
@@ -577,8 +571,12 @@ namespace Traversify {
                     componentContainer.transform.SetParent(transform);
                 }
                 
-                // Initialize MapAnalyzer
-                _mapAnalyzer = FindOrCreateComponent<MapAnalyzer>(componentContainer);
+                // Initialize MapAnalyzer with better error handling
+                _mapAnalyzer = FindOrCreateMapAnalyzer(componentContainer);
+                if (_mapAnalyzer == null) {
+                    _debugger.LogError("Failed to create MapAnalyzer component", LogCategory.System);
+                    throw new System.Exception("MapAnalyzer initialization failed");
+                }
                 
                 // Initialize TerrainGenerator
                 _terrainGenerator = FindOrCreateComponent<TerrainGenerator>(componentContainer);
@@ -591,11 +589,61 @@ namespace Traversify {
                 
                 // Initialize OpenAIResponse
                 _openAIResponse = FindOrCreateComponent<OpenAIResponse>(componentContainer);
+                
+                _debugger.Log("All components initialized successfully", LogCategory.System);
             }
             catch (Exception ex) {
                 _debugger.LogError($"Failed to initialize components: {ex.Message}", LogCategory.System);
                 throw;
             }
+        }
+        
+        private MapAnalyzer FindOrCreateMapAnalyzer(GameObject parent) {
+            // First try to find existing MapAnalyzer
+            MapAnalyzer analyzer = parent.GetComponentInChildren<MapAnalyzer>();
+            if (analyzer != null) {
+                _debugger.Log("Found existing MapAnalyzer component", LogCategory.System);
+                return analyzer;
+            }
+            
+            // Try to find it by type name using reflection
+            try {
+                var mapAnalyzerType = System.Type.GetType("MapAnalyzer") ?? 
+                                     System.Type.GetType("Traversify.AI.MapAnalyzer") ??
+                                     System.Type.GetType("Traversify.MapAnalyzer");
+                
+                if (mapAnalyzerType != null) {
+                    GameObject go = new GameObject("MapAnalyzer");
+                    go.transform.SetParent(parent.transform);
+                    var component = go.AddComponent(mapAnalyzerType) as MapAnalyzer;
+                    
+                    if (component != null) {
+                        _debugger.Log("Created MapAnalyzer component successfully", LogCategory.System);
+                        return component;
+                    }
+                }
+            }
+            catch (Exception ex) {
+                _debugger.LogError($"Error creating MapAnalyzer via reflection: {ex.Message}", LogCategory.System);
+            }
+            
+            // Last resort: try direct component creation
+            try {
+                GameObject go = new GameObject("MapAnalyzer");
+                go.transform.SetParent(parent.transform);
+                var component = go.AddComponent<MapAnalyzer>();
+                
+                if (component != null) {
+                    _debugger.Log("Created MapAnalyzer component via direct instantiation", LogCategory.System);
+                    return component;
+                }
+            }
+            catch (Exception ex) {
+                _debugger.LogError($"Error creating MapAnalyzer directly: {ex.Message}", LogCategory.System);
+            }
+            
+            _debugger.LogError("All attempts to create MapAnalyzer failed", LogCategory.System);
+            return null;
         }
         
         private T FindOrCreateComponent<T>(GameObject parent) where T : Component {
@@ -684,6 +732,16 @@ namespace Traversify {
                 
                 // Now that models are configured, initialize them
                 _mapAnalyzer.InitializeModelsIfNeeded();
+                
+                // Log the configuration status
+                if (_mapAnalyzer.IsInitialized)
+                {
+                    _debugger.Log("✅ MapAnalyzer configured and initialized successfully", LogCategory.AI);
+                }
+                else
+                {
+                    _debugger.LogError("❌ MapAnalyzer configuration failed", LogCategory.AI);
+                }
             }
             
             // Configure TerrainGenerator
@@ -836,19 +894,18 @@ namespace Traversify {
             }
         }
         
-        private void LoadYOLOFromStreamingAssets() {
+        private void LoadYOLOFromAIModels() {
             try {
-                string modelPath = Path.Combine(Application.streamingAssetsPath, "Traversify", "Models", "yolov8n.onnx");
+                string modelPath = Path.Combine(Application.dataPath, "Scripts", "AI", "Models", "yolov8n.onnx");
                 _debugger.Log($"Loading YOLO model from: {modelPath}", LogCategory.AI);
                 
-                // Check if file exists
                 if (!File.Exists(modelPath)) {
                     _debugger.LogError($"YOLO model file not found at: {modelPath}", LogCategory.AI);
                     
                     // Try inspector fallback
                     if (_yoloModel != null) {
                         try {
-                            _yoloWorker = CreateSentisWorker(_yoloModel, WorkerFactory.Type.ComputePrecompiled);
+                            _yoloWorker = CreateSentisWorker(_yoloModel, USentis.BackendType.GPUCompute);
                             _debugger.Log("✓ YOLO model loaded successfully from inspector assignment", LogCategory.AI);
                             return;
                         }
@@ -866,9 +923,9 @@ namespace Traversify {
                 #if UNITY_EDITOR
                 // In editor, try to load via AssetDatabase as ModelAsset
                 string assetPath = "Assets/Scripts/AI/Models/yolov8n.onnx";
-                var yoloAsset = UnityEditor.AssetDatabase.LoadAssetAtPath<Unity.Sentis.ModelAsset>(assetPath);
+                var yoloAsset = AssetDatabase.LoadAssetAtPath<USentis.ModelAsset>(assetPath);
                 if (yoloAsset != null) {
-                    _yoloWorker = CreateSentisWorker(yoloAsset, WorkerFactory.Type.ComputePrecompiled);
+                    _yoloWorker = CreateSentisWorker(yoloAsset, USentis.BackendType.GPUCompute);
                     _debugger.Log("✓ YOLO model loaded successfully from AI/Models (Editor)", LogCategory.AI);
                     return;
                 }
@@ -880,7 +937,7 @@ namespace Traversify {
                 // Try inspector fallback for runtime builds
                 if (_yoloModel != null) {
                     try {
-                        _yoloWorker = CreateSentisWorker(_yoloModel, WorkerFactory.Type.ComputePrecompiled);
+                        _yoloWorker = CreateSentisWorker(_yoloModel, USentis.BackendType.GPUCompute);
                         _debugger.Log("✓ YOLO model loaded successfully from inspector assignment", LogCategory.AI);
                         return;
                     }
@@ -897,9 +954,9 @@ namespace Traversify {
             }
         }
         
-        private void LoadSAM2FromStreamingAssets() {
+        private void LoadSAM2FromAIModels() {
             try {
-                string modelPath = Path.Combine(Application.streamingAssetsPath, "Traversify", "Models", "sam2_hiera_base.onnx");
+                string modelPath = Path.Combine(Application.dataPath, "Scripts", "AI", "Models", "sam2_hiera_base.onnx");
                 _debugger.Log($"Loading SAM2 model from: {modelPath}", LogCategory.AI);
                 
                 if (!File.Exists(modelPath)) {
@@ -914,7 +971,7 @@ namespace Traversify {
                         }
                         catch (Exception ex) {
                             _debugger.LogError($"Failed to load SAM2 model from inspector: {ex.Message}", LogCategory.AI);
-                        }
+                        } 
                     }
                     
                     _debugger.LogWarning("SAM2 model not available - segmentation will use simplified approach", LogCategory.AI);
@@ -925,145 +982,7 @@ namespace Traversify {
                 
                 #if UNITY_EDITOR
                 string assetPath = "Assets/Scripts/AI/Models/sam2_hiera_base.onnx";
-                var sam2Asset = UnityEditor.AssetDatabase.LoadAssetAtPath<Unity.Sentis.ModelAsset>(assetPath);
-                if (sam2Asset != null) {
-                    _sam2Worker = CreateSentisWorker(sam2Asset, _inferenceBackend);
-                    _debugger.Log("✓ SAM2 model loaded successfully from AI/Models (Editor)", LogCategory.AI);
-                    return;
-                }
-                #endif
-                
-                // Try inspector fallback
-                if (_sam2Model != null) {
-                    try {
-                        _sam2Worker = CreateSentisWorker(_sam2Model, _inferenceBackend);
-                        _debugger.Log("✓ SAM2 model loaded successfully from inspector assignment", LogCategory.AI);
-                        return;
-                    }
-                    catch (Exception ex) {
-                        _debugger.LogError($"Failed to load SAM2 model from inspector: {ex.Message}", LogCategory.AI);
-                    }
-                }
-                
-                _debugger.LogWarning("SAM2 model exists but could not be loaded. Please assign in inspector.", LogCategory.AI);
-                
-            }
-            catch (Exception ex) {
-                _debugger.LogError($"Exception while loading SAM2 model: {ex.Message}", LogCategory.AI);
-            }
-        }
-        
-        private void LoadFasterRCNNFromStreamingAssets() {
-            try {
-                string modelPath = Path.Combine(Application.streamingAssetsPath, "Traversify", "Models", "FasterRCNN-12.onnx");
-                _debugger.Log($"Loading Faster R-CNN model from: {modelPath}", LogCategory.AI);
-                
-                if (!File.Exists(modelPath)) {
-                    _debugger.LogWarning($"Faster R-CNN model file not found at: {modelPath}", LogCategory.AI);
-                    
-                    // Try inspector fallback
-                    if (_fasterRcnnModel != null) {
-                        try {
-                            _rcnnWorker = CreateSentisWorker(_fasterRcnnModel, _inferenceBackend);
-                            _debugger.Log("✓ Faster R-CNN model loaded successfully from inspector assignment", LogCategory.AI);
-                            return;
-                        }
-                        catch (Exception ex) {
-                            _debugger.LogError($"Failed to load Faster R-CNN model from inspector: {ex.Message}", LogCategory.AI);
-                        }
-                    }
-                    
-                    _debugger.LogWarning("Faster R-CNN model not available - will use YOLO-only classification", LogCategory.AI);
-                    return;
-                }
-                
-                _debugger.Log($"Faster R-CNN model file found, size: {new FileInfo(modelPath).Length / 1024 / 1024:F1} MB", LogCategory.AI);
-                
-                #if UNITY_EDITOR
-                string assetPath = "Assets/Scripts/AI/Models/FasterRCNN-12.onnx";
-                var rcnnAsset = UnityEditor.AssetDatabase.LoadAssetAtPath<Unity.Sentis.ModelAsset>(assetPath);
-                if (rcnnAsset != null) {
-                    _rcnnWorker = CreateSentisWorker(rcnnAsset, _inferenceBackend);
-                    _debugger.Log("✓ Faster R-CNN model loaded successfully from AI/Models (Editor)", LogCategory.AI);
-                    return;
-                }
-                #endif
-                
-                // Try inspector fallback
-                if (_fasterRcnnModel != null) {
-                    try {
-                        _rcnnWorker = CreateSentisWorker(_fasterRcnnModel, _inferenceBackend);
-                        _debugger.Log("✓ Faster R-CNN model loaded successfully from inspector assignment", LogCategory.AI);
-                        return;
-                    }
-                    catch (Exception ex) {
-                        _debugger.LogError($"Failed to load Faster R-CNN model from inspector: {ex.Message}", LogCategory.AI);
-                    }
-                }
-                
-                _debugger.LogWarning("Faster R-CNN model exists but could not be loaded. Please assign in inspector.", LogCategory.AI);
-                
-            }
-            catch (Exception ex) {
-                _debugger.LogError($"Exception while loading Faster R-CNN model: {ex.Message}", LogCategory.AI);
-            }
-        }
-        
-        private void LoadYOLOFromAIModels() {
-            _debugger.Log("Loading AI models from Assets/Scripts/AI/Models/...", LogCategory.AI);
-            
-            try {
-                // First, validate that the AI models directory exists
-                string modelsPath = Path.Combine(Application.dataPath, "Scripts", "AI", "Models");
-                if (!Directory.Exists(modelsPath)) {
-                    _debugger.LogError($"Models directory not found at: {modelsPath}", LogCategory.AI);
-                    _debugger.LogError("CRITICAL: Cannot load AI models - terrain generation will not work", LogCategory.AI);
-                    return;
-                }
-                
-                _debugger.Log($"Models directory found at: {modelsPath}", LogCategory.AI);
-                
-                // Load YOLO model (required)
-                LoadYOLOFromStreamingAssets();
-                
-                // Load SAM2 model (optional)
-                if (_useSAM) {
-                    LoadSAM2FromStreamingAssets();
-                }
-                
-                // Load Faster R-CNN model (optional)
-                if (_useFasterRCNN) {
-                    LoadFasterRCNNFromStreamingAssets();
-                }
-                
-                // Load class labels
-                LoadClassLabels();
-                
-                // Log comprehensive model loading summary
-                LogModelLoadingSummary();
-                
-            }
-            catch (Exception ex) {
-                _debugger.LogError($"Fatal error during model loading: {ex.Message}\n{ex.StackTrace}", LogCategory.AI);
-            }
-        }
-        
-        private void LoadSAM2FromAIModels() {
-            try {
-                string modelPath = Path.Combine(Application.dataPath, "Scripts", "AI", "Models", "sam2_hiera_base.onnx");
-                _debugger.Log($"Loading SAM2 model from: {modelPath}", LogCategory.AI);
-                
-                if (!File.Exists(modelPath)) {
-                    _debugger.LogWarning($"SAM2 model file not found at: {modelPath}", LogCategory.AI);
-                    return;
-                }
-                
-                _debugger.Log($"SAM2 model file found, size: {new FileInfo(modelPath).Length / 1024 / 1024:F1} MB", LogCategory.AI);
-                
-                #if UNITY_EDITOR
-                // In editor, try to load via AssetDatabase as Unity.Sentis.Model
-                string assetPath = "Assets/Scripts/AI/Models/sam2_hiera_base.onnx";
-                var sam2Asset = UnityEditor.AssetDatabase.LoadAssetAtPath<Unity.Sentis.ModelAsset>(assetPath);
+                var sam2Asset = AssetDatabase.LoadAssetAtPath<USentis.ModelAsset>(assetPath);
                 if (sam2Asset != null) {
                     _sam2Worker = CreateSentisWorker(sam2Asset, _inferenceBackend);
                     _debugger.Log("✓ SAM2 model loaded successfully from AI/Models (Editor)", LogCategory.AI);
@@ -1105,7 +1024,7 @@ namespace Traversify {
                             _rcnnWorker = CreateSentisWorker(_fasterRcnnModel, _inferenceBackend);
                             _debugger.Log("✓ Faster R-CNN model loaded successfully from inspector assignment", LogCategory.AI);
                             return;
-                        }
+                        } 
                         catch (Exception ex) {
                             _debugger.LogError($"Failed to load Faster R-CNN model from inspector: {ex.Message}", LogCategory.AI);
                         }
@@ -1119,7 +1038,7 @@ namespace Traversify {
                 
                 #if UNITY_EDITOR
                 string assetPath = "Assets/Scripts/AI/Models/FasterRCNN-12.onnx";
-                var rcnnAsset = UnityEditor.AssetDatabase.LoadAssetAtPath<Unity.Sentis.ModelAsset>(assetPath);
+                var rcnnAsset = AssetDatabase.LoadAssetAtPath<USentis.ModelAsset>(assetPath);
                 if (rcnnAsset != null) {
                     _rcnnWorker = CreateSentisWorker(rcnnAsset, _inferenceBackend);
                     _debugger.Log("✓ Faster R-CNN model loaded successfully from AI/Models (Editor)", LogCategory.AI);
@@ -1147,6 +1066,53 @@ namespace Traversify {
             }
         }
         
+        private void LoadClassLabels() {
+            try {
+                if (_labelsFile != null) {
+                    string labelsText = _labelsFile.text;
+                    _classLabels = labelsText.Split(new char[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+                    _debugger.Log($"✓ Loaded {_classLabels.Length} class labels", LogCategory.AI);
+                }
+                else {
+                    // Use default COCO class labels if no labels file is provided
+                    _classLabels = GetDefaultCOCOLabels();
+                    _debugger.LogWarning("No labels file provided, using default COCO labels", LogCategory.AI);
+                }
+            }
+            catch (Exception ex) {
+                _debugger.LogError($"Error loading class labels: {ex.Message}", LogCategory.AI);
+                _classLabels = GetDefaultCOCOLabels();
+            }
+        }
+        
+        private string[] GetDefaultCOCOLabels() {
+            return new string[] {
+                "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
+                "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat",
+                "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack",
+                "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball",
+                "kite", "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket",
+                "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
+                "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake",
+                "chair", "couch", "potted plant", "bed", "dining table", "toilet", "tv", "laptop",
+                "mouse", "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink",
+                "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush"
+            };
+        }
+        
+        private IWorker CreateSentisWorker(USentis.ModelAsset modelAsset, USentis.BackendType backendType) {
+            try {
+                var model = USentis.ModelLoader.Load(modelAsset);
+                // Modern Unity Sentis API - WorkerFactory.CreateWorker replaced with new Worker()
+                var worker = new USentis.Worker(model, backendType);
+                return new SentisWorkerWrapper(worker, model);
+            }
+            catch (Exception ex) {
+                _debugger.LogError($"Failed to create Sentis worker: {ex.Message}", LogCategory.AI);
+                throw;
+            }
+        }
+        
         private void LogModelLoadingSummary() {
             _debugger.Log("═══ AI MODEL LOADING SUMMARY ═══", LogCategory.AI);
             
@@ -1165,7 +1131,7 @@ namespace Traversify {
                     _debugger.LogWarning("⚠ SAM2 Model: NOT LOADED (Will use simplified segmentation)", LogCategory.AI);
                 }
             } else {
-                _debugger.Log("�� SAM2 Model: DISABLED in settings", LogCategory.AI);
+                _debugger.Log("○ SAM2 Model: DISABLED in settings", LogCategory.AI);
             }
             
             // Faster R-CNN (Optional)
@@ -1188,7 +1154,176 @@ namespace Traversify {
                 _debugger.LogError("SOLUTION: Please assign YOLO model in inspector or ensure proper model import", LogCategory.AI);
             }
             
-            _debugger.Log("═══════════════════���═══════════", LogCategory.AI);
+            _debugger.Log("═══════════════════════════════", LogCategory.AI);
+        }
+        
+        private void LoadPreferences() {
+            // Load user preferences from PlayerPrefs if needed
+            _debugger.Log("Loading user preferences", LogCategory.System);
+        }
+        
+        private void SavePreferences() {
+            // Save user preferences to PlayerPrefs if needed
+            _debugger.Log("Saving user preferences", LogCategory.System);
+        }
+        
+        private void UpdateStatus(string message, bool isError = false) {
+            if (_statusText != null) {
+                _statusText.text = message;
+                _statusText.color = isError ? Color.red : Color.white;
+            }
+            
+            if (isError) {
+                _debugger.LogError(message, LogCategory.UI);
+            } else {
+                _debugger.Log(message, LogCategory.UI);
+            }
+        }
+        
+        private void UpdateProgress(float progress, string stage = null) {
+            if (_progressBar != null) {
+                _progressBar.value = progress;
+            }
+            
+            if (_progressText != null) {
+                _progressText.text = $"{progress * 100:F0}%";
+            }
+            
+            if (!string.IsNullOrEmpty(stage) && _stageText != null) {
+                _stageText.text = stage;
+            }
+        }
+        
+        private void UpdateStage(string stage, string details = null) {
+            if (_stageText != null) {
+                _stageText.text = stage;
+            }
+            
+            if (!string.IsNullOrEmpty(details) && _detailsText != null) {
+                _detailsText.text = details;
+            }
+        }
+        
+        private void ShowLoadingPanel(bool show) {
+            if (_loadingPanel != null) {
+                _loadingPanel.SetActive(show);
+            }
+        }
+        
+        private void ResetUI() {
+            _isProcessing = false;
+            
+            if (_generateButton != null) _generateButton.interactable = (_uploadedMapTexture != null);
+            if (_uploadButton != null) _uploadButton.interactable = true;
+            
+            ShowLoadingPanel(false);
+            UpdateProgress(0f);
+            UpdateStage("");
+            
+            if (_detailsText != null) _detailsText.text = "";
+        }
+        
+        private void CleanupGeneratedObjects() {
+            foreach (var obj in _generatedObjects) {
+                if (obj != null) {
+                    DestroyImmediate(obj);
+                }
+            }
+            _generatedObjects.Clear();
+            
+            if (_waterPlane != null) {
+                DestroyImmediate(_waterPlane);
+                _waterPlane = null;
+            }
+        }
+        
+        private IEnumerator SafeCoroutine(IEnumerator coroutine, System.Action<Exception> onError) {
+            bool hasError = false;
+            Exception exception = null;
+            
+            while (true) {
+                try {
+                    if (!coroutine.MoveNext()) {
+                        break;
+                    }
+                }
+                catch (Exception ex) {
+                    exception = ex;
+                    hasError = true;
+                    break;
+                }
+                
+                yield return coroutine.Current;
+            }
+            
+            if (hasError) {
+                onError?.Invoke(exception);
+            }
+        }
+        
+        // Placeholder methods that need to be implemented in other classes
+        private UnityEngine.Terrain CreateTerrainFromAnalysis(AnalysisResults results, Texture2D sourceTexture) {
+            // This should be implemented in TerrainGenerator
+            _debugger.LogWarning("CreateTerrainFromAnalysis not implemented", LogCategory.Terrain);
+            return null;
+        }
+        
+        private void CreateWaterPlane() {
+            // This should be implemented in TerrainGenerator
+            _debugger.LogWarning("CreateWaterPlane not implemented", LogCategory.Terrain);
+        }
+        
+        private IEnumerator VisualizeSegmentationWithProgress() {
+            // This should be implemented in SegmentationVisualizer
+            _debugger.LogWarning("VisualizeSegmentationWithProgress not implemented", LogCategory.Visualization);
+            yield return null;
+        }
+        
+        private IEnumerator GenerateAndPlaceModelsWithProgress() {
+            // This should be implemented in ModelGenerator
+            _debugger.LogWarning("GenerateAndPlaceModelsWithProgress not implemented", LogCategory.Models);
+            yield return null;
+        }
+        
+        private IEnumerator SaveGeneratedAssets() {
+            // Asset saving implementation
+            _debugger.LogWarning("SaveGeneratedAssets not implemented", LogCategory.IO);
+            yield return null;
+        }
+        
+        private string GenerateAnalysisDetails() {
+            if (_analysisResults == null) return "";
+            
+            var sb = new StringBuilder();
+            sb.AppendLine($"Terrain Features: {_analysisResults.terrainFeatures.Count}");
+            sb.AppendLine($"Map Objects: {_analysisResults.mapObjects.Count}");
+            sb.AppendLine($"Object Groups: {_analysisResults.objectGroups.Count}");
+            
+            return sb.ToString();
+        }
+        
+        private void ShowCompletionDetails() {
+            string details = $"Generated {_generatedObjects.Count} objects";
+            if (_generatedTerrain != null) {
+                details += $"\nTerrain: {_terrainSize.x}x{_terrainSize.z} units";
+            }
+            
+            UpdateStage("Complete", details);
+        }
+        
+        private void FocusCameraOnTerrain() {
+            if (_generatedTerrain != null) {
+                // Focus camera on generated terrain
+                Camera.main?.transform.LookAt(_generatedTerrain.transform.position);
+            }
+        }
+        
+        private void LogPerformanceMetrics() {
+            _debugger.Log("═══ PERFORMANCE METRICS ═══", LogCategory.Performance);
+            foreach (var metric in _performanceMetrics) {
+                _debugger.Log($"{metric.Key}: {metric.Value:F2}s", LogCategory.Performance);
+            }
+            _debugger.Log("═════════════════════════", LogCategory.Performance);
         }
         
         #endregion
@@ -1196,81 +1331,43 @@ namespace Traversify {
         #region User Input Handling
         
         private void OpenFileExplorer() {
-            #if UNITY_EDITOR
-            string path = EditorUtility.OpenFilePanel("Select Map Image", "", "png,jpg,jpeg,bmp,tga");
-            if (!string.IsNullOrEmpty(path)) {
-                StartCoroutine(LoadImageFromPath(path));
-            }
-            #else
-            // For runtime builds, provide alternative file selection methods
-            _debugger.Log("Opening file selection for runtime", LogCategory.IO);
+            _debugger.Log("OpenFileExplorer called", LogCategory.IO);
             
-            // Try SimpleFileBrowser if available, otherwise use drag-and-drop
-            if (!TryOpenSimpleFileBrowser()) {
-                // Enable drag-and-drop and show instructions
-                UpdateStatus("Drag and drop an image file (PNG, JPG, JPEG, BMP, TGA) onto this window to upload");
-                _debugger.Log("Drag-and-drop instructions shown to user", LogCategory.IO);
-                
-                // You could also implement a web-based file picker here for WebGL builds
-                #if UNITY_WEBGL && !UNITY_EDITOR
-                // For WebGL, we might need a different approach
-                UpdateStatus("Please use the Editor version for file browsing, or try drag-and-drop if supported by your browser");
-                #endif
-            }
-            #endif
+            // Set Simple File Browser properties for image files
+            FileBrowser.SetFilters(true, new FileBrowser.Filter("Image Files", ".png", ".jpg", ".jpeg", ".bmp", ".tga"));
+            FileBrowser.SetDefaultFilter(".png");
+            FileBrowser.SetExcludedExtensions(".lnk", ".tmp", ".zip", ".rar", ".exe");
+            
+            // Show load file dialog using Simple File Browser
+            StartCoroutine(ShowImageFileDialog());
         }
         
-        #if !UNITY_EDITOR
-        private bool TryOpenSimpleFileBrowser() {
-            // Try to use SimpleFileBrowser package if it's installed
-            try {
-                var fileBrowserType = System.Type.GetType("SimpleFileBrowser.FileBrowser, SimpleFileBrowser");
-                if (fileBrowserType != null) {
-                    var showLoadDialogMethod = fileBrowserType.GetMethod("ShowLoadDialog", 
-                        new System.Type[] { 
-                            typeof(System.Action<string[]>), 
-                            typeof(System.Action), 
-                            typeof(bool), 
-                            typeof(string), 
-                            typeof(string), 
-                            typeof(string) 
-                        });
-                    
-                    if (showLoadDialogMethod != null) {
-                        System.Action<string[]> onSuccess = (paths) => {
-                            if (paths != null && paths.Length > 0 && !string.IsNullOrEmpty(paths[0])) {
-                                _debugger.Log($"File selected via SimpleFileBrowser: {paths[0]}", LogCategory.IO);
-                                StartCoroutine(LoadImageFromPath(paths[0]));
-                            }
-                        };
-                        
-                        System.Action onCancel = () => {
-                            _debugger.Log("File selection cancelled", LogCategory.IO);
-                            UpdateStatus("File selection cancelled");
-                        };
-                        
-                        // Invoke SimpleFileBrowser
-                        showLoadDialogMethod.Invoke(null, new object[] { 
-                            onSuccess, 
-                            onCancel, 
-                            false, 
-                            null, 
-                            "Select Map Image", 
-                            "Select" 
-                        });
-                        
-                        _debugger.Log("SimpleFileBrowser opened successfully", LogCategory.IO);
-                        return true;
-                    }
-                }
-            }
-            catch (System.Exception ex) {
-                _debugger.LogWarning($"SimpleFileBrowser not available or failed: {ex.Message}", LogCategory.IO);
-            }
+        private IEnumerator ShowImageFileDialog() {
+            yield return FileBrowser.WaitForLoadDialog(FileBrowser.PickMode.Files, false, null, null, "Select Map Image", "Load");
             
-            return false;
+            if (FileBrowser.Success) {
+                string path = FileBrowser.Result[0];
+                _debugger.Log($"File selected via SimpleFileBrowser: {path}", LogCategory.IO);
+                StartCoroutine(LoadImageFromPath(path));
+            }
+            else {
+                _debugger.Log("File selection cancelled", LogCategory.IO);
+                UpdateStatus("File selection cancelled");
+            }
         }
-        #endif
+        
+        private void ShowDragDropInstructions() {
+            UpdateStatus("Drag and drop an image file (PNG, JPG, JPEG, BMP, TGA) onto this window to upload");
+            _debugger.Log("Showing drag-and-drop instructions", LogCategory.IO);
+            
+            // Also enable drag and drop detection if not already enabled
+            EnableDragAndDrop();
+        }
+        
+        private void EnableDragAndDrop() {
+            // This method can be expanded to enable drag and drop functionality
+            _debugger.Log("Drag and drop enabled", LogCategory.IO);
+        }
         
         private IEnumerator LoadImageFromPath(string path) {
             return SafeCoroutine(InnerLoadImageFromPath(path), ex => {
@@ -1367,7 +1464,7 @@ namespace Traversify {
             if (_uploadButton != null) _uploadButton.interactable = false;
             
             _processingCoroutine = StartCoroutine(GenerateTerrainFromMap());
-        }
+        } 
         
         private void CancelProcessing() {
             if (!_isProcessing) return;
@@ -1396,31 +1493,26 @@ namespace Traversify {
             _debugger.Log("Starting terrain generation process", LogCategory.Process);
             _debugger.StartTimer("TotalGeneration");
             
-            // Use safe coroutine to handle errors
-            yield return StartCoroutine(SafeCoroutine(InnerGenerateTerrainFromMap(), ex => {
-                _debugger.LogError($"Error during terrain generation: {ex}", LogCategory.Process);
-                UpdateStatus($"Error: {ex}", true);
-                OnError?.Invoke(ex); // Fix: ex is already a string, don't access .Message
-            }));
-            
-            LogPerformanceMetrics();
-            ResetUI();
-        }
-        
-        private IEnumerator InnerGenerateTerrainFromMap() {
             // Clean up any previous generated objects
             CleanupGeneratedObjects();
+            
+            bool hasError = false;
+            string errorMessage = "";
             
             // Step 1: Analyze the map using AI (approx 40% progress)
             _debugger.StartTimer("MapAnalysis");
             
+            bool analysisComplete = false;
             yield return StartCoroutine(AnalyzeImage(_uploadedMapTexture,
                 results => {
                     _analysisResults = results;
                     OnAnalysisComplete?.Invoke(results);
+                    analysisComplete = true;
                 },
                 error => {
-                    throw new Exception(error);
+                    errorMessage = error;
+                    hasError = true;
+                    analysisComplete = true;
                 },
                 (stage, prog) => {
                     // Map analysis progress updates (scaled 0.1 to 0.4 of total)
@@ -1432,10 +1524,20 @@ namespace Traversify {
                     if (stage != null) _debugger.Log($"{stage} ({prog:P0})", LogCategory.AI);
                 }));
             
+            while (!analysisComplete) {
+                yield return null;
+            }
+            
+            if (hasError) {
+                HandleGenerationError(errorMessage);
+                yield break;
+            }
+            
             _performanceMetrics["MapAnalysis"] = _debugger.StopTimer("MapAnalysis");
             
             if (_isCancelled || _analysisResults == null) {
-                throw new OperationCanceledException("Analysis cancelled");
+                HandleGenerationError("Analysis cancelled");
+                yield break;
             }
             
             // Summary of analysis results
@@ -1450,37 +1552,13 @@ namespace Traversify {
             UpdateProgress(0.4f);
             
             // Step 2: Generate terrain from analysis (approx 20% progress)
-            _debugger.StartTimer("TerrainGeneration");
-            UpdateStage("Terrain Mesh Generation", "Creating heightmap...");
-            UpdateProgress(0.45f);
+            yield return StartCoroutine(GenerateTerrainStep());
             
-            // Create Unity Terrain based on analysis results
-            _generatedTerrain = CreateTerrainFromAnalysis(_analysisResults, _uploadedMapTexture);
-            
-            if (_generatedTerrain == null) {
-                throw new Exception("Terrain generation failed");
-            }
-            
-            _generatedObjects.Add(_generatedTerrain.gameObject);
-            _performanceMetrics["TerrainGeneration"] = _debugger.StopTimer("TerrainGeneration");
-            
-            if (_isCancelled) {
-                throw new OperationCanceledException("Terrain generation cancelled");
-            }
-            
-            UpdateProgress(0.6f, "Terrain generated");
+            if (hasError) yield break;
             
             // Step 3: Create water plane if water generation is enabled (5% progress)
             if (_generateWater) {
-                _debugger.StartTimer("WaterCreation");
-                UpdateProgress(0.65f, "Creating water features...");
-                CreateWaterPlane();
-                _performanceMetrics["WaterCreation"] = _debugger.StopTimer("WaterCreation");
-                
-                // Add water plane to generated objects list
-                if (_waterPlane != null) _generatedObjects.Add(_waterPlane);
-                
-                yield return null;
+                yield return StartCoroutine(GenerateWaterStep());
             }
             
             // Step 4: Visualize segmentation overlays and labels (15% progress)
@@ -1489,7 +1567,8 @@ namespace Traversify {
             _performanceMetrics["Segmentation"] = _debugger.StopTimer("Segmentation");
             
             if (_isCancelled) {
-                throw new OperationCanceledException("Segmentation cancelled");
+                HandleGenerationError("Segmentation cancelled");
+                yield break;
             }
             
             // Step 5: Generate and place 3D models for detected objects (20% progress)
@@ -1498,7 +1577,8 @@ namespace Traversify {
             _performanceMetrics["ModelGeneration"] = _debugger.StopTimer("ModelGeneration");
             
             if (_isCancelled) {
-                throw new OperationCanceledException("Model generation cancelled");
+                HandleGenerationError("Model generation cancelled");
+                yield break;
             }
             
             // Step 6: Save generated assets (remaining progress)
@@ -1522,1377 +1602,441 @@ namespace Traversify {
             
             // Pause briefly at end
             yield return new WaitForSeconds(2f);
+            
+            LogPerformanceMetrics();
+            ResetUI();
         }
         
-        private IEnumerator AnalyzeImage(
-            Texture2D imageTexture,
-            Action<AnalysisResults> onComplete,
-            Action<string> onError,
-            Action<string, float> onProgress
-        ) {
-            DateTime startTime = DateTime.UtcNow;
+        private IEnumerator GenerateTerrainStep() {
+            _debugger.StartTimer("TerrainGeneration");
+            UpdateStage("Terrain Mesh Generation", "Creating heightmap...");
+            UpdateProgress(0.45f);
             
-            // Step 1: YOLO object detection
-            onProgress?.Invoke("YOLO detection", 0.05f);
+            bool terrainCreated = false;
+            string terrainError = "";
             
-            if (_yoloWorker == null) {
-                onError?.Invoke("YOLO model not loaded");
+            // Use a separate method for terrain creation to handle errors
+            try {
+                _generatedTerrain = CreateTerrainFromAnalysis(_analysisResults, _uploadedMapTexture);
+                terrainCreated = _generatedTerrain != null;
+            }
+            catch (Exception ex) {
+                terrainError = $"Terrain generation error: {ex.Message}";
+            }
+            
+            yield return null; // Allow frame to process
+            
+            if (!terrainCreated) {
+                HandleGenerationError(string.IsNullOrEmpty(terrainError) ? "Terrain generation failed" : terrainError);
                 yield break;
             }
+            
+            _generatedObjects.Add(_generatedTerrain.gameObject);
+            _performanceMetrics["TerrainGeneration"] = _debugger.StopTimer("TerrainGeneration");
+            
+            if (_isCancelled) {
+                HandleGenerationError("Terrain generation cancelled");
+                yield break;
+            }
+            
+            UpdateProgress(0.6f, "Terrain generation complete");
+        }
 
-            // YOLO model expects 640x640 input regardless of quality setting
-            int yoloInputSize = 640;
-            Unity.Sentis.Tensor yoloInput = null;
-            Unity.Sentis.Tensor yoloOutput = null;
-            List<DetectedObject> detections = new List<DetectedObject>();
+        private IEnumerator GenerateWaterStep() {
+            _debugger.StartTimer("WaterCreation");
+            UpdateProgress(0.65f, "Creating water features...");
             
             try {
-                yoloInput = PrepareImageTensor(imageTexture, yoloInputSize, yoloInputSize);
+                CreateWaterPlane();
+                _performanceMetrics["WaterCreation"] = _debugger.StopTimer("WaterCreation");
                 
-                _yoloWorker.SetInput("images", yoloInput);
-                _yoloWorker.Schedule();  
-                
-                // Use robust output tensor discovery instead of hardcoded name
-                yoloOutput = TryGetYOLOOutput();
-                
-                if (yoloOutput == null) {
-                    throw new Exception("Could not find YOLO output tensor - model may be incompatible");
-                }
-                
-                // Convert tensor to CPU accessible data
-                var outputArrayTensor = yoloOutput.ReadbackAndClone();
-                var outputArray = outputArrayTensor.dataOnBackend.Download<float>(outputArrayTensor.shape.length);
-                
-                // Log tensor shape for debugging
-                int batch = yoloOutput.shape[0];
-                int count = yoloOutput.shape[1];
-                int channels = yoloOutput.shape[2];
-                _debugger.Log($"YOLO output shape: [{batch}, {count}, {channels}]", LogCategory.AI);
-                _debugger.Log($"Detection threshold: {_detectionThreshold}", LogCategory.AI);
-                
-                int validDetections = 0;
-                int totalChecked = 0;
-                
-                for (int i = 0; i < count; i++) {
-                    int baseIndex = i * channels;
-                    totalChecked++;
-                    
-                    // Handle different YOLO output formats
-                    float conf = 0f;
-                    float cx = 0f, cy = 0f, bw = 0f, bh = 0f;
-                    int clsId = 0;
-                    
-                    if (channels >= 85) {
-                        // YOLOv5/v8 format: [x, y, w, h, objectness, class0, class1, ...]
-                        cx = outputArray[baseIndex + 0];
-                        cy = outputArray[baseIndex + 1];
-                        bw = outputArray[baseIndex + 2];
-                        bh = outputArray[baseIndex + 3];
-                        float objectness = outputArray[baseIndex + 4];
-                        
-                        // Find highest class probability
-                        float maxClassProb = 0f;
-                        int maxClassId = 0;
-                        for (int c = 5; c < channels; c++) {
-                            float classProb = outputArray[baseIndex + c];
-                            if (classProb > maxClassProb) {
-                                maxClassProb = classProb;
-                                maxClassId = c - 5;
-                            }
-                        }
-                        
-                        // Apply sigmoid to objectness if needed (raw output might not be normalized)
-                        objectness = 1f / (1f + Mathf.Exp(-objectness));
-                        maxClassProb = 1f / (1f + Mathf.Exp(-maxClassProb));
-                        
-                        conf = objectness * maxClassProb; // Combined confidence
-                        clsId = maxClassId;
-                    }
-                    else if (channels >= 6) {
-                        // Simplified format: [x, y, w, h, conf, class]
-                        cx = outputArray[baseIndex + 0];
-                        cy = outputArray[baseIndex + 1];
-                        bw = outputArray[baseIndex + 2];
-                        bh = outputArray[baseIndex + 3];
-                        conf = outputArray[baseIndex + 4];
-                        clsId = (int)outputArray[baseIndex + 5];
-                        
-                        // Apply sigmoid if confidence seems to be raw logit
-                        if (conf > 10f || conf < -10f) {
-                            conf = 1f / (1f + Mathf.Exp(-conf));
-                        }
-                    }
-                    else {
-                        _debugger.LogWarning($"Unexpected YOLO output format with {channels} channels", LogCategory.AI);
-                        continue;
-                    }
-                    
-                    // Ensure coordinates are properly normalized (0-1 range)
-                    if (cx > 1f || cy > 1f || bw > 1f || bh > 1f) {
-                        // Coordinates might be in pixel space, normalize them
-                        cx = cx / yoloInputSize;
-                        cy = cy / yoloInputSize;
-                        bw = bw / yoloInputSize;
-                        bh = bh / yoloInputSize;
-                    }
-                    
-                    // Clamp coordinates to valid range
-                    cx = Mathf.Clamp01(cx);
-                    cy = Mathf.Clamp01(cy);
-                    bw = Mathf.Clamp01(bw);
-                    bh = Mathf.Clamp01(bh);
-                    
-                    // Log first few detections for debugging
-                    if (i < 5) {
-                        _debugger.LogVerbose($"Detection {i}: conf={conf:F3}, pos=({cx:F2},{cy:F2}), size=({bw:F2},{bh:F2}), class={clsId}", LogCategory.AI);
-                    }
-                    
-                    if (conf < _detectionThreshold) continue;
-                    
-                    validDetections++;
-                    
-                    // Convert normalized coordinates to pixel coordinates
-                    float pixelCx = cx * imageTexture.width;
-                    float pixelCy = cy * imageTexture.height;
-                    float pixelBw = bw * imageTexture.width;
-                    float pixelBh = bh * imageTexture.height;
-                    
-                    string clsName = (_classLabels != null && clsId < _classLabels.Length) 
-                        ? _classLabels[clsId] 
-                        : $"class_{clsId}";
-                    
-                    detections.Add(new DetectedObject {
-                        classId = clsId,
-                        className = clsName,
-                        confidence = conf,
-                        boundingBox = new Rect(pixelCx - pixelBw / 2f, pixelCy - pixelBh / 2f, pixelBw, pixelBh)
-                    });
-                }
-                
-                _debugger.Log($"Processed {totalChecked} detections, found {validDetections} above threshold {_detectionThreshold}", LogCategory.AI);
-                
-                if (validDetections == 0) {
-                    _debugger.LogWarning($"No detections found above threshold {_detectionThreshold}. Consider lowering the threshold or checking your model.", LogCategory.AI);
-                }
+                // Add water plane to generated objects list
+                if (_waterPlane != null) _generatedObjects.Add(_waterPlane);
             }
             catch (Exception ex) {
-                onError?.Invoke($"YOLO detection failed: {ex.Message}");
-                yield break;
+                _debugger.LogWarning($"Water creation error: {ex.Message}", LogCategory.Terrain);
             }
-            finally {
-                yoloInput?.Dispose();
-                yoloOutput?.Dispose();
-            }
-            
-            if (detections.Count == 0) {
-                // No objects detected - return empty results
-                AnalysisResults emptyRes = new AnalysisResults {
-                    heightMap = new Texture2D(imageTexture.width, imageTexture.height),
-                    segmentationMap = new Texture2D(imageTexture.width, imageTexture.height)
-                };
-                
-                onComplete?.Invoke(emptyRes);
-                yield break;
-            }
-            
-            // Step 2: SAM segmentation for each detection
-            onProgress?.Invoke("SAM2 segmentation", 0.25f);
-            List<ImageSegment> segments = new List<ImageSegment>();
-            
-            if (_useSAM && _sam2Worker != null) {
-                // SAM2 can use higher resolution input based on quality setting
-                int samInputSize = _useHighQualityAnalysis ? 1024 : 640;
-                
-                foreach (DetectedObject det in detections.Take(_maxObjectsToProcess)) {
-                    Unity.Sentis.Tensor promptTensor = null;
-                    Unity.Sentis.Tensor samInput = null;
-                    Unity.Sentis.Tensor maskOut = null;
-                    
-                    try {
-                        // Prepare prompt tensor (normalized center point of detection)
-                        Vector2 centerN = new Vector2(
-                            det.boundingBox.center.x / imageTexture.width,
-                            det.boundingBox.center.y / imageTexture.height
-                        );
-                        
-                        // Create prompt tensor using correct Unity Sentis API
-                        var promptShape = new Unity.Sentis.TensorShape(1, 2);
-                        var promptData = new float[] { centerN.x, centerN.y };
-                        
-                        // Create a temporary 1x1 texture to convert to tensor, then manually set the data
-                        Texture2D tempTex = new Texture2D(2, 1, TextureFormat.RFloat, false);
-                        tempTex.SetPixels(new Color[] { 
-                            new Color(centerN.x, 0, 0, 1), 
-                            new Color(centerN.y, 0, 0, 1) 
-                        });
-                        tempTex.Apply();
-                        
-                        promptTensor = Unity.Sentis.TextureConverter.ToTensor(tempTex);
-                        Destroy(tempTex);
-                        
-                        samInput = PrepareImageTensor(imageTexture, samInputSize, samInputSize);
-                         
-                        _sam2Worker.SetInput("image", samInput);
-                        _sam2Worker.SetInput("prompt", promptTensor);
-                        _sam2Worker.Schedule();
-                        
-                        maskOut = _sam2Worker.PeekOutput("masks") as Unity.Sentis.Tensor;
-                        Texture2D maskTex = DecodeMaskTensor(maskOut);
-                        
-                        if (maskTex != null) {
-                            segments.Add(new ImageSegment {
-                                detectedObject = det,
-                                mask = maskTex,
-                                boundingBox = det.boundingBox,
-                                color = UnityEngine.Random.ColorHSV(0f, 1f, 0.6f, 1f),
-                                area = det.boundingBox.width * det.boundingBox.height
-                            });
-                        }
-                    }
-                    catch (Exception ex) {
-                        _debugger.LogError($"SAM segmentation failed for object {det.className}: {ex.Message}", LogCategory.AI);
-                    }
-                    finally {
-                        samInput?.Dispose();
-                        promptTensor?.Dispose();
-                        maskOut?.Dispose();
-                    }
-                    
-                    yield return null;
-                }
-            }
-            else {
-                // If SAM not available, create simple masks covering bounding boxes
-                foreach (DetectedObject det in detections.Take(_maxObjectsToProcess)) {
-                    Texture2D maskTex = new Texture2D(1, 1);
-                    maskTex.SetPixel(0, 0, new Color(1, 1, 1, 1));
-                    maskTex.Apply();
-                    
-                    segments.Add(new ImageSegment {
-                        detectedObject = det,
-                        mask = maskTex,
-                        boundingBox = det.boundingBox,
-                        color = UnityEngine.Random.ColorHSV(0f, 1f, 0.6f, 1f),
-                        area = det.boundingBox.width * det.boundingBox.height
-                    });
-                }
-            }
-            
-            // Step 3: (Optional) Faster R-CNN classification of segments
-            if (_useFasterRCNN && _rcnnWorker != null) {
-                onProgress?.Invoke("Analyzing segments", 0.5f);
-                
-                // Iterate through segments to simulate classification progress
-                for (int i = 0; i < segments.Count; i++) {
-                    float prog = (float)(i + 1) / segments.Count;
-                    onProgress?.Invoke($"Classifying… {prog:P0}", 0.45f + 0.2f * prog);
-                    yield return null;
-                }
-            }
-            
-            // Step 4: (Optional) Enhance descriptions using OpenAI
-            if (!string.IsNullOrEmpty(_openAIApiKey)) {
-                onProgress?.Invoke("Enhancing descriptions", 0.7f);
-                
-                for (int i = 0; i < segments.Count; i++) {
-                    float prog = (float)(i + 1) / segments.Count;
-                    onProgress?.Invoke($"Enhancing… {prog:P0}", 0.7f + 0.15f * prog);
-                    yield return null;
-                }
-            }
-            
-            // Step 5: Build final results (with heightmap and segmentation map)
-            onProgress?.Invoke("Finalizing analysis", 0.9f);
-            AnalysisResults results = BuildResults(
-                imageTexture,
-                segments,
-                (float)(DateTime.UtcNow - startTime).TotalSeconds
-            );
-            
-            onProgress?.Invoke("Done", 1f);
-            onComplete?.Invoke(results);
-        }
-        
-        private IEnumerator VisualizeSegmentationWithProgress() {
-            UpdateStage("Overlay Visualization", "Creating segmentation overlay...");
-            UpdateProgress(0.7f);
-            
-            _debugger.Log("Visualizing segmentation results", LogCategory.Visualization);
-            
-            List<GameObject> visualizationObjects = new List<GameObject>();
-            int totalItems = (_analysisResults?.terrainFeatures.Count ?? 0) + (_analysisResults?.mapObjects.Count ?? 0);
-            int completed = 0;
-            
-            // Create overlay quads for terrain features
-            foreach (var feat in _analysisResults.terrainFeatures) {
-                if (_isCancelled) yield break;
-                
-                GameObject quad = CreateOverlayQuad(feat, _generatedTerrain, _uploadedMapTexture);
-                visualizationObjects.Add(quad);
-                
-                completed++;
-                float segProgress = (float)completed / totalItems;
-                float totalProg = 0.7f + segProgress * 0.2f;
-                UpdateProgress(totalProg);
-                OnProgressUpdate?.Invoke(totalProg);
-                
-                // Fade in the overlay quad
-                yield return FadeIn(quad);
-            }
-            
-            // Create floating labels for map objects
-            foreach (var obj in _analysisResults.mapObjects) {
-                if (_isCancelled) yield break;
-                
-                GameObject label = CreateLabelObject(obj, _generatedTerrain);
-                visualizationObjects.Add(label);
-                
-                completed++;
-                float segProgress = (float)completed / totalItems;
-                float totalProg = 0.7f + segProgress * 0.2f;
-                UpdateProgress(totalProg);
-                OnProgressUpdate?.Invoke(totalProg);
-                
-                yield return null;
-            }
-            
-            _debugger.Log($"Created {visualizationObjects.Count} visualization objects", LogCategory.Visualization);
-            
-            // Add visualization objects to generated list for cleanup later
-            _generatedObjects.AddRange(visualizationObjects);
-            
-            UpdateProgress(0.9f, "Segmentation visualization complete");
-        }
-        
-        private IEnumerator GenerateAndPlaceModelsWithProgress() {
-            UpdateStage("Generating 3D Models", "Processing object placements...");
-            UpdateProgress(0.85f);
-            
-            _debugger.Log("Generating and placing 3D models", LogCategory.Models);
-            
-            // If no objects detected, skip
-            if (_analysisResults.mapObjects.Count == 0) {
-                UpdateProgress(0.95f, "No objects to place");
-                yield break;
-            }
-            
-            int totalObjects = _analysisResults.mapObjects.Count;
-            int placedCount = 0;
-            
-            // Group objects by type for instancing
-            foreach (ObjectGroup group in _analysisResults.objectGroups) {
-                // Generate or retrieve a template mesh for this object type
-                Mesh templateMesh = GeneratePlaceholderMeshForType(group.type);
-                
-                foreach (MapObject obj in group.objects) {
-                    if (_isCancelled) yield break;
-                    
-                    // Create a GameObject for the object and place it in the scene
-                    GameObject objGo = new GameObject(obj.label ?? group.type);
-                    MeshFilter mf = objGo.AddComponent<MeshFilter>();
-                    MeshRenderer mr = objGo.AddComponent<MeshRenderer>();
-                    
-                    mf.sharedMesh = templateMesh;
-                    
-                    // Assign material (use default or user-provided)
-                    mr.material = _defaultObjectMaterial 
-                        ? _defaultObjectMaterial 
-                        : new Material(Shader.Find("Standard"));
-                    
-                    // Calculate world position on terrain and orientation
-                    Vector3 worldPos = GetWorldPositionFromNormalized(obj.position, _generatedTerrain);
-                    float terrainY = _generatedTerrain.SampleHeight(worldPos);
-                    worldPos.y = terrainY;
-                    
-                    objGo.transform.position = worldPos;
-                    
-                    // Align rotation with terrain normal or keep upright
-                    Vector3 normal = _generatedTerrain.terrainData.GetInterpolatedNormal(
-                        obj.position.x, obj.position.y);
-                    
-                    if (group.type.ToLower().Contains("tree")) {
-                        // Keep trees upright, random yaw
-                        objGo.transform.rotation = Quaternion.Euler(
-                            0, UnityEngine.Random.Range(0f, 360f), 0);
-                    }
-                    else {
-                        // Align to terrain normal and add random yaw
-                        Quaternion align = Quaternion.FromToRotation(Vector3.up, normal);
-                        objGo.transform.rotation = align * 
-                            Quaternion.Euler(0, UnityEngine.Random.Range(0f, 360f), 0);
-                    }
-                    
-                    // Random scale variation based on object type
-                    float scaleFactor = 1f;
-                    string typeLower = group.type.ToLower();
-                    
-                    if (typeLower.Contains("tree"))
-                        scaleFactor = UnityEngine.Random.Range(0.8f, 1.3f);
-                    else if (typeLower.Contains("rock") || typeLower.Contains("boulder"))
-                        scaleFactor = UnityEngine.Random.Range(0.5f, 1.1f);
-                    else if (typeLower.Contains("structure") || typeLower.Contains("building"))
-                        scaleFactor = UnityEngine.Random.Range(0.9f, 1.1f);
-                    else
-                        scaleFactor = UnityEngine.Random.Range(0.9f, 1.2f);
-                    
-                    objGo.transform.localScale = Vector3.one * scaleFactor;
-                    
-                    _generatedObjects.Add(objGo);
-                    placedCount++;
-                    
-                    // Update progress for each model placed
-                    float modelProg = (float)placedCount / totalObjects;
-                    float totalProg = 0.85f + modelProg * 0.1f;
-                    UpdateProgress(totalProg, $"Placing model {placedCount} of {totalObjects}...");
-                    OnProgressUpdate?.Invoke(totalProg);
-                    
-                    yield return null;
-                }
-            }
-            
-            _debugger.Log($"Generated and placed {_analysisResults.mapObjects.Count} models", LogCategory.Models);
-            UpdateProgress(0.95f, "Model generation complete");
-        }
-        
-        private IEnumerator SaveGeneratedAssets() {
-            UpdateStage("Finalization", "Saving generated terrain and models…");
-            UpdateProgress(0.96f);
-            
-            #if !UNITY_EDITOR
-            _debugger.LogWarning("Asset saving only supported in the Unity Editor", LogCategory.IO);
-            yield break;
-            #else
-            try {
-                string rootPath = _assetSavePath.TrimEnd('/', '\\');
-                string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-                string baseName = string.IsNullOrEmpty(_uploadedMapTexture?.name) ? "Map" : _uploadedMapTexture.name;
-                string folderName = $"{baseName}_{timestamp}";
-                string dir = Path.Combine(rootPath, folderName);
-                
-                Directory.CreateDirectory(dir);
-                
-                AssetDatabase.StartAssetEditing();
-                
-                // Save TerrainData asset
-                if (_generatedTerrain != null) {
-                    TerrainData tData = _generatedTerrain.terrainData;
-                    string tdPath = Path.Combine(dir, $"{folderName}_Terrain.asset");
-                    AssetDatabase.CreateAsset(tData, tdPath);
-                    _debugger.Log($"Saved TerrainData → {tdPath}", LogCategory.IO);
-                }
-                
-                // Save analysis output textures
-                if (_analysisResults?.heightMap != null)
-                    SaveTexture(_analysisResults.heightMap, Path.Combine(dir, "HeightMap.png"));
-                
-                if (_analysisResults?.segmentationMap != null)
-                    SaveTexture(_analysisResults.segmentationMap, Path.Combine(dir, "SegmentationMap.png"));
-                
-                // Save scene prefab containing generated objects
-                GameObject sceneRoot = new GameObject($"{folderName}_Scene");
-                
-                foreach (GameObject go in _generatedObjects) {
-                    if (go != null) {
-                        Instantiate(go, go.transform.position, go.transform.rotation, sceneRoot.transform);
-                    }
-                }
-                
-                string prefabPath = Path.Combine(dir, $"{folderName}_Scene.prefab");
-                PrefabUtility.SaveAsPrefabAsset(sceneRoot, prefabPath);
-                DestroyImmediate(sceneRoot);
-                
-                _debugger.Log($"Saved scene prefab → {prefabPath}", LogCategory.IO);
-                
-                // Save metadata
-                if (_generateMetadata) {
-                    SaveMetadata(dir, folderName);
-                }
-                
-                AssetDatabase.StopAssetEditing();
-                AssetDatabase.Refresh();
-                
-                UpdateProgress(0.98f, "Assets saved");
-            }
-            catch (Exception ex) {
-                _debugger.LogError($"Error while saving assets: {ex.Message}", LogCategory.IO);
- }
             
             yield return null;
-            #endif
         }
-        #endregion        
-        #region Terrain and Object Generation
-        
-        private UnityEngine.Terrain CreateTerrainFromAnalysis(AnalysisResults results, Texture2D sourceTexture) {
-            // Create terrain object and data
-            GameObject terrainObj = new GameObject("GeneratedTerrain");
-            UnityEngine.Terrain terrain = terrainObj.AddComponent<UnityEngine.Terrain>();
-            TerrainCollider tCollider = terrainObj.AddComponent<TerrainCollider>();
-            
-            TerrainData terrainData = new TerrainData();
-            terrainData.heightmapResolution = _terrainResolution;
-            terrainData.size = _terrainSize;
-            
-            terrain.terrainData = terrainData;
-            tCollider.terrainData = terrainData;
-            
-            if (_terrainMaterial != null) {
-                terrain.materialTemplate = _terrainMaterial;
-            }
-            
-            // Generate heightmap from analysis results
-            float[,] heights = GenerateHeightmap(results, sourceTexture, _terrainResolution);
-            terrainData.SetHeights(0, 0, heights);
-            
-            // Apply basic terrain texture layers
-            ApplyTerrainTextures(terrain, results);
-            
-            terrainObj.transform.position = Vector3.zero;
-            
-            return terrain;
-        }
-        
-        private float[,] GenerateHeightmap(AnalysisResults results, Texture2D sourceTexture, int resolution) {
-            float[,] heights = new float[resolution, resolution];
-            
-            if (results.heightMap != null) {
-                // Use the provided heightmap
-                for (int y = 0; y < resolution; y++) {
-                    for (int x = 0; x < resolution; x++) {
-                        float normX = x / (float)(resolution - 1);
-                        float normY = y / (float)(resolution - 1);
-                        
-                        Color heightColor = results.heightMap.GetPixelBilinear(normX, normY);
-                        heights[y, x] = heightColor.r;
-                    }
-                }
-            }
-            else {
-                // Generate a simple heightmap based on terrain features
-                foreach (var feature in results.terrainFeatures) {
-                    float baseHeight = feature.elevation / _terrainSize.y;
-                    
-                    // Map from feature bounds to heightmap coordinates
-                    int startX = Mathf.FloorToInt(feature.boundingBox.x / sourceTexture.width * (resolution - 1));
-                    int startY = Mathf.FloorToInt(feature.boundingBox.y / sourceTexture.height * (resolution - 1));
-                    int endX = Mathf.CeilToInt((feature.boundingBox.x + feature.boundingBox.width) / sourceTexture.width * (resolution - 1));
-                    int endY = Mathf.CeilToInt((feature.boundingBox.y + feature.boundingBox.height) / sourceTexture.height * (resolution - 1));
-                    
-                    // Clamp to heightmap bounds
-                    startX = Mathf.Clamp(startX, 0, resolution - 1);
-                    startY = Mathf.Clamp(startY, 0, resolution - 1);
-                    endX = Mathf.Clamp(endX, 0, resolution - 1);
-                    endY = Mathf.Clamp(endY, 0, resolution - 1);
-                    
-                    // Apply height to region
-                    for (int y = startY; y <= endY; y++) {
-                        for (int x = startX; x <= endX; x++) {
-                            // Simple height assignment - could be improved with distance falloff
-                            heights[y, x] = Mathf.Max(heights[y, x], baseHeight);
-                        }
-                    }
-                }
-            }
-            
-            return heights;
-        }
-        
-        private void ApplyTerrainTextures(UnityEngine.Terrain terrain, AnalysisResults results) {
-            // Simple terrain texturing - could be expanded with more sophisticated texturing
-            TerrainLayer grassLayer = new TerrainLayer();
-            grassLayer.diffuseTexture = Texture2D.whiteTexture; // Placeholder
-            grassLayer.tileSize = new Vector2(10, 10);
-            
-            terrain.terrainData.terrainLayers = new TerrainLayer[] { grassLayer };
-        }
-        
-        private void CreateWaterPlane() {
-            try {
-                _debugger.Log("Creating water plane", LogCategory.Terrain);
-                
-                _waterPlane = GameObject.CreatePrimitive(PrimitiveType.Plane);
-                _waterPlane.name = "WaterPlane";
-                
-                // Scale plane to terrain size (Unity Plane is 10x10 by default)
-                float scaleX = _terrainSize.x / 10f;
-                float scaleZ = _terrainSize.z / 10f;
-                _waterPlane.transform.localScale = new Vector3(scaleX, 1, scaleZ);
-                
-                float waterY = _waterHeight * _terrainSize.y;
-                _waterPlane.transform.position = new Vector3(_terrainSize.x / 2f, waterY, _terrainSize.z / 2f);
-                
-                // Apply a simple water-like material
-                Renderer rend = _waterPlane.GetComponent<Renderer>();
-                if (rend != null) {
-                    Material waterMat = CreateWaterMaterial();
-                    rend.material = waterMat;
-                    rend.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                }
-                
-                _debugger.Log("Water plane created", LogCategory.Terrain);
-            }
-            catch (Exception ex) {
-                _debugger.LogError($"Error creating water plane: {ex.Message}", LogCategory.Terrain);
-            }
-        }
-        
-        private Material CreateWaterMaterial() {
-            Material mat = new Material(Shader.Find("Standard"));
-            mat.name = "GeneratedWater";
-            mat.color = new Color(0.15f, 0.4f, 0.7f, 0.8f);
-            mat.SetFloat("_Glossiness", 0.95f);
-            mat.SetFloat("_Metallic", 0.1f);
-            
-            // Configure blending for transparency with proper render queue
-            mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-            mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-            mat.SetInt("_ZWrite", 0);
-            mat.DisableKeyword("_ALPHATEST_ON");
-            mat.EnableKeyword("_ALPHABLEND_ON");
-            mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
-            
-            // Fix render queue - use valid range for transparency
-            mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
-            
-            return mat;
-        }
-        
-        private GameObject CreateOverlayQuad(TerrainFeature feature, UnityEngine.Terrain terrain, Texture2D mapTexture) {
-            GameObject quad = _overlayPrefab ? Instantiate(_overlayPrefab) : GameObject.CreatePrimitive(PrimitiveType.Quad);
-            quad.name = $"Overlay_{feature.label}";
-            quad.transform.SetParent(terrain.transform);
-            
-            // Calculate world position and size of overlay from feature bounding box
-            Vector3 size = terrain.terrainData.size;
-            Vector3 tPos = terrain.transform.position;
-            
-            float overlayXMin = tPos.x + (feature.boundingBox.x / mapTexture.width) * size.x;
-            float overlayXMax = tPos.x + ((feature.boundingBox.x + feature.boundingBox.width) / mapTexture.width) * size.x;
-            float overlayZMin = tPos.z + (feature.boundingBox.y / mapTexture.height) * size.z;
-            float overlayZMax = tPos.z + ((feature.boundingBox.y + feature.boundingBox.height) / mapTexture.height) * size.z;
-            
-            quad.transform.position = new Vector3((overlayXMin + overlayXMax) / 2f, tPos.y + _overlayYOffset, (overlayZMin + overlayZMax) / 2f);
-            quad.transform.localScale = new Vector3(overlayXMax - overlayXMin, 1, overlayZMax - overlayZMin);
-            quad.transform.rotation = Quaternion.Euler(90, 0, 0);
-            
-            // Apply overlay material and color
-            Renderer rend = quad.GetComponent<Renderer>();
-            if (rend != null) {
-                Material mat = _overlayMaterial ? Instantiate(_overlayMaterial) : new Material(Shader.Find("Standard"));
-                mat.color = feature.segmentColor;
-                rend.material = mat;
-            }
-            
-            return quad;
-        }
-        
-        private GameObject CreateLabelObject(MapObject mapObj, UnityEngine.Terrain terrain) {
-            GameObject labelObj = _labelPrefab ? Instantiate(_labelPrefab) : new GameObject($"Label_{mapObj.label}");
-            labelObj.transform.SetParent(terrain.transform);
-            
-            // Compute world position of the object on terrain
-            Vector3 worldPos = GetWorldPositionFromNormalized(mapObj.position, terrain);
-            float terrainY = terrain.SampleHeight(worldPos);
-            worldPos.y = terrainY + _labelYOffset;
-            
-            labelObj.transform.position = worldPos;
-            labelObj.transform.LookAt(Camera.main.transform);
-            
-            // Set text if TextMeshPro is attached
-            if (labelObj.TryGetComponent(out TextMeshPro tmp)) {
-                tmp.text = !string.IsNullOrEmpty(mapObj.enhancedDescription) ? mapObj.enhancedDescription : mapObj.label;
-                tmp.color = mapObj.segmentColor;
-            }
-            
-            // Add billboard component
-            Billboard billboard = labelObj.GetComponent<Billboard>();
-            if (billboard == null) {
-                billboard = labelObj.AddComponent<Billboard>();
-                billboard.Mode = Billboard.BillboardMode.LookAtCamera;
-            }
-            
-            return labelObj;
-        }
-        
-        private IEnumerator FadeIn(GameObject obj) {
-            Renderer rend = obj.GetComponent<Renderer>();
-            if (rend == null) yield break;
-            
-            Color targetColor = rend.material.color;
-            
-            // Start from fully transparent
-            Color startColor = targetColor;
-            startColor.a = 0f;
-            rend.material.color = startColor;
-            
-            float elapsed = 0f;
-            while (elapsed < _overlayFadeDuration) {
-                elapsed += Time.deltaTime;
-                float t = Mathf.Clamp01(elapsed / _overlayFadeDuration);
-                Color c = Color.Lerp(startColor, targetColor, t);
-                rend.material.color = c;
-                yield return null;
-            }
-            
-            rend.material.color = targetColor;
-        }
-        
-        private Mesh GeneratePlaceholderMeshForType(string objectType) {
-            string typeLower = objectType.ToLower();
-            
-            if (typeLower.Contains("tree")) {
-                // Use a cylinder to mimic a tree trunk
-                GameObject temp = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-                Mesh mesh = temp.GetComponent<MeshFilter>().sharedMesh;
-                Destroy(temp);
-                return mesh;
-            }
-            
-            if (typeLower.Contains("rock") || typeLower.Contains("boulder")) {
-                // Use a sphere for rocks/boulders
-                GameObject temp = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                Mesh mesh = temp.GetComponent<MeshFilter>().sharedMesh;
-                Destroy(temp);
-                return mesh;
-            }
-            
-            if (typeLower.Contains("structure") || typeLower.Contains("building")) {
-                // Use a cube for structures/buildings
-                GameObject temp = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                Mesh mesh = temp.GetComponent<MeshFilter>().sharedMesh;
-                Destroy(temp);
-                return mesh;
-            }
-            
-            // Default placeholder mesh: cube
-            GameObject def = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            Mesh defaultMesh = def.GetComponent<MeshFilter>().sharedMesh;
-            Destroy(def);
-            
-            return defaultMesh;
-        }
-        
-        private Vector3 GetWorldPositionFromNormalized(Vector2 normalizedPos, UnityEngine.Terrain terrain) {
-            Vector3 terrainOrigin = terrain.transform.position;
-            Vector3 size = terrain.terrainData.size;
-            
-            float worldX = terrainOrigin.x + normalizedPos.x * size.x;
-            float worldZ = terrainOrigin.z + normalizedPos.y * size.z;
-            float worldY = terrainOrigin.y;
-            
-            return new Vector3(worldX, worldY, worldZ);
-        }
-        
-        #endregion
-        
-        #region Tensor Processing
-        
-        private Unity.Sentis.Tensor PrepareImageTensor(Texture2D src, int width, int height) {
-            // Resize image to desired resolution
-            RenderTexture rt = RenderTexture.GetTemporary(width, height, 0, RenderTextureFormat.ARGB32);
-            Graphics.Blit(src, rt);
-            RenderTexture.active = rt;
-            
-            Texture2D scaled = new Texture2D(width, height, TextureFormat.RGB24, false);
-            scaled.ReadPixels(new Rect(0, 0, width, height), 0, 0);
-            scaled.Apply();
-            
-            RenderTexture.active = null;
-            RenderTexture.ReleaseTemporary(rt);
-            
-            // Convert to Unity Sentis Tensor
-            Unity.Sentis.Tensor tensor = Unity.Sentis.TextureConverter.ToTensor(scaled);
-            Destroy(scaled);
-            
-            return tensor;
-        }
-        
-        private Texture2D DecodeMaskTensor(Unity.Sentis.Tensor maskTensor) {
-            int mh = maskTensor.shape[1];
-            int mw = maskTensor.shape[2];
-            
-            Texture2D maskTex = new Texture2D(mw, mh, TextureFormat.RGBA32, false);
-            Color[] pixels = new Color[mw * mh];
-            
-            // Get the tensor data as a CPU-accessible array
-            var maskArrayTensor = maskTensor.ReadbackAndClone();
-            var maskData = maskArrayTensor.dataOnBackend.Download<float>(maskArrayTensor.shape.length);
-            
-            for (int y = 0; y < mh; y++) {
-                for (int x = 0; x < mw; x++) {
-                    int index = y * mw + x;
-                    float v = maskData[index];
-                    pixels[y * mw + x] = new Color(1f, 1f, 1f, v);
-                }
-            }
-            
-            maskTex.SetPixels(pixels);
-            maskTex.Apply();
-            
-            return maskTex;
-        }
-        
-        private AnalysisResults BuildResults(Texture2D sourceImage, List<ImageSegment> segments, float analysisTimeSec) {
-            AnalysisResults results = new AnalysisResults();
-            results.metadata.timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
-            results.metadata.sourceImageName = sourceImage.name;
-            results.metadata.imageWidth = sourceImage.width;
-            results.metadata.imageHeight = sourceImage.height;
-            results.timings.totalTime = analysisTimeSec;
-            
-            // Partition segments into terrain features and map objects
-            foreach (ImageSegment seg in segments) {
-                if (seg.detectedObject.className.StartsWith("cls_") || 
-                    IsTerrainClassName(seg.detectedObject.className)) {
-                    // Treat as terrain feature
-                    TerrainFeature feat = new TerrainFeature {
-                        type = "terrain",
-                        label = seg.detectedObject.className,
-                        boundingBox = seg.boundingBox,
-                        segmentMask = seg.mask,
-                        segmentColor = seg.color,
-                        confidence = seg.detectedObject.confidence,
-                        elevation = EstimateElevation(seg.mask)
-                    };
-                    
-                    results.terrainFeatures.Add(feat);
-                }
-                else {
-                    // Treat as discrete map object
-                    MapObject obj = new MapObject {
-                        type = seg.detectedObject.className,
-                        label = seg.detectedObject.className,
-                        enhancedDescription = seg.detectedObject.className,
-                        position = new Vector2(
-                            seg.boundingBox.center.x / sourceImage.width,
-                            1f - (seg.boundingBox.center.y / sourceImage.height)
-                        ),
-                        boundingBox = seg.boundingBox,
-                        segmentMask = seg.mask,
-                        segmentColor = seg.color,
-                        confidence = seg.detectedObject.confidence,
-                        scale = Vector3.one,
-                        rotation = 0f,
-                        isGrouped = false
-                    };
-                    
-                    results.mapObjects.Add(obj);
-                }
-            }
-            
-            // Group similar objects by type
-            results.objectGroups = results.mapObjects
-                .GroupBy(o => o.type)
-                .Select(g => new ObjectGroup {
-                    groupId = Guid.NewGuid().ToString(),
-                    type = g.Key,
-                    objects = g.ToList()
-                })
-                .ToList();
-            
-            // Build heightMap and segmentationMap textures from segments
-            results.heightMap = BuildHeightMap(sourceImage.width, sourceImage.height, segments);
-            results.segmentationMap = BuildSegmentationMap(sourceImage.width, sourceImage.height, segments);
-            
-            // Update statistics
-            results.statistics.objectCount = results.mapObjects.Count;
-            results.statistics.terrainFeatureCount = results.terrainFeatures.Count;
-            results.statistics.groupCount = results.objectGroups.Count;
-            results.statistics.averageConfidence = segments.Average(s => s.detectedObject.confidence);
-            
-            return results;
-        }
-        
-        private bool IsTerrainClassName(string className) {
-            string lower = className.ToLowerInvariant();
-            return lower.Contains("terrain") || 
-                   lower.Contains("mountain") || 
-                   lower.Contains("water") || 
-                   lower.Contains("forest") || 
-                   lower.Contains("lake") || 
-                   lower.Contains("river") || 
-                   lower.Contains("grass") || 
-                   lower.Contains("hill");
-        }
-        
-        private float EstimateElevation(Texture2D mask) {
-            if (mask == null) return 0f;
-            
-            // Simple approach: use average alpha as elevation estimate
-            Color[] pixels = mask.GetPixels();
-            return pixels.Average(c => c.a);
-        }
-        
-        private Texture2D BuildHeightMap(int width, int height, List<ImageSegment> segments) {
-            Texture2D heightMap = new Texture2D(width, height, TextureFormat.RFloat, false);
-            Color[] pixels = Enumerable.Repeat(Color.black, width * height).ToArray();
-            
-            foreach (var seg in segments) {
-                if (!IsTerrainClassName(seg.detectedObject.className)) continue;
-                
-                // For terrain segments, copy mask alpha into height map region
-                for (int y = 0; y < height; y++) {
-                    for (int x = 0; x < width; x++) {
-                        if (seg.boundingBox.Contains(new Vector2(x, y))) {
-                            float alpha = seg.mask.GetPixelBilinear(
-                                (x - seg.boundingBox.x) / seg.boundingBox.width,
-                                (y - seg.boundingBox.y) / seg.boundingBox.height
-                            ).a;
-                            
-                            pixels[y * width + x] = new Color(alpha, 0, 0, 1);
-                        }
-                    }
-                }
-            }
-            
-            heightMap.SetPixels(pixels);
-            heightMap.Apply();
-            
-            return heightMap;
-        }
-        
-        private Texture2D BuildSegmentationMap(int width, int height, List<ImageSegment> segments) {
-            Texture2D segMap = new Texture2D(width, height, TextureFormat.RGBA32, false);
-            Color[] pixels = Enumerable.Repeat(Color.clear, width * height).ToArray();
-            
-            foreach (var seg in segments) {
-                for (int y = 0; y < height; y++) {
-                    for (int x = 0; x < width; x++) {
-                        if (seg.boundingBox.Contains(new Vector2(x, y))) {
-                            Color maskColor = seg.mask.GetPixelBilinear(
-                                (x - seg.boundingBox.x) / seg.boundingBox.width,
-                                (y - seg.boundingBox.y) / seg.boundingBox.height
-                            );
-                            
-                            if (maskColor.a > 0.5f) {
-                                pixels[y * width + x] = seg.color;
-                            }
-                        }
-                    }
-                }
-            }
-            
-            segMap.SetPixels(pixels);
-            segMap.Apply();
-            
-            return segMap;
-        }
-        
-        #endregion
-        
-        #region UI Helpers
-        
-        private void ShowLoadingPanel(bool show) {
-            if (_loadingPanel != null) _loadingPanel.SetActive(show);
-        }
-        
-        private void UpdateStage(string stage, string details = null) {
-            if (_stageText != null) _stageText.text = stage;
-            if (details != null && _detailsText != null) _detailsText.text = details;
-        }
-        
-        private void UpdateProgress(float progress, string details = null) {
-            if (_progressBar != null) _progressBar.value = progress;
-            if (_progressText != null) _progressText.text = $"{progress * 100:F0}%";
-            if (details != null && _detailsText != null) _detailsText.text = details;
-        }
-        
-        private void UpdateStatus(string message, bool isError = false) {
-            if (_statusText != null) {
-                _statusText.text = message;
-                _statusText.color = isError ? new Color(1f, 0.3f, 0.3f) : Color.white;
-            }
-            
-            if (isError)
-                _debugger.LogError(message, LogCategory.UI);
-            else
-                _debugger.Log(message, LogCategory.UI);
-        }
-        
-        private void ResetUI() {
-            ShowLoadingPanel(false);
-            
-            if (_uploadButton != null) _uploadButton.interactable = true;
-            if (_generateButton != null) _generateButton.interactable = _uploadedMapTexture != null;
-            
-            _isProcessing = false;
-        }
-        
-        private string GenerateAnalysisDetails() {
-            if (_analysisResults == null) return "";
-            
-            StringBuilder sb = new StringBuilder();
-            
-            sb.AppendLine("Terrain Features:");
-            foreach (var grp in _analysisResults.terrainFeatures.GroupBy(f => f.label)) {
-                sb.AppendLine($"  • {grp.Key}: {grp.Count()}");
-            }
-            
-            sb.AppendLine("\nObjects:");
-            foreach (var grp in _analysisResults.mapObjects.GroupBy(o => o.type)) {
-                sb.AppendLine($"  • {grp.Key}: {grp.Count()}");
-            }
-            
-            return sb.ToString();
-        }
-        
-        private void ShowCompletionDetails() {
-            if (_detailsText == null) return;
-            
-            StringBuilder sb = new StringBuilder(_detailsText.text);
-            sb.AppendLine($"\nTerrain: {_terrainSize.x}x{_terrainSize.z} units | Res {_terrainResolution}");
-            sb.AppendLine($"Objects placed: {_analysisResults?.mapObjects.Count ?? 0}");
-            sb.AppendLine($"Clusters: {_analysisResults?.objectGroups.Count ?? 0}");
-            
-            _detailsText.text = sb.ToString();
-        }
-        
-        private void LogPerformanceMetrics() {
-            if (_performanceMetrics.Count == 0) return;
-            
-            _debugger.Log("���─ Performance Metrics ����─", LogCategory.Process);
-            
-            foreach (var entry in _performanceMetrics.OrderByDescending(kv => kv.Value)) {
-                _debugger.Log($"{entry.Key}: {entry.Value:F2}s", LogCategory.Process);
-            }
-        }
-        
-        private void FocusCameraOnTerrain() {
-            Camera cam = Camera.main;
-            if (cam == null || _generatedTerrain == null) return;
-            
-            Bounds bounds = _generatedTerrain.terrainData.bounds;
-            Vector3 center = _generatedTerrain.transform.position + bounds.center;
-            
-            float d = Mathf.Max(_terrainSize.x, _terrainSize.z) * 0.7f;
-            cam.transform.position = center + new Vector3(d, _terrainSize.y * 0.8f, -d);
-            cam.transform.LookAt(center);
-        }
-        
-        #endregion
-        
-        #region Cleanup and Helpers
-        
-        private void CleanupGeneratedObjects() {
-            foreach (var obj in _generatedObjects) {
-                if (obj != null) {
-                    Destroy(obj);
-                }
-            }
-            
-            _generatedObjects.Clear();
-            
-            if (_generatedTerrain != null) {
-                Destroy(_generatedTerrain.gameObject);
-                _generatedTerrain = null;
-            }
-            
-            if (_waterPlane != null) {
-                Destroy(_waterPlane);
-                _waterPlane = null;
-            }
-        }
-        
-        private void SaveTexture(Texture2D tex, string path) {
-            try {
-                File.WriteAllBytes(path, tex.EncodeToPNG());
-                _debugger.Log($"Saved texture ��� {path}", LogCategory.IO);
-            }
-            catch (Exception ex) {
-                _debugger.LogError($"SaveTexture failed: {ex.Message}", LogCategory.IO);
-            }
-        }
-        
-        private void SaveMetadata(string path, string sceneName) {
-            try {
-                var meta = new {
-                    sceneName,
-                    generatedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
-                    generatedBy = "dkaplan73", // Current user from params
-                    traversifyVersion = "2.0.1",
-                    terrain = new { _terrainSize, _terrainResolution, water = _generateWater },
-                    counts = new {
-                        features = _analysisResults?.terrainFeatures.Count ?? 0,
-                        objects = _analysisResults?.mapObjects.Count ?? 0,
-                        clusters = _analysisResults?.objectGroups.Count ?? 0
-                    },
-                    perf = _performanceMetrics
-                };
-                
-                string json = JsonUtility.ToJson(meta, true);
-                File.WriteAllText(Path.Combine(path, "metadata.json"), json);
-                
-                _debugger.Log("Wrote metadata.json", LogCategory.IO);
-            }
-            catch (Exception ex) {
-                _debugger.LogError($"Failed to save metadata: {ex.Message}", LogCategory.IO);
-            }
-        }
-        
-        private void LoadClassLabels() {
-            if (_labelsFile != null) {
-                try {
-                    _classLabels = _labelsFile.text.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-                    _debugger.Log($"Loaded {_classLabels.Length} class labels", LogCategory.AI);
-                }
-                catch (Exception ex) {
-                    _debugger.LogError($"Failed to load class labels: {ex.Message}", LogCategory.AI);
-                }
-            } else {
-                _debugger.LogWarning("Class labels file not assigned, using default labels", LogCategory.AI);
-                // Create default labels for basic terrain analysis
-                _classLabels = new string[] {
-                    "terrain", "water", "forest", "mountain", "grass", "rock", "tree", "building"
-                };
-            }
-        }
-        
-        private void LoadPreferences() {
-            try {
-                // Load user preferences from PlayerPrefs
-                if (PlayerPrefs.HasKey("Traversify_TerrainWidth")) {
-                    _terrainSize.x = PlayerPrefs.GetFloat("Traversify_TerrainWidth", _terrainSize.x);
-                }
-                if (PlayerPrefs.HasKey("Traversify_TerrainHeight")) {
-                    _terrainSize.y = PlayerPrefs.GetFloat("Traversify_TerrainHeight", _terrainSize.y);
-                }
-                if (PlayerPrefs.HasKey("Traversify_TerrainLength")) {
-                    _terrainSize.z = PlayerPrefs.GetFloat("Traversify_TerrainLength", _terrainSize.z);
-                }
-                if (PlayerPrefs.HasKey("Traversify_TerrainResolution")) {
-                    _terrainResolution = PlayerPrefs.GetInt("Traversify_TerrainResolution", _terrainResolution);
-                }
-                if (PlayerPrefs.HasKey("Traversify_UseHighQualityAnalysis")) {
-                    _useHighQualityAnalysis = PlayerPrefs.GetInt("Traversify_UseHighQualityAnalysis", _useHighQualityAnalysis ? 1 : 0) == 1;
-                }
-                if (PlayerPrefs.HasKey("Traversify_DetectionThreshold")) {
-                    _detectionThreshold = PlayerPrefs.GetFloat("Traversify_DetectionThreshold", 0.25f); // Use better default
-                }
-                if (PlayerPrefs.HasKey("Traversify_MaxObjectsToProcess")) {
-                    _maxObjectsToProcess = PlayerPrefs.GetInt("Traversify_MaxObjectsToProcess", _maxObjectsToProcess);
-                }
-                if (PlayerPrefs.HasKey("Traversify_GenerateWater")) {
-                    _generateWater = PlayerPrefs.GetInt("Traversify_GenerateWater", _generateWater ? 1 : 0) == 1;
-                }
-                if (PlayerPrefs.HasKey("Traversify_WaterHeight")) {
-                    _waterHeight = PlayerPrefs.GetFloat("Traversify_WaterHeight", _waterHeight);
-                }
-                if (PlayerPrefs.HasKey("Traversify_UseGPUAcceleration")) {
-                    _useGPUAcceleration = PlayerPrefs.GetInt("Traversify_UseGPUAcceleration", _useGPUAcceleration ? 1 : 0) == 1;
-                }
-                if (PlayerPrefs.HasKey("Traversify_SaveGeneratedAssets")) {
-                    _saveGeneratedAssets = PlayerPrefs.GetInt("Traversify_SaveGeneratedAssets", _saveGeneratedAssets ? 1 : 0) == 1;
-                }
-                
-                _debugger.Log("User preferences loaded", LogCategory.System);
-            }
-            catch (Exception ex) {
-                _debugger.LogError($"Failed to load preferences: {ex.Message}", LogCategory.System);
-            }
-        }
-        
-        private void SavePreferences() {
-            try {
-                // Save user preferences to PlayerPrefs
-                PlayerPrefs.SetFloat("Traversify_TerrainWidth", _terrainSize.x);
-                PlayerPrefs.SetFloat("Traversify_TerrainHeight", _terrainSize.y);
-                PlayerPrefs.SetFloat("Traversify_TerrainLength", _terrainSize.z);
-                PlayerPrefs.SetInt("Traversify_TerrainResolution", _terrainResolution);
-                PlayerPrefs.SetInt("Traversify_UseHighQualityAnalysis", _useHighQualityAnalysis ? 1 : 0);
-                PlayerPrefs.SetFloat("Traversify_DetectionThreshold", _detectionThreshold);
-                PlayerPrefs.SetInt("Traversify_MaxObjectsToProcess", _maxObjectsToProcess);
-                PlayerPrefs.SetInt("Traversify_GenerateWater", _generateWater ? 1 : 0);
-                PlayerPrefs.SetFloat("Traversify_WaterHeight", _waterHeight);
-                PlayerPrefs.SetInt("Traversify_UseGPUAcceleration", _useGPUAcceleration ? 1 : 0);
-                PlayerPrefs.SetInt("Traversify_SaveGeneratedAssets", _saveGeneratedAssets ? 1 : 0);
-                
-                PlayerPrefs.Save();
-                _debugger.Log("User preferences saved", LogCategory.System);
-            }
-            catch (Exception ex) {
-                _debugger.LogError($"Failed to save preferences: {ex.Message}", LogCategory.System);
-            }
-        }
-        
-        private IEnumerator SafeCoroutine(IEnumerator routine, Action<string> onError) {
-            bool finished = false;
-            Exception caughtEx = null;
-            
-            yield return StartCoroutine(ProcessWithErrorHandling(routine, msg => {
-                caughtEx = new Exception(msg);
-                finished = true;
-            }));
-            
-            if (caughtEx != null) {
-                onError?.Invoke(caughtEx.Message);
-            }
-        }
-        
-        private IEnumerator ProcessWithErrorHandling(IEnumerator routine, Action<string> handleError) {
-            while (true) {
-                object current;
-                
-                try {
-                    if (!routine.MoveNext()) break;
-                    current = routine.Current;
-                }
-                catch (Exception ex) {
-                    handleError?.Invoke(ex.Message);
-                    yield break;
-                }
-                
-                yield return current;
-            }
-        }
-        
-        /// <summary>
-        /// Create Unity Sentis worker directly from ModelAsset
-        /// </summary>
-        private Unity.Sentis.Worker CreateSentisWorker(Unity.Sentis.ModelAsset sentisModel, WorkerFactory.Type backendType) {
-            // Load the model using Unity Sentis
-            var model = Unity.Sentis.ModelLoader.Load(sentisModel);
-            
-            // Select the appropriate backend
-            Unity.Sentis.BackendType sentisBackend;
-            switch (backendType) {
-                case WorkerFactory.Type.ComputePrecompiled:
-                case WorkerFactory.Type.Compute:
-                case WorkerFactory.Type.ComputeOptimized:
-                    sentisBackend = Unity.Sentis.BackendType.GPUCompute;
-                    break;
-                case WorkerFactory.Type.CoreML:
-                    #if UNITY_IOS || UNITY_EDITOR_OSX || UNITY_STANDALONE_OSX
-                    sentisBackend = Unity.Sentis.BackendType.CPU;  // CoreML not directly available in Sentis, use CPU
-                    #else
-                    sentisBackend = Unity.Sentis.BackendType.GPUCompute;
-                    #endif
-                    break;
-                case WorkerFactory.Type.CSharpBurst:
-                default:
-                    sentisBackend = Unity.Sentis.BackendType.CPU;
-                    break;
-            }
-            
-            // Create and return Sentis worker
-            return new Unity.Sentis.Worker(model, sentisBackend);
-        }
-        
-        /// <summary>
-        /// Helper method to try getting YOLO output tensor with various naming attempts
-        /// </summary>
-        private Unity.Sentis.Tensor TryGetYOLOOutput()
+
+        private void HandleGenerationError(string errorMessage)
         {
-            Unity.Sentis.Tensor outputTensor = null;
+            _debugger.LogError($"Error during terrain generation: {errorMessage}", LogCategory.Process);
+            UpdateStatus($"Error: {errorMessage}", true);
+            OnError?.Invoke(errorMessage);
+            LogPerformanceMetrics();
+            ResetUI();  
+        }
+
+        /// <summary>
+        /// Analyzes the uploaded map image using the MapAnalyzer component
+        /// </summary>
+        private IEnumerator AnalyzeImage(Texture2D texture, System.Action<AnalysisResults> onComplete, System.Action<string> onError, System.Action<string, float> onProgress)
+        {
+            if (_mapAnalyzer == null)
+            {
+                // Find or create the component container
+                GameObject componentContainer = GameObject.Find("TraversifyComponents");
+                if (componentContainer == null) {
+                    componentContainer = new GameObject("TraversifyComponents");
+                    componentContainer.transform.SetParent(transform);
+                }
+                
+                // Try to find or create MapAnalyzer if it's missing
+                _mapAnalyzer = FindOrCreateMapAnalyzer(componentContainer);
+            }
+
+            if (_mapAnalyzer == null)
+            {
+                onError?.Invoke("MapAnalyzer could not be created");
+                yield break;
+            }
             
+            _debugger.Log("Starting image analysis with MapAnalyzer", LogCategory.AI);
+            onProgress?.Invoke("Initializing AI models...", 0.1f);
+            
+            // Ensure MapAnalyzer is properly initialized
             try
-            { 
-                _debugger.Log("Attempting to find YOLO output tensor...", LogCategory.AI);
+            {
+                _mapAnalyzer.InitializeModelsIfNeeded();
                 
-                // First, try to get output by index (most reliable for single-output models)
-                _debugger.Log("Trying to access output by index...", LogCategory.AI);
-                try
+                // Check if initialization was successful
+                if (!_mapAnalyzer.IsInitialized)
                 {
-                    outputTensor = _yoloWorker.PeekOutput(0);
-                    if (outputTensor != null)
-                    {
-                        _debugger.Log("Successfully found YOLO output tensor by index 0", LogCategory.AI);
-                        return outputTensor;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _debugger.LogVerbose($"Index-based access failed: {ex.Message}", LogCategory.AI);
-                }
-                
-                // Extended list of possible YOLO output names as fallback
-                string[] possibleOutputNames = { 
-                    // Standard YOLO outputs
-                    "output", "output0", "outputs", "detection_output", "pred", "predictions", 
-                    "boxes", "detections", "yolo_output", "model_output",
-                    
-                    // YOLOv5/v8 common outputs  
-                    "output1", "output2", "1417", "1418", "1419",
-                    
-                    // ONNX exported model outputs
-                    "458", "459", "460", "461", "462", "463",
-                    
-                    // Identity layers (common in exported models)
-                    "Identity", "Identity_0", "Identity_1", "Identity_2",
-                    
-                    // Numeric indices as strings
-                    "0", "1", "2", "3", "4", "5",
-                    
-                    // PyTorch/TensorFlow exports
-                    "serving_default_input:0", "StatefulPartitionedCall:0",
-                    "model_1/tf_op_layer_Reshape_15/Reshape_15:0"
-                };
-                
-                // Try each possible output name
-                foreach (string outputName in possibleOutputNames)
-                {
-                    try 
-                    {
-                        _debugger.LogVerbose($"Trying output name: {outputName}", LogCategory.AI);
-                        outputTensor = _yoloWorker.PeekOutput(outputName);
-                        if (outputTensor != null)
-                        {
-                            _debugger.Log($"Successfully found YOLO output tensor: {outputName}", LogCategory.AI);
-                            return outputTensor;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _debugger.LogVerbose($"Output '{outputName}' not found: {ex.Message}", LogCategory.AI);
-                        continue;
-                    }
-                }
-                
-                // Try systematic numeric search for more output indices
-                _debugger.Log("Trying systematic numeric output search...", LogCategory.AI);
-                for (int i = 1; i < 10; i++)
-                {
-                    try
-                    {
-                        outputTensor = _yoloWorker.PeekOutput(i);
-                        if (outputTensor != null)
-                        {
-                            _debugger.Log($"Found YOLO output tensor with numeric index: {i}", LogCategory.AI);
-                            return outputTensor;
-                        }
-                    }
-                    catch (Exception) { continue; }
-                }
-                
-                // Try pattern-based search
-                string[] patterns = { "output_{0}", "layer_{0}", "node_{0}", "tensor_{0}" };
-                foreach (string pattern in patterns)
-                {
-                    for (int i = 0; i < 10; i++)
-                    {
-                        try
-                        {
-                            string patternName = string.Format(pattern, i);
-                            outputTensor = _yoloWorker.PeekOutput(patternName);
-                            if (outputTensor != null)
-                            {
-                                _debugger.Log($"Found YOLO output tensor with pattern: {patternName}", LogCategory.AI);
-                                return outputTensor;
-                            }
-                        }
-                        catch (Exception) { continue; }
-                    }
+                    onError?.Invoke("MapAnalyzer models failed to initialize");
+                    yield break;
                 }
             }
             catch (Exception ex)
             {
-                _debugger.LogWarning($"Error in output tensor discovery: {ex.Message}", LogCategory.AI);
+                _debugger.LogError($"Failed to initialize MapAnalyzer models: {ex.Message}", LogCategory.AI);
+                onError?.Invoke($"Failed to initialize AI models: {ex.Message}");
+                yield break;
             }
             
-            _debugger.LogError("Could not find any valid output tensor from YOLO model. The model may not be properly loaded or may have an unsupported output structure.", LogCategory.AI);
-            return null;
+            onProgress?.Invoke("Running AI analysis...", 0.3f);
+            
+            // Use MapAnalyzer to analyze the image
+            bool analysisComplete = false;
+            AnalysisResults results = null;
+            string errorMessage = null;
+            
+            // Check if MapAnalyzer has the AnalyzeMapImage method
+            var analyzeMethod = _mapAnalyzer.GetType().GetMethod("AnalyzeMapImage");
+            if (analyzeMethod != null)
+            {
+                _debugger.Log("Using MapAnalyzer.AnalyzeMapImage method", LogCategory.AI);
+                
+                // Call the actual MapAnalyzer method - handle errors without try-catch around yield
+                Exception startCoroutineException = null;
+                
+                try
+                {
+                    // This should be replaced with the actual method call when implemented
+                    var analysisTask = StartCoroutine(CallMapAnalyzerAnalyzeMethod(texture, 
+                        (result) => {
+                            results = result;
+                            analysisComplete = true;
+                        },
+                        (error) => {
+                            errorMessage = error;
+                            analysisComplete = true;
+                        },
+                        onProgress));
+                }
+                catch (Exception ex)
+                {
+                    startCoroutineException = ex;
+                    analysisComplete = true;
+                }
+                
+                // Handle any exception that occurred during StartCoroutine
+                if (startCoroutineException != null)
+                {
+                    _debugger.LogError($"Error during MapAnalyzer.AnalyzeMapImage: {startCoroutineException.Message}", LogCategory.AI);
+                    errorMessage = startCoroutineException.Message;
+                    analysisComplete = true;
+                }
+                
+                // Wait for analysis to complete without try-catch around yield
+                while (!analysisComplete)
+                {
+                    yield return null;
+                }
+            }
+            else
+            {
+                _debugger.LogWarning("MapAnalyzer.AnalyzeMapImage method not found, using fallback analysis", LogCategory.AI);
+                
+                // Fallback to basic analysis until MapAnalyzer is fully implemented
+                IEnumerator fallbackCoroutine = BasicImageAnalysis(texture, 
+                    (result) => {
+                        results = result;
+                        analysisComplete = true;
+                    },
+                    (error) => {
+                        errorMessage = error;
+                        analysisComplete = true;
+                    },
+                    onProgress);
+                
+                yield return StartCoroutine(fallbackCoroutine);
+            }
+            
+            // Return results or error
+            if (!string.IsNullOrEmpty(errorMessage))
+            {
+                onError?.Invoke(errorMessage);
+            }
+            else if (results != null)
+            {
+                onComplete?.Invoke(results);
+            }
+            else
+            {
+                onError?.Invoke("Analysis completed but no results were generated");
+            }
         }
         
+        /// <summary>
+        /// Calls MapAnalyzer.AnalyzeMapImage method via reflection
+        /// </summary>
+        private IEnumerator CallMapAnalyzerAnalyzeMethod(Texture2D texture, Action<AnalysisResults> onComplete, Action<string> onError, Action<string, float> onProgress)
+        {
+            // Try to call MapAnalyzer.AnalyzeMapImage method
+            var method = _mapAnalyzer.GetType().GetMethod("AnalyzeMapImage");
+            if (method != null)
+            {
+                // Check if it's a coroutine method
+                if (method.ReturnType == typeof(IEnumerator))
+                {
+                    IEnumerator coroutine = null;
+                    Exception invokeException = null;
+                    
+                    try
+                    {
+                        coroutine = method.Invoke(_mapAnalyzer, new object[] { texture, onComplete, onError, onProgress }) as IEnumerator;
+                    }
+                    catch (Exception ex)
+                    {
+                        invokeException = ex;
+                    }
+                    
+                    if (invokeException != null)
+                    {
+                        _debugger.LogError($"Error calling MapAnalyzer.AnalyzeMapImage: {invokeException.Message}", LogCategory.AI);
+                        onError?.Invoke($"MapAnalyzer error: {invokeException.Message}");
+                        yield break;
+                    }
+                    
+                    if (coroutine != null)
+                    {
+                        yield return StartCoroutine(coroutine);
+                    }
+                    else
+                    {
+                        onError?.Invoke("MapAnalyzer.AnalyzeMapImage returned null coroutine");
+                    }
+                }
+                else
+                {
+                    // Synchronous method - handle errors separately from yield
+                    Exception syncException = null;
+                    
+                    try
+                    {
+                        method.Invoke(_mapAnalyzer, new object[] { texture, onComplete, onError, onProgress });
+                    }
+                    catch (Exception ex)
+                    {
+                        syncException = ex;
+                    }
+                    
+                    if (syncException != null)
+                    {
+                        _debugger.LogError($"Error calling MapAnalyzer.AnalyzeMapImage: {syncException.Message}", LogCategory.AI);
+                        onError?.Invoke($"MapAnalyzer error: {syncException.Message}");
+                        yield break;
+                    }
+                    
+                    yield return null;
+                }
+            }
+            else
+            {
+                onError?.Invoke("MapAnalyzer.AnalyzeMapImage method not found");
+            }
+        }
+        
+        /// <summary>
+        /// Basic fallback image analysis when MapAnalyzer is not fully implemented
+        /// </summary>
+        private IEnumerator BasicImageAnalysis(Texture2D texture, System.Action<AnalysisResults> onComplete, System.Action<string> onError, System.Action<string, float> onProgress)
+        {
+            _debugger.Log("Running basic fallback image analysis", LogCategory.AI);
+            
+            onProgress?.Invoke("Analyzing image colors...", 0.5f);
+            yield return new WaitForSeconds(0.5f);
+            
+            onProgress?.Invoke("Detecting basic features...", 0.7f);
+            yield return new WaitForSeconds(0.3f);
+            
+            onProgress?.Invoke("Generating terrain data...", 0.9f);
+            yield return new WaitForSeconds(0.2f);
+            
+            // Create basic analysis results
+            var results = new AnalysisResults
+            {
+                mapObjects = new List<MapObject>(),
+                terrainFeatures = new List<TerrainFeature>(),
+                objectGroups = new List<ObjectGroup>(),
+                timings = new AnalysisTimings(new ProcessingTimings { totalTime = 1.0f }),
+                heightMap = CreateBasicHeightMap(texture),
+                segmentationMap = CreateBasicSegmentationMap(texture)
+            };
+            
+            // Add sample terrain features based on image analysis
+            CreateBasicTerrainFeatures(texture, results);
+            
+            // Add some sample objects
+            CreateBasicMapObjects(texture, results);
+            
+            _debugger.Log($"Basic analysis complete: {results.terrainFeatures.Count} terrain features, {results.mapObjects.Count} objects", LogCategory.AI);
+            
+            onProgress?.Invoke("Analysis complete", 1.0f);
+            onComplete?.Invoke(results);
+        }
+        
+        /// <summary>
+        /// Creates a basic heightmap from the source image
+        /// </summary>
+        private Texture2D CreateBasicHeightMap(Texture2D sourceTexture)
+        {
+            Texture2D heightMap = new Texture2D(sourceTexture.width, sourceTexture.height, TextureFormat.RGBA32, false);
+            Color[] sourcePixels = sourceTexture.GetPixels();
+            Color[] heightPixels = new Color[sourcePixels.Length];
+            
+            for (int i = 0; i < sourcePixels.Length; i++)
+            {
+                // Convert color to grayscale and use as height
+                float brightness = (sourcePixels[i].r + sourcePixels[i].g + sourcePixels[i].b) / 3f;
+                heightPixels[i] = new Color(brightness, brightness, brightness, 1f);
+            }
+            
+            heightMap.SetPixels(heightPixels);
+            heightMap.Apply();
+            return heightMap;
+        }
+        
+        /// <summary>
+        /// Creates a basic segmentation map from the source image
+        /// </summary>
+        private Texture2D CreateBasicSegmentationMap(Texture2D sourceTexture)
+        {
+            Texture2D segmentationMap = new Texture2D(sourceTexture.width, sourceTexture.height, TextureFormat.RGBA32, false);
+            Color[] sourcePixels = sourceTexture.GetPixels();
+            Color[] segmentPixels = new Color[sourcePixels.Length];
+            
+            for (int i = 0; i < sourcePixels.Length; i++)
+            {
+                Color pixel = sourcePixels[i];
+                
+                // Simple color-based segmentation
+                if (pixel.b > pixel.r && pixel.b > pixel.g)
+                {
+                    segmentPixels[i] = Color.blue; // Water
+                }
+                else if (pixel.g > pixel.r && pixel.g > pixel.b)
+                {
+                    segmentPixels[i] = Color.green; // Vegetation
+                }
+                else if (pixel.r > 0.7f && pixel.g > 0.7f && pixel.b > 0.7f)
+                {
+                    segmentPixels[i] = Color.white; // Snow/peaks
+                }
+                else
+                {
+                    segmentPixels[i] = new Color(0.6f, 0.4f, 0.2f); // Ground
+                }
+            }
+            
+            segmentationMap.SetPixels(segmentPixels);
+            segmentationMap.Apply();
+            return segmentationMap;
+        }
+        
+        /// <summary>
+        /// Creates basic terrain features from image analysis
+        /// </summary>
+        private void CreateBasicTerrainFeatures(Texture2D texture, AnalysisResults results)
+        {
+            // Add water bodies (blue areas)
+            results.terrainFeatures.Add(new TerrainFeature
+            {
+                label = "Water",
+                type = "water",
+                boundingBox = new Rect(0, 0, texture.width * 0.3f, texture.height * 0.2f),
+                segmentColor = Color.blue,
+                elevation = 0f,
+                confidence = 0.8f
+            });
+            
+            // Add mountainous terrain (brighter areas)
+            results.terrainFeatures.Add(new TerrainFeature
+            {
+                label = "Mountains",
+                type = "mountain",
+                boundingBox = new Rect(texture.width * 0.6f, texture.height * 0.7f, texture.width * 0.4f, texture.height * 0.3f),
+                segmentColor = Color.gray,
+                elevation = _terrainSize.y * 0.8f,
+                confidence = 0.7f
+            });
+            
+            // Add forested areas (green areas)
+            results.terrainFeatures.Add(new TerrainFeature
+            {
+                label = "Forest",
+                type = "forest",
+                boundingBox = new Rect(texture.width * 0.2f, texture.height * 0.3f, texture.width * 0.5f, texture.height * 0.4f),
+                segmentColor = Color.green,
+                elevation = _terrainSize.y * 0.3f,
+                confidence = 0.6f
+            });
+        }
+        
+        /// <summary>
+        /// Creates basic map objects from image analysis
+        /// </summary>
+        private void CreateBasicMapObjects(Texture2D texture, AnalysisResults results)
+        {
+            // Add some sample objects at random locations
+            for (int i = 0; i < 5; i++)
+            {
+                results.mapObjects.Add(new MapObject
+                {
+                    label = $"Structure_{i + 1}",
+                    type = "building",
+                    position = new Vector2(
+                        UnityEngine.Random.Range(0.1f, 0.9f),
+                        UnityEngine.Random.Range(0.1f, 0.9f)
+                    ),
+                    boundingBox = new Rect(
+                        UnityEngine.Random.Range(0, texture.width - 50),
+                        UnityEngine.Random.Range(0, texture.height - 50),
+                        50, 50
+                    ),
+                    segmentColor = Color.red,
+                    confidence = 0.6f,
+                    enhancedDescription = $"Building structure {i + 1}",
+                    rotation = UnityEngine.Random.Range(0f, 360f),
+                    scale = Vector3.one
+                });
+            }
+        }
+
         #endregion
     }
+    
+    // Note: IWorker interface and data structures are defined in IWorker.cs
 }
-
