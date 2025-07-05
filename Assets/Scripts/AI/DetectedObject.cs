@@ -77,6 +77,11 @@ namespace Traversify.AI {
         public string enhancedDescription;
         
         /// <summary>
+        /// Enhanced short description of the object.
+        /// </summary> 
+        public string shortDescription;
+        
+        /// <summary>
         /// Indicates whether this object has been processed by the full pipeline.
         /// </summary>
         public bool isProcessed;
@@ -227,6 +232,7 @@ namespace Traversify.AI {
                 confidence = this.confidence,
                 boundingBox = this.boundingBox,
                 enhancedDescription = this.enhancedDescription,
+                shortDescription = this.shortDescription,
                 isProcessed = this.isProcessed,
                 timestamp = this.timestamp,
                 id = this.id

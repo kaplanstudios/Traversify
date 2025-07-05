@@ -10,6 +10,7 @@ using UnityEngine.UI;
 using UnityEngine.Networking;
 using TMPro;
 using Traversify.AI; 
+using Traversify.Terrain;
 using SimpleFileBrowser;
 using USentis = Unity.Sentis; 
 
@@ -85,6 +86,15 @@ namespace Traversify.Core
         [Header("Terrain Settings")]
         [Tooltip("Size of the generated terrain in Unity units")]
         [SerializeField] private Vector3 _terrainSize = new Vector3(500, 100, 500);
+        
+        [Tooltip("Height of the terrain in Unity units")]
+        [SerializeField] private float _terrainHeight = 100f;
+        
+        [Tooltip("Resolution of the terrain heightmap (must be 2^n + 1)")]
+        [SerializeField] private int _heightmapResolution = 513;
+        
+        [Tooltip("Resolution for terrain detail maps")]
+        [SerializeField] private int _detailResolution = 1024;
         
         [Tooltip("Resolution of the terrain heightmap (must be 2^n + 1)")]
         [SerializeField] private int _terrainResolution = 513;
@@ -400,6 +410,11 @@ namespace Traversify.Core
         /// </summary>
         public event Action OnProcessingCancelled;
         
+        /// <summary>
+        /// Event fired when generation completes.
+        /// </summary>
+        public event Action OnGenerationComplete;
+        
         #endregion
         
         #region Unity Lifecycle
@@ -603,43 +618,92 @@ namespace Traversify.Core
             MapAnalyzer analyzer = parent.GetComponentInChildren<MapAnalyzer>();
             if (analyzer != null) {
                 _debugger.Log("Found existing MapAnalyzer component", LogCategory.System);
-                return analyzer;
+                // Ensure it's properly initialized
+                if (!analyzer.IsInitialized) {
+                    try {
+                        // Create configuration for MapAnalyzer
+                        var config = new Dictionary<string, object>
+                        {
+                            ["useHighQuality"] = _useHighQualityAnalysis,
+                            ["confidenceThreshold"] = _detectionThreshold,
+                            ["nmsThreshold"] = _nmsThreshold,
+                            ["useGPU"] = _useGPUAcceleration,
+                            ["maxObjectsToProcess"] = _maxObjectsToProcess,
+                            ["openAIApiKey"] = _openAIApiKey,
+                            ["yoloModel"] = _yoloModel,
+                            ["sam2Model"] = _sam2Model,
+                            ["fasterRcnnModel"] = _fasterRcnnModel,
+                            ["labelsFile"] = _labelsFile,
+                            ["yoloWorker"] = _yoloWorker,
+                            ["sam2Worker"] = _sam2Worker,
+                            ["rcnnWorker"] = _rcnnWorker,
+                            ["classLabels"] = _classLabels
+                        };
+                        
+                        if (analyzer.Initialize(config)) {
+                            _debugger.Log("Initialized existing MapAnalyzer component", LogCategory.System);
+                        } else {
+                            _debugger.LogError("Failed to initialize existing MapAnalyzer", LogCategory.System);
+                            DestroyImmediate(analyzer.gameObject);
+                            analyzer = null;
+                        }
+                    }
+                    catch (Exception ex) {
+                        _debugger.LogError($"Failed to initialize existing MapAnalyzer: {ex.Message}", LogCategory.System);
+                        DestroyImmediate(analyzer.gameObject);
+                        analyzer = null;
+                    }
+                }
+                if (analyzer != null) return analyzer;
             }
             
-            // Try to find it by type name using reflection
+            // Try to create new MapAnalyzer
             try {
-                var mapAnalyzerType = System.Type.GetType("MapAnalyzer") ?? 
-                                     System.Type.GetType("Traversify.AI.MapAnalyzer") ??
-                                     System.Type.GetType("Traversify.MapAnalyzer");
+                GameObject go = new GameObject("MapAnalyzer");
+                go.transform.SetParent(parent.transform);
+                analyzer = go.AddComponent<MapAnalyzer>();
                 
-                if (mapAnalyzerType != null) {
-                    GameObject go = new GameObject("MapAnalyzer");
-                    go.transform.SetParent(parent.transform);
-                    var component = go.AddComponent(mapAnalyzerType) as MapAnalyzer;
+                if (analyzer != null) {
+                    _debugger.Log("Created MapAnalyzer component successfully", LogCategory.System);
                     
-                    if (component != null) {
-                        _debugger.Log("Created MapAnalyzer component successfully", LogCategory.System);
-                        return component;
+                    // Initialize the new component with proper configuration
+                    try {
+                        var config = new Dictionary<string, object>
+                        {
+                            ["useHighQuality"] = _useHighQualityAnalysis,
+                            ["confidenceThreshold"] = _detectionThreshold,
+                            ["nmsThreshold"] = _nmsThreshold,
+                            ["useGPU"] = _useGPUAcceleration,
+                            ["maxObjectsToProcess"] = _maxObjectsToProcess,
+                            ["openAIApiKey"] = _openAIApiKey,
+                            ["yoloModel"] = _yoloModel,
+                            ["sam2Model"] = _sam2Model,
+                            ["fasterRcnnModel"] = _fasterRcnnModel,
+                            ["labelsFile"] = _labelsFile,
+                            ["yoloWorker"] = _yoloWorker,
+                            ["sam2Worker"] = _sam2Worker,
+                            ["rcnnWorker"] = _rcnnWorker,
+                            ["classLabels"] = _classLabels
+                        };
+                        
+                        if (analyzer.Initialize(config)) {
+                            _debugger.Log("MapAnalyzer component initialized successfully", LogCategory.System);
+                            return analyzer;
+                        } else {
+                            _debugger.LogError("Failed to initialize new MapAnalyzer", LogCategory.System);
+                            DestroyImmediate(go);
+                            analyzer = null;
+                        }
+                    }
+                    catch (Exception ex) {
+                        _debugger.LogError($"Failed to initialize new MapAnalyzer: {ex.Message}", LogCategory.System);
+                        DestroyImmediate(go);
+                        analyzer = null;
                     }
                 }
             }
             catch (Exception ex) {
-                _debugger.LogError($"Error creating MapAnalyzer via reflection: {ex.Message}", LogCategory.System);
-            }
-            
-            // Last resort: try direct component creation
-            try {
-                GameObject go = new GameObject("MapAnalyzer");
-                go.transform.SetParent(parent.transform);
-                var component = go.AddComponent<MapAnalyzer>();
-                
-                if (component != null) {
-                    _debugger.Log("Created MapAnalyzer component via direct instantiation", LogCategory.System);
-                    return component;
-                }
-            }
-            catch (Exception ex) {
-                _debugger.LogError($"Error creating MapAnalyzer directly: {ex.Message}", LogCategory.System);
+                _debugger.LogError($"Error creating MapAnalyzer: {ex.Message}", LogCategory.System);
             }
             
             _debugger.LogError("All attempts to create MapAnalyzer failed", LogCategory.System);
@@ -705,8 +769,8 @@ namespace Traversify.Core
         }
         
         private void ConfigureComponents() {
-            // Configure MapAnalyzer
-            if (_mapAnalyzer != null) {
+            // Configure MapAnalyzer - Skip if already initialized with configuration
+            if (_mapAnalyzer != null && !_mapAnalyzer.IsInitialized) {
                 // Set debugger reference if the component has this property
                 var debuggerProp = _mapAnalyzer.GetType().GetProperty("debugger");
                 if (debuggerProp != null) debuggerProp.SetValue(_mapAnalyzer, _debugger);
@@ -732,8 +796,10 @@ namespace Traversify.Core
                 
                 // Now that models are configured, initialize them
                 _mapAnalyzer.InitializeModelsIfNeeded();
-                
-                // Log the configuration status
+            }
+            
+            // Log the MapAnalyzer status
+            if (_mapAnalyzer != null) {
                 if (_mapAnalyzer.IsInitialized)
                 {
                     _debugger.Log("✅ MapAnalyzer configured and initialized successfully", LogCategory.AI);
@@ -1181,6 +1247,10 @@ namespace Traversify.Core
         }
         
         private void UpdateProgress(float progress, string stage = null) {
+            // Ensure progress is clamped between 0 and 1
+            progress = Mathf.Clamp01(progress);
+            
+            // Update both progress indicators consistently
             if (_progressBar != null) {
                 _progressBar.value = progress;
             }
@@ -1189,8 +1259,19 @@ namespace Traversify.Core
                 _progressText.text = $"{progress * 100:F0}%";
             }
             
-            if (!string.IsNullOrEmpty(stage) && _stageText != null) {
-                _stageText.text = stage;
+            // Update stage information with more detailed context
+            if (!string.IsNullOrEmpty(stage)) {
+                if (_stageText != null) {
+                    _stageText.text = stage;
+                }
+                
+                // Log stage changes with consistent formatting
+                _debugger.Log($"Progress: {progress:P1} - {stage}", LogCategory.Process);
+            }
+            
+            // Force UI update
+            if (_progressBar != null) {
+                Canvas.ForceUpdateCanvases();
             }
         }
         
@@ -1233,7 +1314,7 @@ namespace Traversify.Core
             
             if (_waterPlane != null) {
                 DestroyImmediate(_waterPlane);
-                _waterPlane = null;
+                _waterPlane = null; 
             }
         }
         
@@ -1261,11 +1342,254 @@ namespace Traversify.Core
             }
         }
         
+        /// <summary>
+        /// Main coroutine that processes the uploaded map and generates terrain.
+        /// </summary>
+        private IEnumerator ProcessMapAndGenerateTerrain()
+        {
+            if (_uploadedMapTexture == null)
+            {
+                HandleGenerationError("No map texture uploaded");
+                yield break;
+            }
+            
+            _processingStartTime = Time.realtimeSinceStartup;
+            _performanceMetrics.Clear();
+            
+            // Execute the main logic without try-catch around yield statements
+            yield return StartCoroutine(ExecuteTerrainGenerationLogic());
+        }
+        
+        /// <summary>
+        /// Execute the terrain generation logic without try-catch around yield statements.
+        /// </summary>
+        private IEnumerator ExecuteTerrainGenerationLogic()
+        {
+            Exception caughtException = null;
+            
+            try
+            {
+                // Initialize performance tracking
+                _debugger.Log("Starting terrain generation pipeline", LogCategory.Process);
+            }
+            catch (Exception ex)
+            {
+                caughtException = ex;
+            }
+            
+            if (caughtException != null)
+            {
+                HandleGenerationError($"Failed to start terrain generation: {caughtException.Message}");
+                yield break;
+            }
+            
+            // Step 1: Analyze the map image (40% of progress)
+            UpdateProgress(0.1f, "Analyzing map image...");
+            
+            AnalysisResults analysisResults = null;
+            bool analysisComplete = false;
+            string analysisError = null;
+            
+            yield return StartCoroutine(AnalyzeImage(
+                _uploadedMapTexture,
+                (results) => {
+                    analysisResults = results;
+                    analysisComplete = true;
+                },
+                (error) => {
+                    analysisError = error;
+                    analysisComplete = true;
+                },
+                (message, progress) => {
+                    UpdateProgress(0.1f + progress * 0.3f, $"Analyzing: {message}");
+                }
+            ));
+            
+            if (!string.IsNullOrEmpty(analysisError))
+            {
+                HandleGenerationError($"Map analysis failed: {analysisError}");
+                yield break;
+            }
+            
+            if (analysisResults == null)
+            {
+                HandleGenerationError("Map analysis produced no results");
+                yield break;
+            }
+            
+            _analysisResults = analysisResults;
+            OnAnalysisComplete?.Invoke(analysisResults);
+            
+            // Step 2: Generate terrain (30% of progress)
+            UpdateProgress(0.4f, "Generating terrain...");
+            
+            var terrain = CreateTerrainFromAnalysis(analysisResults, _uploadedMapTexture);
+            if (terrain == null)
+            {
+                HandleGenerationError("Failed to generate terrain");
+                yield break;
+            }
+            
+            _generatedTerrain = terrain;
+            OnTerrainGenerated?.Invoke(terrain);
+            
+            // Step 3: Generate and place models (20% of progress)
+            UpdateProgress(0.7f, "Generating and placing models...");
+            
+            if (_modelGenerator != null)
+            {
+                List<GameObject> models = null;
+                bool modelsComplete = false;
+                string modelsError = null;
+                
+                yield return StartCoroutine(_modelGenerator.GenerateAndPlaceModels(
+                    analysisResults,
+                    terrain,
+                    (generatedModels) => {
+                        models = generatedModels;
+                        modelsComplete = true;
+                    },
+                    (error) => {
+                        modelsError = error;
+                        modelsComplete = true;
+                    },
+                    (progress) => {
+                        UpdateProgress(0.7f + progress * 0.2f, "Generating models...");
+                    }
+                ));
+                
+                if (!string.IsNullOrEmpty(modelsError))
+                {
+                    _debugger.LogWarning($"Model generation failed: {modelsError}", LogCategory.Models);
+                }
+                else if (models != null && models.Count > 0)
+                {
+                    _generatedObjects.AddRange(models);
+                    OnModelsPlaced?.Invoke(models);
+                    _debugger.Log($"Generated {models.Count} models", LogCategory.Models);
+                }
+            }
+            
+            // Step 4: Visualize segmentation (5% of progress)
+            UpdateProgress(0.9f, "Creating visualizations...");
+            
+            if (_segmentationVisualizer != null && _enableDebugVisualization)
+            {
+                yield return StartCoroutine(VisualizeSegmentationWithProgress());
+            }
+            
+            // Step 5: Save assets if enabled (5% of progress)
+            UpdateProgress(0.95f, "Saving generated assets...");
+            
+            if (_saveGeneratedAssets)
+            {
+                yield return StartCoroutine(SaveGeneratedAssets());
+            }
+            
+            // Complete - handle completion outside of try-catch
+            yield return StartCoroutine(CompleteTerrainGeneration());
+        }
+        
+        /// <summary>
+        /// Handle the completion of terrain generation.
+        /// </summary>
+        private IEnumerator CompleteTerrainGeneration()
+        {
+            try
+            {
+                // Complete
+                UpdateProgress(1.0f, "Terrain generation complete!");
+                
+                float totalTime = Time.realtimeSinceStartup - _processingStartTime;
+                _performanceMetrics["Total"] = totalTime;
+                
+                ShowCompletionDetails();
+                FocusCameraOnTerrain();
+                LogPerformanceMetrics();
+                
+                OnProcessingComplete?.Invoke();
+                OnGenerationComplete?.Invoke();
+                
+                _debugger.Log($"Terrain generation completed successfully in {totalTime:F2} seconds", LogCategory.Process);
+            }
+            catch (Exception ex)
+            {
+                HandleGenerationError($"Error during completion: {ex.Message}");
+                _debugger.LogError($"Exception in CompleteTerrainGeneration: {ex.Message}\n{ex.StackTrace}", LogCategory.Process);
+            }
+            finally
+            {
+                ResetUI();
+            }
+            
+            yield return null;
+        }
+        
         // Placeholder methods that need to be implemented in other classes
         private UnityEngine.Terrain CreateTerrainFromAnalysis(AnalysisResults results, Texture2D sourceTexture) {
-            // This should be implemented in TerrainGenerator
-            _debugger.LogWarning("CreateTerrainFromAnalysis not implemented", LogCategory.Terrain);
-            return null;
+            try 
+            {
+                _debugger.Log("Creating terrain from analysis results", LogCategory.Terrain);
+                
+                // Ensure we have a TerrainGenerator
+                if (_terrainGenerator == null) 
+                {
+                    _terrainGenerator = FindObjectOfType<TerrainGenerator>();
+                    if (_terrainGenerator == null) 
+                    {
+                        // Create TerrainGenerator if it doesn't exist
+                        GameObject terrainGenObj = new GameObject("TerrainGenerator");
+                        _terrainGenerator = terrainGenObj.AddComponent<TerrainGenerator>();
+                        _debugger.Log("Created new TerrainGenerator component", LogCategory.Terrain);
+                    }
+                }
+                
+                // Initialize TerrainGenerator if needed
+                if (!_terrainGenerator.IsInitialized) 
+                {
+                    var config = new Dictionary<string, object>
+                    {
+                        ["terrainSize"] = _terrainSize,
+                        ["terrainHeight"] = _terrainHeight,
+                        ["heightmapResolution"] = _heightmapResolution,
+                        ["detailResolution"] = _detailResolution
+                    };
+                    
+                    if (!_terrainGenerator.Initialize(config))
+                    {
+                        _debugger.LogError("Failed to initialize TerrainGenerator", LogCategory.Terrain);
+                        return null;
+                    }
+                }
+                
+                // Generate terrain using the analysis results
+                var terrain = _terrainGenerator.GenerateTerrainFromAnalysis(results, sourceTexture);
+                
+                if (terrain != null) 
+                {
+                    _debugger.Log($"Terrain created successfully: {terrain.name}", LogCategory.Terrain);
+                    
+                    // Position terrain at origin
+                    terrain.transform.position = Vector3.zero;
+                    
+                    // Add to generated objects for cleanup
+                    if (!_generatedObjects.Contains(terrain.gameObject))
+                    {
+                        _generatedObjects.Add(terrain.gameObject);
+                    }
+                }
+                else 
+                {
+                    _debugger.LogError("TerrainGenerator returned null terrain", LogCategory.Terrain);
+                }
+                
+                return terrain;
+            }
+            catch (Exception ex) 
+            {
+                _debugger.LogError($"Error in CreateTerrainFromAnalysis: {ex.Message}\nStack: {ex.StackTrace}", LogCategory.Terrain);
+                return null;
+            }
         }
         
         private void CreateWaterPlane() {
@@ -1326,717 +1650,243 @@ namespace Traversify.Core
             _debugger.Log("═════════════════════════", LogCategory.Performance);
         }
         
+        /// <summary>
+        /// Handle generation errors by logging and updating UI.
+        /// </summary>
+        private void HandleGenerationError(string errorMessage) {
+            _debugger.LogError($"Generation error: {errorMessage}", LogCategory.Process);
+            UpdateStatus($"Error: {errorMessage}", true);
+            ResetUI();
+            OnError?.Invoke(errorMessage);
+        }
+        
+        /// <summary>
+        /// Analyze image using MapAnalyzer.
+        /// </summary>
+        private IEnumerator AnalyzeImage(Texture2D mapTexture, 
+            System.Action<AnalysisResults> onComplete,
+            System.Action<string> onError,
+            System.Action<string, float> onProgress) {
+            
+            if (_mapAnalyzer == null) {
+                onError?.Invoke("MapAnalyzer not initialized");
+                yield break;
+            }
+            
+            // Verify MapAnalyzer is properly initialized before use
+            if (!_mapAnalyzer.IsInitialized) {
+                _debugger.LogWarning("MapAnalyzer not initialized, attempting to initialize now...", LogCategory.AI);
+                try {
+                    _mapAnalyzer.Initialize();
+                    if (!_mapAnalyzer.IsInitialized) {
+                        onError?.Invoke("MapAnalyzer initialization failed during analysis");
+                        yield break;
+                    }
+                    _debugger.Log("MapAnalyzer successfully initialized for analysis", LogCategory.AI);
+                }
+                catch (Exception ex) {
+                    onError?.Invoke($"MapAnalyzer initialization failed: {ex.Message}");
+                    yield break;
+                }
+            }
+            
+            yield return _mapAnalyzer.AnalyzeMapImage(mapTexture, onComplete, onError, onProgress);
+        }
+        
         #endregion
         
-        #region User Input Handling
+        #region Helper Classes
+        #endregion
         
-        private void OpenFileExplorer() {
-            _debugger.Log("OpenFileExplorer called", LogCategory.IO);
-            
-            // Set Simple File Browser properties for image files
-            FileBrowser.SetFilters(true, new FileBrowser.Filter("Image Files", ".png", ".jpg", ".jpeg", ".bmp", ".tga"));
-            FileBrowser.SetDefaultFilter(".png");
-            FileBrowser.SetExcludedExtensions(".lnk", ".tmp", ".zip", ".rar", ".exe");
-            
-            // Show load file dialog using Simple File Browser
-            StartCoroutine(ShowImageFileDialog());
-        }
+        #region UI Event Handlers
         
-        private IEnumerator ShowImageFileDialog() {
-            yield return FileBrowser.WaitForLoadDialog(FileBrowser.PickMode.Files, false, null, null, "Select Map Image", "Load");
-            
-            if (FileBrowser.Success) {
-                string path = FileBrowser.Result[0];
-                _debugger.Log($"File selected via SimpleFileBrowser: {path}", LogCategory.IO);
-                StartCoroutine(LoadImageFromPath(path));
-            }
-            else {
-                _debugger.Log("File selection cancelled", LogCategory.IO);
-                UpdateStatus("File selection cancelled");
-            }
-        }
-        
-        private void ShowDragDropInstructions() {
-            UpdateStatus("Drag and drop an image file (PNG, JPG, JPEG, BMP, TGA) onto this window to upload");
-            _debugger.Log("Showing drag-and-drop instructions", LogCategory.IO);
-            
-            // Also enable drag and drop detection if not already enabled
-            EnableDragAndDrop();
-        }
-        
-        private void EnableDragAndDrop() {
-            // This method can be expanded to enable drag and drop functionality
-            _debugger.Log("Drag and drop enabled", LogCategory.IO);
-        }
-        
-        private IEnumerator LoadImageFromPath(string path) {
-            return SafeCoroutine(InnerLoadImageFromPath(path), ex => {
-                _debugger.LogError($"Error loading image: {ex}", LogCategory.IO);
-                UpdateStatus($"Error loading image: {ex}", true);
-                if (_generateButton != null) _generateButton.interactable = false;
-                if (_mapPreviewImage != null) _mapPreviewImage.gameObject.SetActive(false);
-            });
-        }
-        
-        private IEnumerator InnerLoadImageFromPath(string path) {
-            _debugger.Log($"Loading image from: {path}", LogCategory.IO);
-            
-            // Get file info for size reporting
-            FileInfo fileInfo = new FileInfo(path);
-            float fileSizeMB = fileInfo.Length / (1024f * 1024f);
-            
-            if (fileSizeMB > 50f) {
-                _debugger.LogWarning($"Large image file ({fileSizeMB:F1} MB) may take longer to process", LogCategory.IO);
-            }
-            
-            // Load the image
-            UnityWebRequest request = UnityWebRequestTexture.GetTexture("file://" + path);
-            request.timeout = 30;
-            yield return request.SendWebRequest();
-            
-            if (request.result != UnityWebRequest.Result.Success) {
-                throw new Exception(request.error);
-            }
-            
-            _uploadedMapTexture = DownloadHandlerTexture.GetContent(request);
-            _uploadedMapTexture.name = Path.GetFileNameWithoutExtension(path);
-            
-            ValidateLoadedImage();
-            DisplayLoadedImage();
-            
-            if (_generateButton != null) _generateButton.interactable = true;
-            
-            UpdateStatus($"Map loaded: {_uploadedMapTexture.width}x{_uploadedMapTexture.height} ({fileSizeMB:F1} MB)");
-            _debugger.Log($"Image loaded successfully: {_uploadedMapTexture.width}x{_uploadedMapTexture.height} ({fileSizeMB:F1} MB)", LogCategory.IO);
-        }
-        
-        private void ValidateLoadedImage() {
-            if (_uploadedMapTexture.width < 128 || _uploadedMapTexture.height < 128) {
-                throw new Exception("Image is too small. Minimum size is 128x128 pixels.");
-            }
-            
-            if (_uploadedMapTexture.width > 8192 || _uploadedMapTexture.height > 8192) {
-                _debugger.LogWarning("Very large image detected. Processing may be slow.", LogCategory.IO);
-            }
-            
-            float aspectRatio = (float)_uploadedMapTexture.width / _uploadedMapTexture.height;
-            
-            if (aspectRatio < 0.5f || aspectRatio > 2f) {
-                _debugger.LogWarning($"Unusual aspect ratio ({aspectRatio:F2}). Results may vary.", LogCategory.IO);
-            }
-        }
-        
-        private void DisplayLoadedImage() {
-            if (_mapPreviewImage != null) {
-                _mapPreviewImage.texture = _uploadedMapTexture;
-                _mapPreviewImage.gameObject.SetActive(true);
+        /// <summary>
+        /// Cancel the current processing operation.
+        /// </summary>
+        private void CancelProcessing()
+        {
+            try
+            {
+                _isProcessing = false;
                 
-                // Adjust aspect ratio if needed
-                AspectRatioFitter aspectFitter = _mapPreviewImage.GetComponent<AspectRatioFitter>();
-                if (aspectFitter != null) {
-                    aspectFitter.aspectRatio = (float)_uploadedMapTexture.width / _uploadedMapTexture.height;
+                if (_processingCoroutine != null)
+                {
+                    StopCoroutine(_processingCoroutine);
+                    _processingCoroutine = null;
                 }
                 
-                _mapPreviewImage.SetNativeSize();
-            }
-        }
-        
-        private void StartTerrainGeneration() {
-            if (_isProcessing) {
-                _debugger.LogWarning("Terrain generation already in progress", LogCategory.User);
-                return;
-            }
-            
-            if (_uploadedMapTexture == null) {
-                _debugger.LogWarning("No map image uploaded", LogCategory.User);
-                UpdateStatus("Please upload a map image first", true);
-                return;
-            }
-            
-            SavePreferences();
-            
-            _isProcessing = true;
-            _isCancelled = false;
-            _processingStartTime = Time.realtimeSinceStartup;
-            _performanceMetrics.Clear();
-            
-            if (_generateButton != null) _generateButton.interactable = false;
-            if (_uploadButton != null) _uploadButton.interactable = false;
-            
-            _processingCoroutine = StartCoroutine(GenerateTerrainFromMap());
-        } 
-        
-        private void CancelProcessing() {
-            if (!_isProcessing) return;
-            
-            _debugger.Log("Cancelling processing...", LogCategory.User);
-            _isCancelled = true;
-            
-            if (_processingCoroutine != null) {
-                StopCoroutine(_processingCoroutine);
-                _processingCoroutine = null;
-            }
-            
-            CleanupGeneratedObjects();
-            ResetUI();
-            
-            UpdateStatus("Processing cancelled by user");
-            OnProcessingCancelled?.Invoke();
-        }
-        #endregion
-        
-        #region Processing Pipeline
-        
-        private IEnumerator GenerateTerrainFromMap() {
-            ShowLoadingPanel(true);
-            UpdateProgress(0.05f, "Starting terrain generation...");
-            _debugger.Log("Starting terrain generation process", LogCategory.Process);
-            _debugger.StartTimer("TotalGeneration");
-            
-            // Clean up any previous generated objects
-            CleanupGeneratedObjects();
-            
-            bool hasError = false;
-            string errorMessage = "";
-            
-            // Step 1: Analyze the map using AI (approx 40% progress)
-            _debugger.StartTimer("MapAnalysis");
-            
-            bool analysisComplete = false;
-            yield return StartCoroutine(AnalyzeImage(_uploadedMapTexture,
-                results => {
-                    _analysisResults = results;
-                    OnAnalysisComplete?.Invoke(results);
-                    analysisComplete = true;
-                },
-                error => {
-                    errorMessage = error;
-                    hasError = true;
-                    analysisComplete = true;
-                },
-                (stage, prog) => {
-                    // Map analysis progress updates (scaled 0.1 to 0.4 of total)
-                    float totalProg = 0.1f + (prog * 0.3f);
-                    UpdateProgress(totalProg);
-                    OnProgressUpdate?.Invoke(totalProg);
-                    
-                    // Log stage changes for debugging
-                    if (stage != null) _debugger.Log($"{stage} ({prog:P0})", LogCategory.AI);
-                }));
-            
-            while (!analysisComplete) {
-                yield return null;
-            }
-            
-            if (hasError) {
-                HandleGenerationError(errorMessage);
-                yield break;
-            }
-            
-            _performanceMetrics["MapAnalysis"] = _debugger.StopTimer("MapAnalysis");
-            
-            if (_isCancelled || _analysisResults == null) {
-                HandleGenerationError("Analysis cancelled");
-                yield break;
-            }
-            
-            // Summary of analysis results
-            string summary = $"Detected {_analysisResults.terrainFeatures.Count} terrain features and {_analysisResults.mapObjects.Count} objects";
-            UpdateStage("Analysis Complete", summary);
-            _debugger.Log("Map analysis complete: " + summary, LogCategory.Process);
-            
-            if (_detailsText != null) {
-                _detailsText.text = GenerateAnalysisDetails();
-            }
-            
-            UpdateProgress(0.4f);
-            
-            // Step 2: Generate terrain from analysis (approx 20% progress)
-            yield return StartCoroutine(GenerateTerrainStep());
-            
-            if (hasError) yield break;
-            
-            // Step 3: Create water plane if water generation is enabled (5% progress)
-            if (_generateWater) {
-                yield return StartCoroutine(GenerateWaterStep());
-            }
-            
-            // Step 4: Visualize segmentation overlays and labels (15% progress)
-            _debugger.StartTimer("Segmentation");
-            yield return StartCoroutine(VisualizeSegmentationWithProgress());
-            _performanceMetrics["Segmentation"] = _debugger.StopTimer("Segmentation");
-            
-            if (_isCancelled) {
-                HandleGenerationError("Segmentation cancelled");
-                yield break;
-            }
-            
-            // Step 5: Generate and place 3D models for detected objects (20% progress)
-            _debugger.StartTimer("ModelGeneration");
-            yield return StartCoroutine(GenerateAndPlaceModelsWithProgress());
-            _performanceMetrics["ModelGeneration"] = _debugger.StopTimer("ModelGeneration");
-            
-            if (_isCancelled) {
-                HandleGenerationError("Model generation cancelled");
-                yield break;
-            }
-            
-            // Step 6: Save generated assets (remaining progress)
-            if (_saveGeneratedAssets) {
-                yield return StartCoroutine(SaveGeneratedAssets());
-            }
-            
-            // Complete processing
-            UpdateProgress(1.0f, "Terrain generation complete!");
-            float totalTime = _debugger.StopTimer("TotalGeneration");
-            _performanceMetrics["Total"] = totalTime;
-            
-            _debugger.Log($"Terrain generation completed in {totalTime:F1} seconds", LogCategory.Process);
-            
-            ShowCompletionDetails();
-            OnTerrainGenerated?.Invoke(_generatedTerrain);
-            OnModelsPlaced?.Invoke(_generatedObjects);
-            OnProcessingComplete?.Invoke();
-            
-            FocusCameraOnTerrain();
-            
-            // Pause briefly at end
-            yield return new WaitForSeconds(2f);
-            
-            LogPerformanceMetrics();
-            ResetUI();
-        }
-        
-        private IEnumerator GenerateTerrainStep() {
-            _debugger.StartTimer("TerrainGeneration");
-            UpdateStage("Terrain Mesh Generation", "Creating heightmap...");
-            UpdateProgress(0.45f);
-            
-            bool terrainCreated = false;
-            string terrainError = "";
-            
-            // Use a separate method for terrain creation to handle errors
-            try {
-                _generatedTerrain = CreateTerrainFromAnalysis(_analysisResults, _uploadedMapTexture);
-                terrainCreated = _generatedTerrain != null;
-            }
-            catch (Exception ex) {
-                terrainError = $"Terrain generation error: {ex.Message}";
-            }
-            
-            yield return null; // Allow frame to process
-            
-            if (!terrainCreated) {
-                HandleGenerationError(string.IsNullOrEmpty(terrainError) ? "Terrain generation failed" : terrainError);
-                yield break;
-            }
-            
-            _generatedObjects.Add(_generatedTerrain.gameObject);
-            _performanceMetrics["TerrainGeneration"] = _debugger.StopTimer("TerrainGeneration");
-            
-            if (_isCancelled) {
-                HandleGenerationError("Terrain generation cancelled");
-                yield break;
-            }
-            
-            UpdateProgress(0.6f, "Terrain generation complete");
-        }
-
-        private IEnumerator GenerateWaterStep() {
-            _debugger.StartTimer("WaterCreation");
-            UpdateProgress(0.65f, "Creating water features...");
-            
-            try {
-                CreateWaterPlane();
-                _performanceMetrics["WaterCreation"] = _debugger.StopTimer("WaterCreation");
+                // Stop any active workers
+                _yoloWorker?.Dispose();
+                _sam2Worker?.Dispose();
+                _rcnnWorker?.Dispose();
                 
-                // Add water plane to generated objects list
-                if (_waterPlane != null) _generatedObjects.Add(_waterPlane);
+                // Reset UI
+                if (_loadingPanel != null) _loadingPanel.SetActive(false);
+                if (_generateButton != null) _generateButton.interactable = _uploadedMapTexture != null;
+                if (_uploadButton != null) _uploadButton.interactable = true;
+                if (_statusText != null) _statusText.text = "Processing cancelled";
+                
+                _debugger.Log("Processing cancelled by user", LogCategory.System);
             }
-            catch (Exception ex) {
-                _debugger.LogWarning($"Water creation error: {ex.Message}", LogCategory.Terrain);
+            catch (Exception ex)
+            {
+                _debugger.LogError($"Error during processing cancellation: {ex.Message}", LogCategory.System);
+            }
+        }
+        
+        /// <summary>
+        /// Open file explorer to select a map image.
+        /// </summary>
+        private void OpenFileExplorer()
+        {
+            try
+            {
+                // Set file browser properties
+                FileBrowser.SetFilters(true, new FileBrowser.Filter("Images", ".jpg", ".jpeg", ".png", ".bmp", ".tga"));
+                FileBrowser.SetDefaultFilter(".png");
+                FileBrowser.SetExcludedExtensions(".lnk", ".tmp", ".zip", ".rar", ".exe");
+                
+                // Show file browser
+                FileBrowser.ShowLoadDialog((paths) => {
+                    if (paths.Length > 0)
+                    {
+                        StartCoroutine(LoadImageFromPath(paths[0]));
+                    }
+                }, 
+                () => {
+                    _debugger.Log("File selection cancelled", LogCategory.System);
+                }, 
+                FileBrowser.PickMode.Files, 
+                false, 
+                null, 
+                null, 
+                "Select Map Image", 
+                "Load");
+            }
+            catch (Exception ex)
+            {
+                _debugger.LogError($"Error opening file explorer: {ex.Message}", LogCategory.System);
+                if (_statusText != null) _statusText.text = "Error: Could not open file browser";
+            }
+        }
+        
+        /// <summary>
+        /// Start the terrain generation process.
+        /// </summary>
+        private void StartTerrainGeneration()
+        {
+            if (_uploadedMapTexture == null)
+            {
+                _debugger.LogError("No map image uploaded", LogCategory.System);
+                if (_statusText != null) _statusText.text = "Error: No map image selected";
+                return;
+            }
+            
+            if (_isProcessing)
+            {
+                _debugger.LogError("Processing already in progress", LogCategory.System);
+                return;
+            }
+            
+            try
+            {
+                _isProcessing = true;
+                
+                // Update UI
+                if (_loadingPanel != null) _loadingPanel.SetActive(true);
+                if (_generateButton != null) _generateButton.interactable = false;
+                if (_uploadButton != null) _uploadButton.interactable = false;
+                if (_statusText != null) _statusText.text = "Starting terrain generation...";
+                
+                // Start processing coroutine
+                _processingCoroutine = StartCoroutine(ProcessMapAndGenerateTerrain());
+                
+                _debugger.Log("Terrain generation started", LogCategory.System);
+            }
+            catch (Exception ex)
+            {
+                _debugger.LogError($"Error starting terrain generation: {ex.Message}", LogCategory.System);
+                _isProcessing = false;
+                if (_statusText != null) _statusText.text = $"Error: {ex.Message}";
+                if (_loadingPanel != null) _loadingPanel.SetActive(false);
+                if (_generateButton != null) _generateButton.interactable = true;
+                if (_uploadButton != null) _uploadButton.interactable = true;
+            }
+        }
+        
+        /// <summary>
+        /// Load an image from the specified file path.
+        /// </summary>
+        private IEnumerator LoadImageFromPath(string filePath)
+        {
+            if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
+            {
+                _debugger.LogError($"File not found: {filePath}", LogCategory.System);
+                if (_statusText != null) _statusText.text = "Error: File not found";
+                yield break;
+            }
+            
+            byte[] imageData = null;
+            
+            try
+            {
+                imageData = File.ReadAllBytes(filePath);
+            }
+            catch (Exception ex)
+            {
+                _debugger.LogError($"Error reading file: {ex.Message}", LogCategory.System);
+                if (_statusText != null) _statusText.text = "Error: Could not read file";
+                yield break;
+            }
+            
+            if (imageData != null && imageData.Length > 0)
+            {
+                Texture2D texture = new Texture2D(2, 2);
+                
+                if (texture.LoadImage(imageData))
+                {
+                    // Dispose of previous texture
+                    if (_uploadedMapTexture != null)
+                    {
+                        DestroyImmediate(_uploadedMapTexture);
+                    }
+                    
+                    _uploadedMapTexture = texture;
+                    
+                    // Update UI
+                    if (_mapPreviewImage != null)
+                    {
+                        _mapPreviewImage.texture = _uploadedMapTexture;
+                    }
+                    
+                    if (_generateButton != null)
+                    {
+                        _generateButton.interactable = true;
+                    }
+                    
+                    if (_statusText != null)
+                    {
+                        _statusText.text = $"Map loaded: {Path.GetFileName(filePath)} ({_uploadedMapTexture.width}x{_uploadedMapTexture.height})";
+                    }
+                    
+                    _debugger.Log($"Successfully loaded map image: {filePath}", LogCategory.System);
+                }
+                else
+                {
+                    DestroyImmediate(texture);
+                    _debugger.LogError("Failed to load image data into texture", LogCategory.System);
+                    if (_statusText != null) _statusText.text = "Error: Invalid image format";
+                }
+            }
+            else
+            {
+                _debugger.LogError("Empty or invalid image data", LogCategory.System);
+                if (_statusText != null) _statusText.text = "Error: Invalid image data";
             }
             
             yield return null;
         }
-
-        private void HandleGenerationError(string errorMessage)
-        {
-            _debugger.LogError($"Error during terrain generation: {errorMessage}", LogCategory.Process);
-            UpdateStatus($"Error: {errorMessage}", true);
-            OnError?.Invoke(errorMessage);
-            LogPerformanceMetrics();
-            ResetUI();  
-        }
-
-        /// <summary>
-        /// Analyzes the uploaded map image using the MapAnalyzer component
-        /// </summary>
-        private IEnumerator AnalyzeImage(Texture2D texture, System.Action<AnalysisResults> onComplete, System.Action<string> onError, System.Action<string, float> onProgress)
-        {
-            if (_mapAnalyzer == null)
-            {
-                // Find or create the component container
-                GameObject componentContainer = GameObject.Find("TraversifyComponents");
-                if (componentContainer == null) {
-                    componentContainer = new GameObject("TraversifyComponents");
-                    componentContainer.transform.SetParent(transform);
-                }
-                
-                // Try to find or create MapAnalyzer if it's missing
-                _mapAnalyzer = FindOrCreateMapAnalyzer(componentContainer);
-            }
-
-            if (_mapAnalyzer == null)
-            {
-                onError?.Invoke("MapAnalyzer could not be created");
-                yield break;
-            }
-            
-            _debugger.Log("Starting image analysis with MapAnalyzer", LogCategory.AI);
-            onProgress?.Invoke("Initializing AI models...", 0.1f);
-            
-            // Ensure MapAnalyzer is properly initialized
-            try
-            {
-                _mapAnalyzer.InitializeModelsIfNeeded();
-                
-                // Check if initialization was successful
-                if (!_mapAnalyzer.IsInitialized)
-                {
-                    onError?.Invoke("MapAnalyzer models failed to initialize");
-                    yield break;
-                }
-            }
-            catch (Exception ex)
-            {
-                _debugger.LogError($"Failed to initialize MapAnalyzer models: {ex.Message}", LogCategory.AI);
-                onError?.Invoke($"Failed to initialize AI models: {ex.Message}");
-                yield break;
-            }
-            
-            onProgress?.Invoke("Running AI analysis...", 0.3f);
-            
-            // Use MapAnalyzer to analyze the image
-            bool analysisComplete = false;
-            AnalysisResults results = null;
-            string errorMessage = null;
-            
-            // Check if MapAnalyzer has the AnalyzeMapImage method
-            var analyzeMethod = _mapAnalyzer.GetType().GetMethod("AnalyzeMapImage");
-            if (analyzeMethod != null)
-            {
-                _debugger.Log("Using MapAnalyzer.AnalyzeMapImage method", LogCategory.AI);
-                
-                // Call the actual MapAnalyzer method - handle errors without try-catch around yield
-                Exception startCoroutineException = null;
-                
-                try
-                {
-                    // This should be replaced with the actual method call when implemented
-                    var analysisTask = StartCoroutine(CallMapAnalyzerAnalyzeMethod(texture, 
-                        (result) => {
-                            results = result;
-                            analysisComplete = true;
-                        },
-                        (error) => {
-                            errorMessage = error;
-                            analysisComplete = true;
-                        },
-                        onProgress));
-                }
-                catch (Exception ex)
-                {
-                    startCoroutineException = ex;
-                    analysisComplete = true;
-                }
-                
-                // Handle any exception that occurred during StartCoroutine
-                if (startCoroutineException != null)
-                {
-                    _debugger.LogError($"Error during MapAnalyzer.AnalyzeMapImage: {startCoroutineException.Message}", LogCategory.AI);
-                    errorMessage = startCoroutineException.Message;
-                    analysisComplete = true;
-                }
-                
-                // Wait for analysis to complete without try-catch around yield
-                while (!analysisComplete)
-                {
-                    yield return null;
-                }
-            }
-            else
-            {
-                _debugger.LogWarning("MapAnalyzer.AnalyzeMapImage method not found, using fallback analysis", LogCategory.AI);
-                
-                // Fallback to basic analysis until MapAnalyzer is fully implemented
-                IEnumerator fallbackCoroutine = BasicImageAnalysis(texture, 
-                    (result) => {
-                        results = result;
-                        analysisComplete = true;
-                    },
-                    (error) => {
-                        errorMessage = error;
-                        analysisComplete = true;
-                    },
-                    onProgress);
-                
-                yield return StartCoroutine(fallbackCoroutine);
-            }
-            
-            // Return results or error
-            if (!string.IsNullOrEmpty(errorMessage))
-            {
-                onError?.Invoke(errorMessage);
-            }
-            else if (results != null)
-            {
-                onComplete?.Invoke(results);
-            }
-            else
-            {
-                onError?.Invoke("Analysis completed but no results were generated");
-            }
-        }
         
-        /// <summary>
-        /// Calls MapAnalyzer.AnalyzeMapImage method via reflection
-        /// </summary>
-        private IEnumerator CallMapAnalyzerAnalyzeMethod(Texture2D texture, Action<AnalysisResults> onComplete, Action<string> onError, Action<string, float> onProgress)
-        {
-            // Try to call MapAnalyzer.AnalyzeMapImage method
-            var method = _mapAnalyzer.GetType().GetMethod("AnalyzeMapImage");
-            if (method != null)
-            {
-                // Check if it's a coroutine method
-                if (method.ReturnType == typeof(IEnumerator))
-                {
-                    IEnumerator coroutine = null;
-                    Exception invokeException = null;
-                    
-                    try
-                    {
-                        coroutine = method.Invoke(_mapAnalyzer, new object[] { texture, onComplete, onError, onProgress }) as IEnumerator;
-                    }
-                    catch (Exception ex)
-                    {
-                        invokeException = ex;
-                    }
-                    
-                    if (invokeException != null)
-                    {
-                        _debugger.LogError($"Error calling MapAnalyzer.AnalyzeMapImage: {invokeException.Message}", LogCategory.AI);
-                        onError?.Invoke($"MapAnalyzer error: {invokeException.Message}");
-                        yield break;
-                    }
-                    
-                    if (coroutine != null)
-                    {
-                        yield return StartCoroutine(coroutine);
-                    }
-                    else
-                    {
-                        onError?.Invoke("MapAnalyzer.AnalyzeMapImage returned null coroutine");
-                    }
-                }
-                else
-                {
-                    // Synchronous method - handle errors separately from yield
-                    Exception syncException = null;
-                    
-                    try
-                    {
-                        method.Invoke(_mapAnalyzer, new object[] { texture, onComplete, onError, onProgress });
-                    }
-                    catch (Exception ex)
-                    {
-                        syncException = ex;
-                    }
-                    
-                    if (syncException != null)
-                    {
-                        _debugger.LogError($"Error calling MapAnalyzer.AnalyzeMapImage: {syncException.Message}", LogCategory.AI);
-                        onError?.Invoke($"MapAnalyzer error: {syncException.Message}");
-                        yield break;
-                    }
-                    
-                    yield return null;
-                }
-            }
-            else
-            {
-                onError?.Invoke("MapAnalyzer.AnalyzeMapImage method not found");
-            }
-        }
-        
-        /// <summary>
-        /// Basic fallback image analysis when MapAnalyzer is not fully implemented
-        /// </summary>
-        private IEnumerator BasicImageAnalysis(Texture2D texture, System.Action<AnalysisResults> onComplete, System.Action<string> onError, System.Action<string, float> onProgress)
-        {
-            _debugger.Log("Running basic fallback image analysis", LogCategory.AI);
-            
-            onProgress?.Invoke("Analyzing image colors...", 0.5f);
-            yield return new WaitForSeconds(0.5f);
-            
-            onProgress?.Invoke("Detecting basic features...", 0.7f);
-            yield return new WaitForSeconds(0.3f);
-            
-            onProgress?.Invoke("Generating terrain data...", 0.9f);
-            yield return new WaitForSeconds(0.2f);
-            
-            // Create basic analysis results
-            var results = new AnalysisResults
-            {
-                mapObjects = new List<MapObject>(),
-                terrainFeatures = new List<TerrainFeature>(),
-                objectGroups = new List<ObjectGroup>(),
-                timings = new AnalysisTimings(new ProcessingTimings { totalTime = 1.0f }),
-                heightMap = CreateBasicHeightMap(texture),
-                segmentationMap = CreateBasicSegmentationMap(texture)
-            };
-            
-            // Add sample terrain features based on image analysis
-            CreateBasicTerrainFeatures(texture, results);
-            
-            // Add some sample objects
-            CreateBasicMapObjects(texture, results);
-            
-            _debugger.Log($"Basic analysis complete: {results.terrainFeatures.Count} terrain features, {results.mapObjects.Count} objects", LogCategory.AI);
-            
-            onProgress?.Invoke("Analysis complete", 1.0f);
-            onComplete?.Invoke(results);
-        }
-        
-        /// <summary>
-        /// Creates a basic heightmap from the source image
-        /// </summary>
-        private Texture2D CreateBasicHeightMap(Texture2D sourceTexture)
-        {
-            Texture2D heightMap = new Texture2D(sourceTexture.width, sourceTexture.height, TextureFormat.RGBA32, false);
-            Color[] sourcePixels = sourceTexture.GetPixels();
-            Color[] heightPixels = new Color[sourcePixels.Length];
-            
-            for (int i = 0; i < sourcePixels.Length; i++)
-            {
-                // Convert color to grayscale and use as height
-                float brightness = (sourcePixels[i].r + sourcePixels[i].g + sourcePixels[i].b) / 3f;
-                heightPixels[i] = new Color(brightness, brightness, brightness, 1f);
-            }
-            
-            heightMap.SetPixels(heightPixels);
-            heightMap.Apply();
-            return heightMap;
-        }
-        
-        /// <summary>
-        /// Creates a basic segmentation map from the source image
-        /// </summary>
-        private Texture2D CreateBasicSegmentationMap(Texture2D sourceTexture)
-        {
-            Texture2D segmentationMap = new Texture2D(sourceTexture.width, sourceTexture.height, TextureFormat.RGBA32, false);
-            Color[] sourcePixels = sourceTexture.GetPixels();
-            Color[] segmentPixels = new Color[sourcePixels.Length];
-            
-            for (int i = 0; i < sourcePixels.Length; i++)
-            {
-                Color pixel = sourcePixels[i];
-                
-                // Simple color-based segmentation
-                if (pixel.b > pixel.r && pixel.b > pixel.g)
-                {
-                    segmentPixels[i] = Color.blue; // Water
-                }
-                else if (pixel.g > pixel.r && pixel.g > pixel.b)
-                {
-                    segmentPixels[i] = Color.green; // Vegetation
-                }
-                else if (pixel.r > 0.7f && pixel.g > 0.7f && pixel.b > 0.7f)
-                {
-                    segmentPixels[i] = Color.white; // Snow/peaks
-                }
-                else
-                {
-                    segmentPixels[i] = new Color(0.6f, 0.4f, 0.2f); // Ground
-                }
-            }
-            
-            segmentationMap.SetPixels(segmentPixels);
-            segmentationMap.Apply();
-            return segmentationMap;
-        }
-        
-        /// <summary>
-        /// Creates basic terrain features from image analysis
-        /// </summary>
-        private void CreateBasicTerrainFeatures(Texture2D texture, AnalysisResults results)
-        {
-            // Add water bodies (blue areas)
-            results.terrainFeatures.Add(new TerrainFeature
-            {
-                label = "Water",
-                type = "water",
-                boundingBox = new Rect(0, 0, texture.width * 0.3f, texture.height * 0.2f),
-                segmentColor = Color.blue,
-                elevation = 0f,
-                confidence = 0.8f
-            });
-            
-            // Add mountainous terrain (brighter areas)
-            results.terrainFeatures.Add(new TerrainFeature
-            {
-                label = "Mountains",
-                type = "mountain",
-                boundingBox = new Rect(texture.width * 0.6f, texture.height * 0.7f, texture.width * 0.4f, texture.height * 0.3f),
-                segmentColor = Color.gray,
-                elevation = _terrainSize.y * 0.8f,
-                confidence = 0.7f
-            });
-            
-            // Add forested areas (green areas)
-            results.terrainFeatures.Add(new TerrainFeature
-            {
-                label = "Forest",
-                type = "forest",
-                boundingBox = new Rect(texture.width * 0.2f, texture.height * 0.3f, texture.width * 0.5f, texture.height * 0.4f),
-                segmentColor = Color.green,
-                elevation = _terrainSize.y * 0.3f,
-                confidence = 0.6f
-            });
-        }
-        
-        /// <summary>
-        /// Creates basic map objects from image analysis
-        /// </summary>
-        private void CreateBasicMapObjects(Texture2D texture, AnalysisResults results)
-        {
-            // Add some sample objects at random locations
-            for (int i = 0; i < 5; i++)
-            {
-                results.mapObjects.Add(new MapObject
-                {
-                    label = $"Structure_{i + 1}",
-                    type = "building",
-                    position = new Vector2(
-                        UnityEngine.Random.Range(0.1f, 0.9f),
-                        UnityEngine.Random.Range(0.1f, 0.9f)
-                    ),
-                    boundingBox = new Rect(
-                        UnityEngine.Random.Range(0, texture.width - 50),
-                        UnityEngine.Random.Range(0, texture.height - 50),
-                        50, 50
-                    ),
-                    segmentColor = Color.red,
-                    confidence = 0.6f,
-                    enhancedDescription = $"Building structure {i + 1}",
-                    rotation = UnityEngine.Random.Range(0f, 360f),
-                    scale = Vector3.one
-                });
-            }
-        }
-
         #endregion
     }
-    
-    // Note: IWorker interface and data structures are defined in IWorker.cs
 }

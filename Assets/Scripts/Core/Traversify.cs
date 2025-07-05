@@ -20,6 +20,7 @@ using UnityEngine;
 using UnityEngine.Events;
 using Traversify.AI;
 using Traversify.Core;
+using Traversify.Terrain;
 
 namespace Traversify {
     /// <summary>
@@ -1124,7 +1125,7 @@ namespace Traversify {
                 terrain,
                 generatedModels => models = generatedModels,
                 error => modelError = error,
-                (current, total) => onProgress?.Invoke(current / (float)total)
+                progress => onProgress?.Invoke(progress)
             );
             
             // Check for errors

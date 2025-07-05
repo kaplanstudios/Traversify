@@ -961,13 +961,13 @@
       <Project>{58d145a1-c71a-a1c5-b116-7fd60f7ce0c0}</Project>
       <Name>Assembly-CSharp</Name>
     </ProjectReference>
-    <ProjectReference Include="AiToolbox.csproj">
-      <Project>{efb5337e-767f-e4c4-1645-58a53f30335d}</Project>
-      <Name>AiToolbox</Name>
-    </ProjectReference>
     <ProjectReference Include="SimpleFileBrowser.Runtime.csproj">
       <Project>{5811658c-6e6c-642d-2eac-7db40dc00cfb}</Project>
       <Name>SimpleFileBrowser.Runtime</Name>
+    </ProjectReference>
+    <ProjectReference Include="AiToolbox.csproj">
+      <Project>{efb5337e-767f-e4c4-1645-58a53f30335d}</Project>
+      <Name>AiToolbox</Name>
     </ProjectReference>
     <ProjectReference Include="AiToolbox.Samples.csproj">
       <Project>{e29c06bf-58d1-52da-1963-ed1132c55c86}</Project>

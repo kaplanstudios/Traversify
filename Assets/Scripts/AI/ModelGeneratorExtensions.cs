@@ -233,7 +233,11 @@ namespace Traversify {
                     segmentationMap = analysis.segmentationMap
                 },
                 terrain,
-                onComplete
+                results => {
+                    // Convert ModelGenerationResult list to GameObject list
+                    var gameObjects = results?.Where(r => r.model != null).Select(r => r.model).ToList() ?? new List<GameObject>();
+                    onComplete?.Invoke(gameObjects);
+                }
             );
         }
         

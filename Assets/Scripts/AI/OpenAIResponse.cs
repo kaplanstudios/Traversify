@@ -1481,6 +1481,100 @@ namespace Traversify.AI {
             }
         }
         #endregion
+
+        #region Public Methods
+        
+        /// <summary>
+        /// Get a completion from OpenAI API with callback support.
+        /// </summary>
+        /// <param name="prompt">The prompt to send to OpenAI</param>
+        /// <param name="onSuccess">Callback for successful response</param>
+        /// <param name="onError">Callback for error response</param>
+        /// <returns>Coroutine for the request</returns>
+        public IEnumerator GetCompletion(string prompt, System.Action<string> onSuccess, System.Action<string> onError)
+        {
+            if (string.IsNullOrEmpty(prompt))
+            {
+                onError?.Invoke("Prompt cannot be empty");
+                yield break;
+            }
+
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                onError?.Invoke("API key not configured");
+                yield break;
+            }
+
+            var request = new ChatRequest
+            {
+                model = model,
+                messages = new List<ChatMessage>
+                {
+                    new ChatMessage { role = "user", content = prompt }
+                },
+                temperature = temperature,
+                max_tokens = maxTokens,
+                top_p = topP,
+                frequency_penalty = frequencyPenalty,
+                presence_penalty = presencePenalty
+            };
+
+            string jsonData = JsonUtility.ToJson(request);
+            byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(jsonData);
+
+            using (UnityWebRequest webRequest = new UnityWebRequest(endpoint, "POST"))
+            {
+                webRequest.uploadHandler = new UploadHandlerRaw(bodyRaw);
+                webRequest.downloadHandler = new DownloadHandlerBuffer();
+                webRequest.SetRequestHeader("Content-Type", "application/json");
+                webRequest.SetRequestHeader("Authorization", "Bearer " + apiKey);
+                
+                if (!string.IsNullOrEmpty(organizationId))
+                {
+                    webRequest.SetRequestHeader("OpenAI-Organization", organizationId);
+                }
+
+                yield return webRequest.SendWebRequest();
+
+                if (webRequest.result == UnityWebRequest.Result.ConnectionError || 
+                    webRequest.result == UnityWebRequest.Result.ProtocolError)
+                {
+                    onError?.Invoke($"OpenAI API Error: {webRequest.error}");
+                }
+                else
+                {
+                    try
+                    {
+                        var response = JsonUtility.FromJson<ChatResponse>(webRequest.downloadHandler.text);
+                        if (response != null && response.choices != null && response.choices.Count > 0)
+                        {
+                            string completion = response.choices[0].message.content;
+                            onSuccess?.Invoke(completion);
+                        }
+                        else
+                        {
+                            onError?.Invoke("Invalid response format from OpenAI");
+                        }
+                    }
+                    catch (System.Exception ex)
+                    {
+                        onError?.Invoke($"Failed to parse OpenAI response: {ex.Message}");
+                    }
+                }
+            }
+        }
+        
+        /// <summary>
+        /// Enhanced description generation with retry logic and caching.
+        /// </summary>
+        /// <param name="prompt">The enhancement prompt</param>
+        /// <param name="onComplete">Callback when enhancement is complete</param>
+        /// <param name="onError">Callback when enhancement fails</param>
+        /// <returns>Coroutine for the enhancement process</returns>
+        public IEnumerator EnhanceDescription(string prompt, System.Action<string> onComplete, System.Action<string> onError)
+        {
+            return GetCompletion(prompt, onComplete, onError);
+        }
+        #endregion
     }
 }
-
