@@ -1,11 +1,9 @@
 /*************************************************************************
  *  Traversify – ModelGenerator.cs                                       *
  *  Author : David Kaplan (dkaplan73)                                    *
- *  Created: 2025-06-27                                                  *
- *  Updated: 2025-07-04                                                  *
- *  Desc   : Advanced model generation and placement system for          *
- *           Traversify. Handles 3D model creation via Tripo3D API,      *
- *           optimization, instancing, and precise terrain alignment.    *
+ *  Updated: 2025-07-05                                                  *
+ *  Desc   : Advanced model generation system with optimized 3D model    *
+ *           creation, transformation, and terrain placement.            *
  *************************************************************************/
 
 using System;
@@ -14,1053 +12,1424 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using System.IO;
 using UnityEngine;
 using UnityEngine.Networking;
-using Unity.Collections;
-using Unity.Jobs;
-using Unity.Mathematics;
 using Traversify.Core;
 using Traversify.AI;
 using Traversify.Terrain;
-using Piglet;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
-namespace Traversify.AI {
+namespace Traversify.Models {
+    /// <summary>
+    /// Generates and manages 3D models from analysis results with
+    /// optimized placement, transformation, and instancing.
+    /// </summary>
     [RequireComponent(typeof(TraversifyDebugger))]
     public class ModelGenerator : TraversifyComponent {
-        #region Singleton
+        #region Singleton Pattern
+        
         private static ModelGenerator _instance;
+        
+        /// <summary>
+        /// Singleton instance of the ModelGenerator.
+        /// </summary>
         public static ModelGenerator Instance {
             get {
                 if (_instance == null) {
                     _instance = FindObjectOfType<ModelGenerator>();
                     if (_instance == null) {
-                        var go = new GameObject("ModelGenerator");
+                        GameObject go = new GameObject("ModelGenerator");
                         _instance = go.AddComponent<ModelGenerator>();
-                        DontDestroyOnLoad(go);
                     }
                 }
                 return _instance;
             }
         }
+        
         #endregion
-
-        #region Configuration
-        [Header("Tripo3D API Settings")]
-        [Tooltip("Tripo3D API key")]
-        [SerializeField] private string tripoApiKey;
+        
+        #region Inspector Fields
+        
+        [Header("Generation Settings")]
+        [Tooltip("API key for Tripo3D service")]
+        [SerializeField] private string _tripo3DApiKey = "";
+        
+        [Tooltip("Base URL for Tripo3D API")]
+        [SerializeField] private string _tripo3DBaseUrl = "https://api.tripo3d.ai/v1/";
+        
+        [Tooltip("Default model scale")]
+        [SerializeField] private Vector3 _defaultModelScale = Vector3.one;
+        
+        [Tooltip("Maximum concurrent generation requests")]
+        [Range(1, 10)]
+        [SerializeField] private int _maxConcurrentRequests = 3;
+        
+        [Tooltip("Default material for models")]
+        [SerializeField] private Material _defaultMaterial;
+        
+        [Tooltip("Prefer using cached models when possible")]
+        [SerializeField] private bool _useModelCache = true;
+        
+        [Header("Optimization Settings")]
+        [Tooltip("Use instancing for similar objects")]
+        [SerializeField] private bool _useInstancing = true;
+        
+        [Tooltip("Similarity threshold for instancing (0-1)")]
+        [Range(0f, 1f)]
+        [SerializeField] private float _similarityThreshold = 0.8f;
+        
+        [Tooltip("Automatically optimize models")]
+        [SerializeField] private bool _autoOptimizeModels = true;
+        
+        [Tooltip("Level of detail reduction for optimized models")]
+        [Range(0f, 1f)]
+        [SerializeField] private float _lodReductionFactor = 0.5f;
+        
+        [Tooltip("Maximum polygon count per model")]
+        [SerializeField] private int _maxPolyCount = 10000;
+        
+        [Header("Placement Settings")]
+        [Tooltip("Parent object for generated models")]
+        [SerializeField] private Transform _modelsParent;
+        
+        [Tooltip("Terrain reference for placement")]
+        [SerializeField] private UnityEngine.Terrain _terrain;
+        
+        [Tooltip("Y-offset for model placement")]
+        [SerializeField] private float _placementYOffset = 0f;
+        
+        [Tooltip("Place objects on terrain surface")]
+        [SerializeField] private bool _placeOnTerrain = true;
+        
+        [Tooltip("Align models with terrain normal")]
+        [SerializeField] private bool _alignWithTerrain = true;
+        
+        [Tooltip("Add colliders to models")]
+        [SerializeField] private bool _addColliders = true;
+        
+        [Header("Fallback Models")]
+        [Tooltip("Fallback models for common object types")]
+        [SerializeField] private List<FallbackModelMapping> _fallbackModels = new List<FallbackModelMapping>();
+        
+        #endregion
+        
+        #region Public Properties
         
         /// <summary>
-        /// Public property for Tripo3D API key access
+        /// API key for Tripo3D service.
         /// </summary>
-        public string Tripo3DApiKey 
-        { 
-            get => tripoApiKey; 
-            set => tripoApiKey = value; 
+        public string tripo3DApiKey {
+            get => _tripo3DApiKey;
+            set => _tripo3DApiKey = value;
         }
         
-        // OpenAI API key for description enhancement
-        public string openAIApiKey { get; set; }
+        /// <summary>
+        /// Whether to use instancing for similar objects.
+        /// </summary>
+        public bool useInstancing {
+            get => _useInstancing;
+            set => _useInstancing = value;
+        }
         
-        [Tooltip("Tripo3D API endpoint URL")]
-        [SerializeField] private string tripoApiUrl = "https://api.tripo3d.ai/v2/openapi";
+        /// <summary>
+        /// Whether to place objects on terrain surface.
+        /// </summary>
+        public bool placeOnTerrain {
+            get => _placeOnTerrain;
+            set => _placeOnTerrain = value;
+        }
         
-        [Tooltip("Maximum time to wait for model generation (seconds)")]
-        [SerializeField] private float maxGenerationTime = 300f;
+        /// <summary>
+        /// Whether to align models with terrain normal.
+        /// </summary>
+        public bool alignWithTerrain {
+            get => _alignWithTerrain;
+            set => _alignWithTerrain = value;
+        }
         
-        [Tooltip("Polling interval for checking generation status (seconds)")]
-        [SerializeField] private float pollingInterval = 5f;
-
-        [Header("Generation Settings")]
-        [Tooltip("Group similar objects into instances instead of unique models")]
-        public bool groupSimilarObjects = true;
+        /// <summary>
+        /// Whether to add colliders to models.
+        /// </summary>
+        public bool addColliders {
+            get => _addColliders;
+            set => _addColliders = value;
+        }
         
-        [Tooltip("Similarity threshold (0–1) for instancing")]
-        [Range(0f, 1f)] public float instancingSimilarity = 0.8f;
+        /// <summary>
+        /// Status of current generation.
+        /// </summary>
+        public GenerationStatus status { get; private set; }
         
-        [Tooltip("Maximum number of objects in a single group")]
-        public int maxGroupSize = 50;
+        /// <summary>
+        /// Progress of current generation (0-1).
+        /// </summary>
+        public float progress { get; private set; }
         
-        [Tooltip("Enable level of detail (LOD) for generated models")]
-        public bool useLOD = true;
+        /// <summary>
+        /// Current generation message.
+        /// </summary>
+        public string statusMessage { get; private set; }
         
-        [Tooltip("Maximum number of LOD levels to generate")]
-        [Range(1, 5)] public int maxLODLevels = 3;
-
-        [Header("Placement Settings")]
-        [Tooltip("Apply terrain adaptation to placed objects")]
-        public bool adaptToTerrain = true;
-        
-        [Tooltip("Maximum slope angle for placement (degrees)")]
-        [Range(0f, 90f)] public float maxPlacementSlope = 45f;
-        
-        [Tooltip("Enable collision detection between objects")]
-        public bool avoidCollisions = true;
-        
-        [Tooltip("Distance to maintain between objects (meters)")]
-        public float objectSpacing = 1.0f;
-        
-        [Tooltip("Object sink depth for grounding")]
-        [Range(0f, 1f)] public float groundingDepth = 0.05f;
-
-        [Header("Performance")]
-        [Tooltip("Use multithreading for model generation")]
-        public bool useMultithreading = true;
-        
-        [Tooltip("Maximum concurrent model generation requests")]
-        [Range(1, 10)] public int maxConcurrentRequests = 3;
-        
-        [Tooltip("Cache generated models for reuse")]
-        public bool cacheModels = true;
-        
-        [Tooltip("Maximum models to keep in cache")]
-        [Range(10, 100)] public int maxCacheSize = 50;
         #endregion
-
-        #region Private Fields
-        private TraversifyDebugger _debugger;
-        private ObjectPlacer _objectPlacer;
-        private Dictionary<string, GameObject> _modelCache = new Dictionary<string, GameObject>();
-        private Dictionary<string, string> _generationTaskIds = new Dictionary<string, string>();
-        private List<ModelGenerationRequest> _generationQueue = new List<ModelGenerationRequest>();
-        private bool _isGenerating = false;
-        private int _activeRequests = 0;
-        #endregion
-
+        
         #region Data Structures
         
         /// <summary>
-        /// Represents a model generation request for Tripo3D.
+        /// Model generation status.
         /// </summary>
-        [System.Serializable]
-        public class ModelGenerationRequest
-        {
-            public string objectType;
-            public string enhancedDescription;
-            public List<DetectedObject> detectedObjects;
-            public Vector3 averageScale;
-            public float confidence;
-            public string cacheKey;
-            public bool isProcessing;
-            public string taskId;
-            public GameObject generatedModel;
+        public enum GenerationStatus {
+            Idle,
+            Preparing,
+            Generating,
+            Downloading,
+            Placing,
+            Completed,
+            Failed
         }
         
         /// <summary>
-        /// Represents the result of model generation.
+        /// Model generation request data.
         /// </summary>
         [System.Serializable]
-        public class ModelGenerationResult
-        {
+        public class ModelGenerationRequest {
             public string objectType;
-            public GameObject model;
-            public Vector3 recommendedScale;
-            public bool success;
-            public string errorMessage;
+            public string description;
+            public string style;
+            public List<string> tags;
+            public int objectId;
+            public bool isManMade;
+            public Vector3 position;
+            public Vector3 rotation;
+            public Vector3 scale;
+            public Dictionary<string, object> metadata;
         }
         
         /// <summary>
-        /// Tripo3D API response structures.
+        /// Model generation response data.
         /// </summary>
         [System.Serializable]
-        public class TripoGenerationResponse
-        {
-            public int code;
+        public class ModelGenerationResponse {
+            public string modelId;
+            public string downloadUrl;
+            public string thumbnailUrl;
+            public string status;
+            public float progress;
             public string message;
-            public TripoTaskData data;
+            public int polyCount;
+            public int objectId;
+            public Dictionary<string, object> metadata;
         }
         
+        /// <summary>
+        /// Fallback model mapping.
+        /// </summary>
         [System.Serializable]
-        public class TripoTaskData
-        {
-            public string task_id;
-            public string status; // "queued", "running", "success", "failed"
-            public TripoResult result;
+        public class FallbackModelMapping {
+            public string objectType;
+            public GameObject modelPrefab;
+            public List<string> aliases = new List<string>();
         }
         
+        /// <summary>
+        /// Generated model data.
+        /// </summary>
         [System.Serializable]
-        public class TripoResult
-        {
-            public string model_url;
-            public string thumbnail_url;
+        public class GeneratedModel {
+            public int objectId;
+            public string objectType;
+            public GameObject modelObject;
+            public Vector3 originalPosition;
+            public Vector3 originalRotation;
+            public Vector3 originalScale;
+            public Mesh mesh;
+            public Material material;
+            public bool isInstance;
+            public int instanceSourceId;
+            public string modelId;
+            public Dictionary<string, object> metadata;
+        }
+        
+        /// <summary>
+        /// Object similarity group for instancing.
+        /// </summary>
+        private class SimilarityGroup {
+            public int sourceObjectId;
+            public string objectType;
+            public List<int> similarObjectIds = new List<int>();
+            public Vector3 averageScale = Vector3.one;
+            public GeneratedModel sourceModel;
         }
         
         #endregion
-
-        #region TraversifyComponent Implementation
+        #region Private Fields
         
-        protected override bool OnInitialize(object config)
-        {
-            try
-            {
+        private TraversifyDebugger _debugger;
+        private Dictionary<int, GeneratedModel> _generatedModels = new Dictionary<int, GeneratedModel>();
+        private Dictionary<string, GameObject> _modelCache = new Dictionary<string, GameObject>();
+        private Dictionary<int, ModelGenerationRequest> _pendingRequests = new Dictionary<int, ModelGenerationRequest>();
+        private Dictionary<int, ModelGenerationResponse> _pendingResponses = new Dictionary<int, ModelGenerationResponse>();
+        private List<int> _generationQueue = new List<int>();
+        private List<int> _activeGenerations = new List<int>();
+        private CancellationTokenSource _cancellationTokenSource;
+        private bool _isGenerating = false;
+        private int _processedCount = 0;
+        private int _totalCount = 0;
+        private float _startTime = 0f;
+        private List<SimilarityGroup> _similarityGroups = new List<SimilarityGroup>();
+        private GameObject _modelsContainer;
+        
+        // Events
+        public event Action<GeneratedModel> OnModelGenerated;
+        public event Action<string, float> OnGenerationProgress;
+        public event Action<string> OnGenerationComplete;
+        public event Action<string> OnGenerationFailed;
+        
+        #endregion
+        
+        #region Initialization
+        
+        protected override bool OnInitialize(object config) {
+            try {
                 _debugger = GetComponent<TraversifyDebugger>();
-                if (_debugger == null)
-                {
+                if (_debugger == null) {
                     _debugger = gameObject.AddComponent<TraversifyDebugger>();
                 }
                 
-                // Find ObjectPlacer component
-                _objectPlacer = FindObjectOfType<ObjectPlacer>();
-                if (_objectPlacer == null)
-                {
-                    var placerGO = new GameObject("ObjectPlacer");
-                    _objectPlacer = placerGO.AddComponent<ObjectPlacer>();
+                // Apply config if provided
+                if (config != null) {
+                    ApplyConfiguration(config);
                 }
                 
-                Log("ModelGenerator initialized successfully", LogCategory.System);
+                // Create models parent if not set
+                if (_modelsParent == null) {
+                    _modelsContainer = new GameObject("GeneratedModels");
+                    _modelsParent = _modelsContainer.transform;
+                }
+                
+                // Initialize status
+                status = GenerationStatus.Idle;
+                progress = 0f;
+                statusMessage = "Ready";
+                
+                Log("ModelGenerator initialized successfully", LogCategory.Models);
                 return true;
             }
-            catch (Exception ex)
-            {
-                LogError($"Failed to initialize ModelGenerator: {ex.Message}", LogCategory.System);
+            catch (Exception ex) {
+                Debug.LogError($"Failed to initialize ModelGenerator: {ex.Message}");
                 return false;
             }
         }
         
-        #endregion
-
-        #region Unity Lifecycle
-        
-        private void Awake()
-        {
-            if (_instance == null)
-            {
+        private void Awake() {
+            if (_instance == null) {
                 _instance = this;
-                if (transform.parent == null)
-                {
+                if (transform.root == gameObject) {
                     DontDestroyOnLoad(gameObject);
                 }
             }
-            else if (_instance != this)
-            {
+            else if (_instance != this) {
                 Destroy(gameObject);
+                return;
+            }
+            
+            if (!IsInitialized) {
+                Initialize();
             }
         }
         
-        #endregion
-
-        #region Main Generation Pipeline
+        private void OnDestroy() {
+            // Cancel any pending operations
+            if (_cancellationTokenSource != null) {
+                _cancellationTokenSource.Cancel();
+                _cancellationTokenSource.Dispose();
+                _cancellationTokenSource = null;
+            }
+        }
         
         /// <summary>
-        /// Generate 3D models for all detected objects using enhanced descriptions.
+        /// Apply configuration from object.
         /// </summary>
-        public IEnumerator GenerateModelsFromAnalysis(AnalysisResults analysisResults,
-            System.Action<List<ModelGenerationResult>> onComplete = null,
+        private void ApplyConfiguration(object config) {
+            // Handle dictionary config
+            if (config is Dictionary<string, object> configDict) {
+                // Extract API key
+                if (configDict.TryGetValue("tripo3DApiKey", out object apiKeyObj) && apiKeyObj is string apiKey) {
+                    _tripo3DApiKey = apiKey;
+                }
+                
+                // Extract model scale
+                if (configDict.TryGetValue("defaultModelScale", out object scaleObj) && scaleObj is Vector3 scale) {
+                    _defaultModelScale = scale;
+                }
+                
+                // Extract instancing settings
+                if (configDict.TryGetValue("useInstancing", out object instancingObj) && instancingObj is bool instancing) {
+                    _useInstancing = instancing;
+                }
+                
+                // Extract placement settings
+                if (configDict.TryGetValue("placeOnTerrain", out object placeObj) && placeObj is bool place) {
+                    _placeOnTerrain = place;
+                }
+                
+                // Extract terrain reference
+                if (configDict.TryGetValue("terrain", out object terrainObj) && terrainObj is UnityEngine.Terrain terrain) {
+                    _terrain = terrain;
+                }
+            }
+        }
+        
+        /// <summary>
+        /// Set terrain reference for placement.
+        /// </summary>
+        public void SetTerrain(UnityEngine.Terrain terrain) {
+            _terrain = terrain;
+        }
+        
+        #endregion
+        
+        #region Model Generation API
+        
+        /// <summary>
+        /// Generate models from analysis results.
+        /// </summary>
+        public IEnumerator GenerateModelsFromAnalysis(
+            AnalysisResults results,
+            System.Action<List<GeneratedModel>> onComplete = null,
             System.Action<string> onError = null,
             System.Action<string, float> onProgress = null)
         {
-            if (analysisResults == null || analysisResults.nonTerrainObjects.Count == 0)
-            {
-                onError?.Invoke("No non-terrain objects found for model generation");
+            if (results == null) {
+                onError?.Invoke("Analysis results are null");
                 yield break;
             }
             
-            _isGenerating = true;
-            
-            Log("Starting model generation from analysis results", LogCategory.AI);
-            
-            // Step 1: Group similar objects for instancing (10% progress)
-            onProgress?.Invoke("Grouping similar objects...", 0.1f);
-            var objectGroups = GroupSimilarObjects(analysisResults.nonTerrainObjects);
-            
-            // Step 2: Create generation requests (20% progress)
-            onProgress?.Invoke("Creating generation requests...", 0.2f);
-            var generationRequests = CreateGenerationRequests(objectGroups, analysisResults.enhancedDescriptions);
-            
-            // Step 3: Submit requests to Tripo3D (30% progress)
-            onProgress?.Invoke("Submitting requests to Tripo3D...", 0.3f);
-            yield return StartCoroutine(SubmitGenerationRequestsSafe(generationRequests, onProgress, onError));
-            
-            // Step 4: Wait for completion and download models (80% progress)
-            onProgress?.Invoke("Downloading generated models...", 0.8f);
-            yield return StartCoroutine(WaitForGenerationCompletionSafe(generationRequests, onProgress, onError));
-            
-            // Step 5: Place objects in scene (90% progress)
-            onProgress?.Invoke("Placing objects in scene...", 0.9f);
-            yield return StartCoroutine(PlaceGeneratedObjectsSafe(generationRequests, analysisResults, onError));
-            
-            // Step 6: Build results (100% progress)
-            onProgress?.Invoke("Finalizing model generation...", 1.0f);
-            var results = BuildGenerationResults(generationRequests);
-            
-            Log($"Model generation completed successfully with {results.Count} models", LogCategory.AI);
-            onComplete?.Invoke(results);
-            
-            _isGenerating = false;
-        }
-        
-        /// <summary>
-        /// Safe wrapper for SubmitGenerationRequests that handles exceptions.
-        /// </summary>
-        private IEnumerator SubmitGenerationRequestsSafe(List<ModelGenerationRequest> requests, 
-            System.Action<string, float> onProgress, System.Action<string> onError)
-        {
-            bool hasError = false;
-            string errorMessage = null;
-            
-            yield return StartCoroutine(ExecuteWithErrorHandling(
-                () => StartCoroutine(SubmitGenerationRequests(requests, onProgress)),
-                (error) => { hasError = true; errorMessage = error; }
-            ));
-            
-            if (hasError)
-            {
-                LogError($"Failed to submit generation requests: {errorMessage}", LogCategory.AI);
-                onError?.Invoke($"Failed to submit generation requests: {errorMessage}");
-            }
-        }
-        
-        /// <summary>
-        /// Safe wrapper for WaitForGenerationCompletion that handles exceptions.
-        /// </summary>
-        private IEnumerator WaitForGenerationCompletionSafe(List<ModelGenerationRequest> requests, 
-            System.Action<string, float> onProgress, System.Action<string> onError)
-        {
-            bool hasError = false;
-            string errorMessage = null;
-            
-            yield return StartCoroutine(ExecuteWithErrorHandling(
-                () => StartCoroutine(WaitForGenerationCompletion(requests, onProgress)),
-                (error) => { hasError = true; errorMessage = error; }
-            ));
-            
-            if (hasError)
-            {
-                LogError($"Failed during generation completion: {errorMessage}", LogCategory.AI);
-                onError?.Invoke($"Failed during generation completion: {errorMessage}");
-            }
-        }
-        
-        /// <summary>
-        /// Safe wrapper for PlaceGeneratedObjects that handles exceptions.
-        /// </summary>
-        private IEnumerator PlaceGeneratedObjectsSafe(List<ModelGenerationRequest> requests, 
-            AnalysisResults analysisResults, System.Action<string> onError)
-        {
-            bool hasError = false;
-            string errorMessage = null;
-            
-            yield return StartCoroutine(ExecuteWithErrorHandling(
-                () => StartCoroutine(PlaceGeneratedObjects(requests, analysisResults)),
-                (error) => { hasError = true; errorMessage = error; }
-            ));
-            
-            if (hasError)
-            {
-                LogError($"Failed to place generated objects: {errorMessage}", LogCategory.AI);
-                onError?.Invoke($"Failed to place generated objects: {errorMessage}");
-            }
-        }
-        
-        /// <summary>
-        /// Execute a coroutine with error handling without try-catch around yield.
-        /// </summary>
-        private IEnumerator ExecuteWithErrorHandling(System.Func<Coroutine> coroutineFunc, System.Action<string> onError)
-        {
-            Exception caughtException = null;
-            Coroutine targetCoroutine = null;
-            
-            try
-            {
-                targetCoroutine = coroutineFunc();
-            }
-            catch (Exception ex)
-            {
-                caughtException = ex;
-            }
-            
-            if (caughtException != null)
-            {
-                onError?.Invoke(caughtException.Message);
+            if (_isGenerating) {
+                onError?.Invoke("Model generation already in progress");
                 yield break;
             }
             
-            if (targetCoroutine != null)
-            {
-                yield return targetCoroutine;
-            }
-        }
-        
-        /// <summary>
-        /// Generate a single 3D model from a description.
-        /// </summary>
-        public IEnumerator GenerateModel(string objectType, string description, System.Action<GameObject> onComplete)
-        {
-            var request = new ModelGenerationRequest
-            {
-                objectType = objectType,
-                enhancedDescription = description,
-                detectedObjects = new List<DetectedObject>(),
-                averageScale = Vector3.one,
-                confidence = 1.0f,
-                cacheKey = GenerateCacheKey(objectType, description),
-                isProcessing = false,
-                taskId = null,
-                generatedModel = null
-            };
-            
-            // Check cache first
-            if (cacheModels && _modelCache.ContainsKey(request.cacheKey))
-            {
-                onComplete?.Invoke(_modelCache[request.cacheKey]);
-                yield break;
-            }
-            
-            // Submit to Tripo3D
-            yield return StartCoroutine(SubmitSingleRequest(request));
-            
-            if (!string.IsNullOrEmpty(request.taskId))
-            {
-                // Wait for completion
-                yield return StartCoroutine(WaitForSingleModelCompletion(request));
-            }
-            
-            onComplete?.Invoke(request.generatedModel);
-        }
-        
-        /// <summary>
-        /// Generate a single 3D model from a description with error callback.
-        /// </summary>
-        public IEnumerator GenerateModel(string objectType, string description, System.Action<GameObject> onComplete, System.Action<string> onError)
-        {
-            var request = new ModelGenerationRequest
-            {
-                objectType = objectType,
-                enhancedDescription = description,
-                detectedObjects = new List<DetectedObject>(),
-                averageScale = Vector3.one,
-                confidence = 1.0f,
-                cacheKey = GenerateCacheKey(objectType, description),
-                isProcessing = false,
-                taskId = null,
-                generatedModel = null
-            };
-            
-            // Check cache first
-            if (cacheModels && _modelCache.ContainsKey(request.cacheKey))
-            {
-                onComplete?.Invoke(_modelCache[request.cacheKey]);
-                yield break;
-            }
-            
-            // Submit to Tripo3D
-            yield return StartCoroutine(SubmitSingleRequestWithErrorHandling(request, onError));
-            
-            if (!string.IsNullOrEmpty(request.taskId))
-            {
-                // Wait for completion
-                yield return StartCoroutine(WaitForSingleModelCompletionWithErrorHandling(request, onError));
-            }
-            
-            onComplete?.Invoke(request.generatedModel);
-        }
-        
-        /// <summary>
-        /// Submit a single generation request with error handling.
-        /// </summary>
-        private IEnumerator SubmitSingleRequestWithErrorHandling(ModelGenerationRequest request, System.Action<string> onError)
-        {
-            if (string.IsNullOrEmpty(tripoApiKey))
-            {
-                onError?.Invoke("Tripo3D API key not set");
-                yield break;
-            }
-            
-            // Prepare request data
-            var requestData = new {
-                type = "text_to_model",
-                prompt = request.enhancedDescription,
-                model_version = "v2.0-20240919",
-                face_limit = 10000,
-                texture_resolution = 1024
-            };
-            
-            string jsonData = JsonUtility.ToJson(requestData);
-            
-            using (var webRequest = new UnityWebRequest($"{tripoApiUrl}/task", "POST"))
-            {
-                webRequest.uploadHandler = new UploadHandlerRaw(System.Text.Encoding.UTF8.GetBytes(jsonData));
-                webRequest.downloadHandler = new DownloadHandlerBuffer();
-                webRequest.SetRequestHeader("Content-Type", "application/json");
-                webRequest.SetRequestHeader("Authorization", $"Bearer {tripoApiKey}");
+            try {
+                _isGenerating = true;
+                status = GenerationStatus.Preparing;
+                progress = 0f;
+                statusMessage = "Preparing for model generation";
+                onProgress?.Invoke(statusMessage, progress);
                 
-                yield return webRequest.SendWebRequest();
+                _startTime = Time.realtimeSinceStartup;
                 
-                if (webRequest.result == UnityWebRequest.Result.Success)
-                {
-                    try
-                    {
-                        var response = JsonUtility.FromJson<TripoGenerationResponse>(webRequest.downloadHandler.text);
-                        
-                        if (response.code == 0 && response.data != null)
-                        {
-                            request.taskId = response.data.task_id;
-                            request.isProcessing = true;
-                            Log($"Submitted generation request for {request.objectType}, task ID: {request.taskId}", LogCategory.AI);
-                        }
-                        else
-                        {
-                            string errorMsg = $"Tripo3D API error: {response.message}";
-                            LogError(errorMsg, LogCategory.AI);
-                            onError?.Invoke(errorMsg);
+                // Reset state
+                _generatedModels.Clear();
+                _pendingRequests.Clear();
+                _pendingResponses.Clear();
+                _generationQueue.Clear();
+                _activeGenerations.Clear();
+                _processedCount = 0;
+                
+                // Create new cancellation token
+                if (_cancellationTokenSource != null) {
+                    _cancellationTokenSource.Cancel();
+                    _cancellationTokenSource.Dispose();
+                }
+                _cancellationTokenSource = new CancellationTokenSource();
+                
+                // Process objects for model generation
+                List<MapObject> objectsToGenerate = new List<MapObject>();
+                
+                if (results.mapObjects != null && results.mapObjects.Count > 0) {
+                    // Use map objects if available
+                    objectsToGenerate.AddRange(results.mapObjects);
+                }
+                else if (results.detectedObjects != null && results.detectedObjects.Count > 0) {
+                    // Convert detected objects to map objects
+                    foreach (var obj in results.detectedObjects) {
+                        if (!obj.isTerrain) {
+                            MapObject mapObj = ConvertDetectedObjectToMapObject(obj);
+                            objectsToGenerate.Add(mapObj);
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        string errorMsg = $"Failed to parse Tripo3D response: {ex.Message}";
-                        LogError(errorMsg, LogCategory.AI);
-                        onError?.Invoke(errorMsg);
+                }
+                
+                _totalCount = objectsToGenerate.Count;
+                
+                if (_totalCount == 0) {
+                    _isGenerating = false;
+                    status = GenerationStatus.Completed;
+                    progress = 1f;
+                    statusMessage = "No objects to generate";
+                    onProgress?.Invoke(statusMessage, progress);
+                    onComplete?.Invoke(new List<GeneratedModel>());
+                    yield break;
+                }
+                
+                Log($"Preparing to generate {_totalCount} models", LogCategory.Models);
+                
+                // Group similar objects if instancing is enabled
+                if (_useInstancing) {
+                    yield return StartCoroutine(GroupSimilarObjects(objectsToGenerate));
+                    onProgress?.Invoke("Grouped similar objects for instancing", 0.1f);
+                }
+                else {
+                    // Create generation requests for all objects
+                    foreach (var obj in objectsToGenerate) {
+                        CreateGenerationRequest(obj);
                     }
                 }
-                else
-                {
-                    string errorMsg = $"Tripo3D request failed: {webRequest.error}";
-                    LogError(errorMsg, LogCategory.AI);
-                    onError?.Invoke(errorMsg);
+                
+                // Start generation process
+                status = GenerationStatus.Generating;
+                progress = 0.1f;
+                statusMessage = "Generating models";
+                onProgress?.Invoke(statusMessage, progress);
+                
+                // Process generation queue
+                yield return StartCoroutine(ProcessGenerationQueue(onProgress));
+                
+                // Check if generation was canceled
+                if (_cancellationTokenSource.IsCancellationRequested) {
+                    _isGenerating = false;
+                    status = GenerationStatus.Failed;
+                    progress = 0f;
+                    statusMessage = "Model generation canceled";
+                    onProgress?.Invoke(statusMessage, progress);
+                    onError?.Invoke("Model generation was canceled");
+                    yield break;
                 }
+                
+                // Place models on terrain
+                status = GenerationStatus.Placing;
+                progress = 0.9f;
+                statusMessage = "Placing models on terrain";
+                onProgress?.Invoke(statusMessage, progress);
+                
+                PlaceModelsOnTerrain();
+                
+                // Complete generation
+                float totalTime = Time.realtimeSinceStartup - _startTime;
+                _isGenerating = false;
+                status = GenerationStatus.Completed;
+                progress = 1f;
+                statusMessage = $"Generated {_generatedModels.Count} models in {totalTime:F2} seconds";
+                
+                Log(statusMessage, LogCategory.Models);
+                onProgress?.Invoke(statusMessage, progress);
+                
+                // Return generated models
+                List<GeneratedModel> generatedModels = _generatedModels.Values.ToList();
+                onComplete?.Invoke(generatedModels);
+                
+                // Trigger event
+                OnGenerationComplete?.Invoke(statusMessage);
+            }
+            catch (Exception ex) {
+                _isGenerating = false;
+                status = GenerationStatus.Failed;
+                progress = 0f;
+                statusMessage = $"Error during model generation: {ex.Message}";
+                
+                LogError(statusMessage, LogCategory.Models);
+                onProgress?.Invoke(statusMessage, progress);
+                onError?.Invoke(statusMessage);
+                
+                // Trigger event
+                OnGenerationFailed?.Invoke(statusMessage);
             }
         }
-        
         /// <summary>
-        /// Wait for a single model generation to complete with error handling.
+        /// Generate a single model.
         /// </summary>
-        private IEnumerator WaitForSingleModelCompletionWithErrorHandling(ModelGenerationRequest request, System.Action<string> onError)
+        public IEnumerator GenerateModel(
+            ModelGenerationRequest request,
+            System.Action<GeneratedModel> onComplete = null,
+            System.Action<string> onError = null)
         {
-            float startTime = Time.time;
-            request.isProcessing = true;
-            
-            while (request.isProcessing && (Time.time - startTime) < maxGenerationTime)
-            {
-                yield return StartCoroutine(CheckTaskStatusWithErrorHandling(request, onError));
-                yield return new WaitForSeconds(pollingInterval);
-            }
-            
-            if (request.isProcessing)
-            {
-                string errorMsg = $"Model generation timed out for {request.objectType}";
-                LogError(errorMsg, LogCategory.AI);
-                onError?.Invoke(errorMsg);
-                request.isProcessing = false;
-            }
-        }
-        
-        /// <summary>
-        /// Check the status of a generation task with error handling.
-        /// </summary>
-        private IEnumerator CheckTaskStatusWithErrorHandling(ModelGenerationRequest request, System.Action<string> onError)
-        {
-            if (string.IsNullOrEmpty(request.taskId))
-            {
+            if (string.IsNullOrEmpty(_tripo3DApiKey)) {
+                onError?.Invoke("Tripo3D API key not provided");
                 yield break;
             }
             
-            using (var webRequest = UnityWebRequest.Get($"{tripoApiUrl}/task/{request.taskId}"))
-            {
-                webRequest.SetRequestHeader("Authorization", $"Bearer {tripoApiKey}");
+            try {
+                // Create generation request
+                int objectId = request.objectId;
+                _pendingRequests[objectId] = request;
                 
-                yield return webRequest.SendWebRequest();
+                // Try to use fallback model first
+                GameObject fallbackModel = GetFallbackModel(request.objectType);
+                if (fallbackModel != null) {
+                    GeneratedModel model = CreateModelFromFallback(request, fallbackModel);
+                    
+                    // Apply transformations
+                    TransformModel(model, request.position, request.rotation, request.scale);
+                    
+                    // Add to generated models
+                    _generatedModels[objectId] = model;
+                    
+                    // Complete
+                    onComplete?.Invoke(model);
+                    yield break;
+                }
                 
-                if (webRequest.result == UnityWebRequest.Result.Success)
-                {
-                    var responseText = webRequest.downloadHandler.text;
-                    yield return StartCoroutine(ProcessTaskStatusResponseWithErrorHandling(request, responseText, onError));
-                }
-                else
-                {
-                    string errorMsg = $"Failed to check task status: {webRequest.error}";
-                    LogError(errorMsg, LogCategory.AI);
-                    onError?.Invoke(errorMsg);
-                }
-            }
-        }
-        
-        /// <summary>
-        /// Process the task status response with error handling.
-        /// </summary>
-        private IEnumerator ProcessTaskStatusResponseWithErrorHandling(ModelGenerationRequest request, string responseText, System.Action<string> onError)
-        {
-            var response = ParseTaskStatusResponse(responseText);
-            
-            if (response != null && response.code == 0 && response.data != null)
-            {
-                switch (response.data.status)
-                {
-                    case "success":
-                        if (response.data.result != null && !string.IsNullOrEmpty(response.data.result.model_url))
-                        {
-                            yield return StartCoroutine(DownloadModelWithErrorHandling(request, response.data.result.model_url, onError));
+                // Send request to Tripo3D
+                string requestJson = PrepareGenerationRequestJson(request);
+                
+                using (UnityWebRequest webRequest = new UnityWebRequest($"{_tripo3DBaseUrl}models", "POST")) {
+                    byte[] jsonBytes = System.Text.Encoding.UTF8.GetBytes(requestJson);
+                    webRequest.uploadHandler = new UploadHandlerRaw(jsonBytes);
+                    webRequest.downloadHandler = new DownloadHandlerBuffer();
+                    webRequest.SetRequestHeader("Content-Type", "application/json");
+                    webRequest.SetRequestHeader("Authorization", $"Bearer {_tripo3DApiKey}");
+                    
+                    yield return webRequest.SendWebRequest();
+                    
+                    if (webRequest.result != UnityWebRequest.Result.Success) {
+                        throw new Exception($"API request failed: {webRequest.error}");
+                    }
+                    
+                    // Parse response
+                    string responseJson = webRequest.downloadHandler.text;
+                    ModelGenerationResponse response = JsonConvert.DeserializeObject<ModelGenerationResponse>(responseJson);
+                    
+                    if (response == null) {
+                        throw new Exception("Failed to parse API response");
+                    }
+                    
+                    // Store response
+                    response.objectId = objectId;
+                    _pendingResponses[objectId] = response;
+                    
+                    // Wait for model generation to complete
+                    while (response.status != "completed") {
+                        if (response.status == "failed") {
+                            throw new Exception($"Model generation failed: {response.message}");
                         }
-                        request.isProcessing = false;
-                        break;
                         
-                    case "failed":
-                        string errorMsg = $"Model generation failed for {request.objectType}";
-                        LogError(errorMsg, LogCategory.AI);
-                        onError?.Invoke(errorMsg);
-                        request.isProcessing = false;
-                        break;
+                        // Check status
+                        yield return StartCoroutine(CheckGenerationStatus(objectId));
                         
-                    case "queued":
-                    case "running":
-                        // Still processing, continue waiting
-                        break;
+                        // Get updated response
+                        response = _pendingResponses[objectId];
+                        
+                        // Wait before checking again
+                        yield return new WaitForSeconds(2f);
+                    }
+                    
+                    // Download model
+                    GameObject modelObject = null;
+                    yield return StartCoroutine(DownloadModel(response.downloadUrl, (GameObject obj) => {
+                        modelObject = obj;
+                    }, onError));
+                    
+                    if (modelObject == null) {
+                        throw new Exception("Failed to download model");
+                    }
+                    
+                    // Create generated model
+                    GeneratedModel generatedModel = new GeneratedModel {
+                        objectId = objectId,
+                        objectType = request.objectType,
+                        modelObject = modelObject,
+                        originalPosition = request.position,
+                        originalRotation = request.rotation,
+                        originalScale = request.scale,
+                        mesh = modelObject.GetComponentInChildren<MeshFilter>()?.sharedMesh,
+                        material = modelObject.GetComponentInChildren<MeshRenderer>()?.sharedMaterial,
+                        isInstance = false,
+                        instanceSourceId = -1,
+                        modelId = response.modelId,
+                        metadata = request.metadata
+                    };
+                    
+                    // Apply transformations
+                    TransformModel(generatedModel, request.position, request.rotation, request.scale);
+                    
+                    // Add to generated models
+                    _generatedModels[objectId] = generatedModel;
+                    
+                    // Add to model cache
+                    if (_useModelCache) {
+                        _modelCache[response.modelId] = modelObject;
+                    }
+                    
+                    // Complete
+                    onComplete?.Invoke(generatedModel);
                 }
             }
-            else
-            {
-                string errorMsg = "Invalid response from Tripo3D API";
-                LogError(errorMsg, LogCategory.AI);
-                onError?.Invoke(errorMsg);
+            catch (Exception ex) {
+                LogError($"Error generating model: {ex.Message}", LogCategory.Models);
+                onError?.Invoke($"Model generation failed: {ex.Message}");
             }
         }
         
         /// <summary>
-        /// Download a generated model with error handling.
+        /// Clear all generated models.
         /// </summary>
-        private IEnumerator DownloadModelWithErrorHandling(ModelGenerationRequest request, string modelUrl, System.Action<string> onError)
-        {
-            using (var webRequest = UnityWebRequest.Get(modelUrl))
-            {
-                yield return webRequest.SendWebRequest();
+        public void ClearGeneratedModels() {
+            // Destroy model objects
+            foreach (var model in _generatedModels.Values) {
+                if (model.modelObject != null && !model.isInstance) {
+                    Destroy(model.modelObject);
+                }
+            }
+            
+            // Clear collections
+            _generatedModels.Clear();
+            _pendingRequests.Clear();
+            _pendingResponses.Clear();
+            _generationQueue.Clear();
+            _activeGenerations.Clear();
+            _similarityGroups.Clear();
+            
+            // Reset state
+            _processedCount = 0;
+            _totalCount = 0;
+            status = GenerationStatus.Idle;
+            progress = 0f;
+            statusMessage = "Ready";
+            
+            Log("Cleared all generated models", LogCategory.Models);
+        }
+        
+        #endregion
+        
+        #region Model Generation Process
+        
+        /// <summary>
+        /// Group similar objects for instancing.
+        /// </summary>
+        private IEnumerator GroupSimilarObjects(List<MapObject> objects) {
+            _similarityGroups.Clear();
+            
+            // First pass: Create initial groups based on object type
+            Dictionary<string, List<MapObject>> typeGroups = new Dictionary<string, List<MapObject>>();
+            
+            foreach (var obj in objects) {
+                string objType = obj.objectType.ToLower();
                 
-                if (webRequest.result == UnityWebRequest.Result.Success)
-                {
-                    var modelData = webRequest.downloadHandler.data;
-                    yield return StartCoroutine(ProcessDownloadedModelWithErrorHandling(request, modelData, onError));
+                if (!typeGroups.ContainsKey(objType)) {
+                    typeGroups[objType] = new List<MapObject>();
                 }
-                else
-                {
-                    string errorMsg = $"Failed to download model from {modelUrl}: {webRequest.error}";
-                    LogError(errorMsg, LogCategory.AI);
-                    onError?.Invoke(errorMsg);
+                
+                typeGroups[objType].Add(obj);
+            }
+            
+            // Second pass: Create similarity groups
+            foreach (var typeGroup in typeGroups) {
+                if (typeGroup.Value.Count <= 1) {
+                    // Only one object of this type, no instancing needed
+                    var obj = typeGroup.Value[0];
+                    CreateGenerationRequest(obj);
+                    continue;
                 }
-            }
-        }
-        
-        /// <summary>
-        /// Process downloaded model data with error handling.
-        /// </summary>
-        private IEnumerator ProcessDownloadedModelWithErrorHandling(ModelGenerationRequest request, byte[] modelData, System.Action<string> onError)
-        {
-            var filePath = SaveModelToFile(request, modelData);
-            if (!string.IsNullOrEmpty(filePath))
-            {
-                yield return StartCoroutine(LoadModelFromFileWithErrorHandling(request, filePath, onError));
-                Log($"Downloaded and loaded model for {request.objectType}", LogCategory.AI);
-            }
-            else
-            {
-                onError?.Invoke("Failed to save model to file");
-            }
-        }
-        
-        /// <summary>
-        /// Load a model from file with error handling.
-        /// </summary>
-        private IEnumerator LoadModelFromFileWithErrorHandling(ModelGenerationRequest request, string filePath, System.Action<string> onError)
-        {
-            bool loadComplete = false;
-            GameObject loadedModel = null;
-            string errorMessage = null;
-            
-            var loadResult = LoadModelWithPiglet(filePath, 
-                (model) => { loadedModel = model; loadComplete = true; },
-                (error) => { errorMessage = error; loadComplete = true; });
-            
-            if (!loadResult)
-            {
-                errorMessage = "Failed to initialize Piglet import";
-                loadComplete = true;
-            }
-            
-            // Wait for import to complete
-            while (!loadComplete)
-            {
+                
+                // Check descriptions for similarity
+                List<List<MapObject>> similarGroups = new List<List<MapObject>>();
+                
+                foreach (var obj in typeGroup.Value) {
+                    bool addedToGroup = false;
+                    
+                    // Try to add to existing group
+                    foreach (var group in similarGroups) {
+                        if (group.Count > 0 && IsSimilarObject(obj, group[0])) {
+                            group.Add(obj);
+                            addedToGroup = true;
+                            break;
+                        }
+                    }
+                    
+                    // Create new group if not added
+                    if (!addedToGroup) {
+                        similarGroups.Add(new List<MapObject> { obj });
+                    }
+                }
+                
+                // Create generation requests for each group
+                foreach (var group in similarGroups) {
+                    if (group.Count == 1) {
+                        // Single object
+                        CreateGenerationRequest(group[0]);
+                    }
+                    else {
+                        // Create similarity group for instancing
+                        SimilarityGroup simGroup = new SimilarityGroup {
+                            sourceObjectId = group[0].id,
+                            objectType = group[0].objectType
+                        };
+                        
+                        // Calculate average scale
+                        Vector3 totalScale = Vector3.zero;
+                        foreach (var obj in group) {
+                            totalScale += obj.scale;
+                            simGroup.similarObjectIds.Add(obj.id);
+                        }
+                        simGroup.averageScale = totalScale / group.Count;
+                        
+                        // Create generation request for source object
+                        CreateGenerationRequest(group[0], simGroup.averageScale);
+                        
+                        // Add to similarity groups
+                        _similarityGroups.Add(simGroup);
+                    }
+                }
+                
+                // Yield to prevent blocking
                 yield return null;
             }
             
-            if (!string.IsNullOrEmpty(errorMessage))
-            {
-                LogError($"Failed to load model: {errorMessage}", LogCategory.AI);
-                onError?.Invoke(errorMessage);
-            }
-            else if (loadedModel != null)
-            {
-                request.generatedModel = loadedModel;
-                
-                // Add to cache
-                if (cacheModels && !_modelCache.ContainsKey(request.cacheKey))
-                {
-                    _modelCache[request.cacheKey] = loadedModel;
-                    
-                    // Manage cache size
-                    if (_modelCache.Count > maxCacheSize)
-                    {
-                        var oldestKey = _modelCache.Keys.First();
-                        Destroy(_modelCache[oldestKey]);
-                        _modelCache.Remove(oldestKey);
-                    }
-                }
-            }
-            else
-            {
-                onError?.Invoke("Model loading completed but no model was created");
-            }
+            Log($"Created {_pendingRequests.Count} generation requests from {objects.Count} objects", LogCategory.Models);
+            Log($"Using {_similarityGroups.Count} similarity groups for instancing", LogCategory.Models);
+            
+            // Add all requests to generation queue
+            _generationQueue.AddRange(_pendingRequests.Keys);
         }
         
         /// <summary>
-        /// Load model using Piglet with proper error handling.
+        /// Process the generation queue.
         /// </summary>
-        private bool LoadModelWithPiglet(string filePath, System.Action<GameObject> onSuccess, System.Action<string> onError)
-        {
-            try
-            {
-                // Use Piglet's static import method
-                var gltfImportTask = RuntimeGltfImporter.GetImportTask(filePath);
-                
-                gltfImportTask.OnCompleted = (gameObject) => onSuccess?.Invoke(gameObject);
-                gltfImportTask.OnException = (exception) => onError?.Invoke(exception.Message);
-                
-                return true;
-            }
-            catch (Exception ex)
-            {
-                onError?.Invoke($"Failed to initialize Piglet import: {ex.Message}");
-                return false;
-            }
-        }
-        
-        #endregion
-
-        #region Object Placement
-        
-        /// <summary>
-        /// Place generated objects in the scene using ObjectPlacer.
-        /// </summary>
-        private IEnumerator PlaceGeneratedObjects(List<ModelGenerationRequest> requests, AnalysisResults analysisResults)
-        {
-            if (_objectPlacer == null)
-            {
-                LogError("ObjectPlacer not found", LogCategory.AI);
+        private IEnumerator ProcessGenerationQueue(System.Action<string, float> onProgress = null) {
+            if (_generationQueue.Count == 0) {
                 yield break;
             }
             
-            foreach (var request in requests)
-            {
-                if (request.generatedModel != null)
-                {
-                    yield return StartCoroutine(PlaceObjectGroup(request, analysisResults));
+            // Process queue
+            while (_generationQueue.Count > 0 || _activeGenerations.Count > 0) {
+                // Start new generations up to max concurrent limit
+                while (_generationQueue.Count > 0 && _activeGenerations.Count < _maxConcurrentRequests) {
+                    int objectId = _generationQueue[0];
+                    _generationQueue.RemoveAt(0);
+                    
+                    if (_pendingRequests.TryGetValue(objectId, out ModelGenerationRequest request)) {
+                        // Add to active generations
+                        _activeGenerations.Add(objectId);
+                        
+                        // Start generation
+                        StartCoroutine(GenerateModelAndInstance(request, (GeneratedModel model) => {
+                            // Add to generated models
+                            _generatedModels[objectId] = model;
+                            
+                            // Remove from active generations
+                            _activeGenerations.Remove(objectId);
+                            
+                            // Update progress
+                            _processedCount++;
+                            UpdateProgress(onProgress);
+                            
+                            // Create instances if this is a source object
+                            if (_useInstancing) {
+                                var simGroup = _similarityGroups.Find(g => g.sourceObjectId == objectId);
+                                if (simGroup != null) {
+                                    simGroup.sourceModel = model;
+                                    CreateInstancesForGroup(simGroup);
+                                }
+                            }
+                            
+                            // Trigger event
+                            OnModelGenerated?.Invoke(model);
+                        }));
+                    }
                 }
                 
-                yield return null; // Prevent frame drops
+                // Wait before checking again
+                yield return new WaitForSeconds(0.2f);
+                
+                // Check if canceled
+                if (_cancellationTokenSource.IsCancellationRequested) {
+                    break;
+                }
+            }
+        }
+        /// <summary>
+        /// Generate model and handle instancing.
+        /// </summary>
+        private IEnumerator GenerateModelAndInstance(ModelGenerationRequest request, System.Action<GeneratedModel> onComplete) {
+            GeneratedModel model = null;
+            
+            // Try to use fallback model first
+            GameObject fallbackModel = GetFallbackModel(request.objectType);
+            if (fallbackModel != null) {
+                model = CreateModelFromFallback(request, fallbackModel);
+            }
+            else {
+                // Try to use existing model from cache
+                bool usedCache = false;
+                if (_useModelCache) {
+                    usedCache = TryUseModelFromCache(request, (GeneratedModel cachedModel) => {
+                        model = cachedModel;
+                    });
+                }
+                
+                // Generate new model if not using cache
+                if (!usedCache) {
+                    // Skip model generation if API key is not provided
+                    if (string.IsNullOrEmpty(_tripo3DApiKey)) {
+                        model = CreateDefaultModel(request);
+                    }
+                    else {
+                        // Generate model using Tripo3D
+                        yield return StartCoroutine(GenerateModelWithTripo3D(request, (GeneratedModel generatedModel) => {
+                            model = generatedModel;
+                        }, (string error) => {
+                            LogWarning($"Error generating model: {error}. Using default model.", LogCategory.Models);
+                            model = CreateDefaultModel(request);
+                        }));
+                    }
+                }
+            }
+            
+            // Apply transformations
+            if (model != null) {
+                TransformModel(model, request.position, request.rotation, request.scale);
+                
+                // Add collider if needed
+                if (_addColliders && model.modelObject != null) {
+                    AddColliderToModel(model.modelObject);
+                }
+                
+                // Complete
+                onComplete?.Invoke(model);
+            }
+            else {
+                // Fallback to default model
+                model = CreateDefaultModel(request);
+                TransformModel(model, request.position, request.rotation, request.scale);
+                onComplete?.Invoke(model);
             }
         }
         
         /// <summary>
-        /// Place a group of objects using the generated model.
+        /// Generate model using Tripo3D API.
         /// </summary>
-        private IEnumerator PlaceObjectGroup(ModelGenerationRequest request, AnalysisResults analysisResults)
+        private IEnumerator GenerateModelWithTripo3D(
+            ModelGenerationRequest request,
+            System.Action<GeneratedModel> onComplete,
+            System.Action<string> onError)
         {
-            foreach (var detectedObject in request.detectedObjects)
-            {
-                // Calculate world position from image coordinates
-                Vector3 worldPosition = ConvertImageToWorldPosition(
-                    detectedObject.boundingBox.center,
-                    analysisResults.sourceImage,
-                    analysisResults.terrainSize
-                );
+            try {
+                int objectId = request.objectId;
                 
-                // Create placement data
-                var placementData = new ObjectPlacer.PlacementData
-                {
-                    prefab = request.generatedModel,
-                    position = worldPosition,
-                    rotation = Quaternion.identity,
-                    scale = request.averageScale,
-                    adaptToTerrain = adaptToTerrain,
-                    avoidCollisions = avoidCollisions,
-                    objectSpacing = objectSpacing,
-                    maxSlope = maxPlacementSlope,
-                    groundingDepth = groundingDepth
-                };
+                // Send request to Tripo3D
+                string requestJson = PrepareGenerationRequestJson(request);
                 
-                // Place object
-                yield return StartCoroutine(_objectPlacer.PlaceObject(placementData));
+                using (UnityWebRequest webRequest = new UnityWebRequest($"{_tripo3DBaseUrl}models", "POST")) {
+                    byte[] jsonBytes = System.Text.Encoding.UTF8.GetBytes(requestJson);
+                    webRequest.uploadHandler = new UploadHandlerRaw(jsonBytes);
+                    webRequest.downloadHandler = new DownloadHandlerBuffer();
+                    webRequest.SetRequestHeader("Content-Type", "application/json");
+                    webRequest.SetRequestHeader("Authorization", $"Bearer {_tripo3DApiKey}");
+                    
+                    yield return webRequest.SendWebRequest();
+                    
+                    if (webRequest.result != UnityWebRequest.Result.Success) {
+                        throw new Exception($"API request failed: {webRequest.error}");
+                    }
+                    
+                    // Parse response
+                    string responseJson = webRequest.downloadHandler.text;
+                    ModelGenerationResponse response = JsonConvert.DeserializeObject<ModelGenerationResponse>(responseJson);
+                    
+                    if (response == null) {
+                        throw new Exception("Failed to parse API response");
+                    }
+                    
+                    // Store response
+                    response.objectId = objectId;
+                    _pendingResponses[objectId] = response;
+                    
+                    // Wait for model generation to complete
+                    while (response.status != "completed") {
+                        if (response.status == "failed") {
+                            throw new Exception($"Model generation failed: {response.message}");
+                        }
+                        
+                        // Check status
+                        yield return StartCoroutine(CheckGenerationStatus(objectId));
+                        
+                        // Get updated response
+                        response = _pendingResponses[objectId];
+                        
+                        // Wait before checking again
+                        yield return new WaitForSeconds(2f);
+                        
+                        // Check if canceled
+                        if (_cancellationTokenSource.IsCancellationRequested) {
+                            throw new Exception("Model generation was canceled");
+                        }
+                    }
+                    
+                    // Download model
+                    GameObject modelObject = null;
+                    status = GenerationStatus.Downloading;
+                    yield return StartCoroutine(DownloadModel(response.downloadUrl, (GameObject obj) => {
+                        modelObject = obj;
+                    }, onError));
+                    
+                    if (modelObject == null) {
+                        throw new Exception("Failed to download model");
+                    }
+                    
+                    // Optimize model if needed
+                    if (_autoOptimizeModels) {
+                        OptimizeModel(modelObject);
+                    }
+                    
+                    // Create generated model
+                    GeneratedModel generatedModel = new GeneratedModel {
+                        objectId = objectId,
+                        objectType = request.objectType,
+                        modelObject = modelObject,
+                        originalPosition = request.position,
+                        originalRotation = request.rotation,
+                        originalScale = request.scale,
+                        mesh = modelObject.GetComponentInChildren<MeshFilter>()?.sharedMesh,
+                        material = modelObject.GetComponentInChildren<MeshRenderer>()?.sharedMaterial,
+                        isInstance = false,
+                        instanceSourceId = -1,
+                        modelId = response.modelId,
+                        metadata = request.metadata
+                    };
+                    
+                    // Add to model cache
+                    if (_useModelCache) {
+                        _modelCache[response.modelId] = modelObject;
+                    }
+                    
+                    // Set name
+                    modelObject.name = $"{request.objectType}_{objectId}";
+                    
+                    // Parent to models container
+                    if (_modelsParent != null) {
+                        modelObject.transform.SetParent(_modelsParent);
+                    }
+                    
+                    // Complete
+                    onComplete?.Invoke(generatedModel);
+                }
+            }
+            catch (Exception ex) {
+                LogError($"Error generating model with Tripo3D: {ex.Message}", LogCategory.Models);
+                onError?.Invoke(ex.Message);
             }
         }
         
         /// <summary>
-        /// Convert image coordinates to world position.
+        /// Check status of model generation.
         /// </summary>
-        private Vector3 ConvertImageToWorldPosition(Vector2 imagePosition, Texture2D sourceImage, Vector2 terrainSize)
-        {
-            // Normalize image coordinates (0-1)
-            float normalizedX = imagePosition.x / sourceImage.width;
-            float normalizedY = imagePosition.y / sourceImage.height;
+        private IEnumerator CheckGenerationStatus(int objectId) {
+            if (!_pendingResponses.TryGetValue(objectId, out ModelGenerationResponse response)) {
+                yield break;
+            }
             
-            // Convert to world coordinates
-            float worldX = (normalizedX - 0.5f) * terrainSize.x;
-            float worldZ = (normalizedY - 0.5f) * terrainSize.y;
+            try {
+                using (UnityWebRequest webRequest = new UnityWebRequest($"{_tripo3DBaseUrl}models/{response.modelId}", "GET")) {
+                    webRequest.downloadHandler = new DownloadHandlerBuffer();
+                    webRequest.SetRequestHeader("Authorization", $"Bearer {_tripo3DApiKey}");
+                    
+                    yield return webRequest.SendWebRequest();
+                    
+                    if (webRequest.result != UnityWebRequest.Result.Success) {
+                        throw new Exception($"Status check failed: {webRequest.error}");
+                    }
+                    
+                    // Parse response
+                    string responseJson = webRequest.downloadHandler.text;
+                    ModelGenerationResponse updatedResponse = JsonConvert.DeserializeObject<ModelGenerationResponse>(responseJson);
+                    
+                    if (updatedResponse == null) {
+                        throw new Exception("Failed to parse status response");
+                    }
+                    
+                    // Update stored response
+                    updatedResponse.objectId = objectId;
+                    _pendingResponses[objectId] = updatedResponse;
+                }
+            }
+            catch (Exception ex) {
+                LogWarning($"Error checking model status: {ex.Message}", LogCategory.Models);
+            }
+        }
+        
+        /// <summary>
+        /// Download model from URL.
+        /// </summary>
+        private IEnumerator DownloadModel(string url, System.Action<GameObject> onComplete, System.Action<string> onError) {
+            try {
+                using (UnityWebRequest webRequest = UnityWebRequestAssetBundle.GetAssetBundle(url)) {
+                    yield return webRequest.SendWebRequest();
+                    
+                    if (webRequest.result != UnityWebRequest.Result.Success) {
+                        throw new Exception($"Download failed: {webRequest.error}");
+                    }
+                    
+                    AssetBundle bundle = DownloadHandlerAssetBundle.GetContent(webRequest);
+                    if (bundle == null) {
+                        throw new Exception("Failed to download asset bundle");
+                    }
+                    
+                    // Load main asset
+                    string[] assetNames = bundle.GetAllAssetNames();
+                    if (assetNames.Length == 0) {
+                        throw new Exception("Asset bundle contains no assets");
+                    }
+                    
+                    // Find model asset
+                    string modelAssetName = null;
+                    foreach (string name in assetNames) {
+                        if (name.EndsWith(".fbx") || name.EndsWith(".obj") || name.EndsWith(".prefab")) {
+                            modelAssetName = name;
+                            break;
+                        }
+                    }
+                    
+                    if (string.IsNullOrEmpty(modelAssetName)) {
+                        modelAssetName = assetNames[0]; // Fallback to first asset
+                    }
+                    
+                    // Load asset
+                    GameObject modelPrefab = bundle.LoadAsset<GameObject>(modelAssetName);
+                    if (modelPrefab == null) {
+                        throw new Exception("Failed to load model from asset bundle");
+                    }
+                    
+                    // Instantiate model
+                    GameObject modelObject = Instantiate(modelPrefab);
+                    
+                    // Unload bundle
+                    bundle.Unload(false);
+                    
+                    // Complete
+                    onComplete?.Invoke(modelObject);
+                }
+            }
+            catch (Exception ex) {
+                LogError($"Error downloading model: {ex.Message}", LogCategory.Models);
+                onError?.Invoke(ex.Message);
+            }
+        }
+        /// <summary>
+        /// Create instances for a similarity group.
+        /// </summary>
+        private void CreateInstancesForGroup(SimilarityGroup group) {
+            if (group.sourceModel == null || group.sourceModel.modelObject == null) {
+                LogWarning($"Cannot create instances: source model is missing", LogCategory.Models);
+                return;
+            }
             
-            return new Vector3(worldX, 0f, worldZ);
+            // Skip the source object itself
+            foreach (int objectId in group.similarObjectIds) {
+                if (objectId == group.sourceObjectId) continue;
+                
+                if (_pendingRequests.TryGetValue(objectId, out ModelGenerationRequest request)) {
+                    // Create instance
+                    GameObject instanceObject = Instantiate(group.sourceModel.modelObject);
+                    instanceObject.name = $"{request.objectType}_Instance_{objectId}";
+                    
+                    // Parent to models container
+                    if (_modelsParent != null) {
+                        instanceObject.transform.SetParent(_modelsParent);
+                    }
+                    
+                    // Create generated model
+                    GeneratedModel model = new GeneratedModel {
+                        objectId = objectId,
+                        objectType = request.objectType,
+                        modelObject = instanceObject,
+                        originalPosition = request.position,
+                        originalRotation = request.rotation,
+                        originalScale = request.scale,
+                        mesh = group.sourceModel.mesh,
+                        material = group.sourceModel.material,
+                        isInstance = true,
+                        instanceSourceId = group.sourceObjectId,
+                        modelId = group.sourceModel.modelId,
+                        metadata = request.metadata
+                    };
+                    
+                    // Apply transformations
+                    TransformModel(model, request.position, request.rotation, request.scale);
+                    
+                    // Add collider if needed
+                    if (_addColliders) {
+                        AddColliderToModel(instanceObject);
+                    }
+                    
+                    // Add to generated models
+                    _generatedModels[objectId] = model;
+                    
+                    // Update progress
+                    _processedCount++;
+                    UpdateProgress();
+                    
+                    // Trigger event
+                    OnModelGenerated?.Invoke(model);
+                }
+            }
+            
+            Log($"Created {group.similarObjectIds.Count - 1} instances of {group.objectType}", LogCategory.Models);
+        }
+        
+        /// <summary>
+        /// Place models on terrain.
+        /// </summary>
+        private void PlaceModelsOnTerrain() {
+            if (!_placeOnTerrain || _terrain == null) {
+                return;
+            }
+            
+            foreach (var model in _generatedModels.Values) {
+                if (model.modelObject != null) {
+                    // Get terrain height at position
+                    Vector3 position = model.modelObject.transform.position;
+                    float terrainHeight = _terrain.SampleHeight(position) + _terrain.transform.position.y;
+                    
+                    // Apply height
+                    position.y = terrainHeight + _placementYOffset;
+                    model.modelObject.transform.position = position;
+                    
+                    // Align with terrain normal if enabled
+                    if (_alignWithTerrain) {
+                        AlignWithTerrainNormal(model.modelObject, position);
+                    }
+                }
+            }
+            
+            Log($"Placed {_generatedModels.Count} models on terrain", LogCategory.Models);
+        }
+        
+        /// <summary>
+        /// Align object with terrain normal.
+        /// </summary>
+        private void AlignWithTerrainNormal(GameObject obj, Vector3 position) {
+            // Get terrain normal
+            Vector3 normal = _terrain.terrainData.GetInterpolatedNormal(
+                (position.x - _terrain.transform.position.x) / _terrain.terrainData.size.x,
+                (position.z - _terrain.transform.position.z) / _terrain.terrainData.size.z
+            );
+            
+            // Create rotation to align with normal
+            Quaternion normalRotation = Quaternion.FromToRotation(Vector3.up, normal);
+            
+            // Apply rotation
+            obj.transform.rotation = normalRotation * obj.transform.rotation;
+        }
+        
+        /// <summary>
+        /// Update progress status.
+        /// </summary>
+        private void UpdateProgress(System.Action<string, float> onProgress = null) {
+            if (_totalCount <= 0) return;
+            
+            progress = (float)_processedCount / _totalCount;
+            statusMessage = $"Generated {_processedCount} of {_totalCount} models";
+            
+            onProgress?.Invoke(statusMessage, progress);
+            OnGenerationProgress?.Invoke(statusMessage, progress);
         }
         
         #endregion
-
-        #region Results Building
         
-        /// <summary>
-        /// Build the final generation results.
-        /// </summary>
-        private List<ModelGenerationResult> BuildGenerationResults(List<ModelGenerationRequest> requests)
-        {
-            var results = new List<ModelGenerationResult>();
-            
-            foreach (var request in requests)
-            {
-                var result = new ModelGenerationResult
-                {
-                    objectType = request.objectType,
-                    model = request.generatedModel,
-                    recommendedScale = request.averageScale,
-                    success = request.generatedModel != null,
-                    errorMessage = request.generatedModel == null ? "Model generation failed" : null
-                };
-                
-                results.Add(result);
-            }
-            
-            return results;
-        }
-        
-        #endregion
-
         #region Utility Methods
         
         /// <summary>
-        /// Log message using the debugger component.
+        /// Create a generation request from a map object.
         /// </summary>
-        private void Log(string message, LogCategory category)
-        {
-            _debugger?.Log(message, category);
-        }
-        
-        /// <summary>
-        /// Log error message using the debugger component.
-        /// </summary>
-        private void LogError(string message, LogCategory category)
-        {
-            _debugger?.LogError(message, category);
-        }
-        
-        #endregion
-
-        #region Complete Methods
-
-        /// <summary>
-        /// Generate and place multiple models based on analysis results.
-        /// </summary>
-        public IEnumerator GenerateAndPlaceModels(AnalysisResults analysisResults, UnityEngine.Terrain terrain, System.Action<List<ModelGenerationResult>> onComplete)
-        {
-            yield return StartCoroutine(GenerateModelsFromAnalysis(
-                analysisResults,
-                onComplete,
-                error => LogError($"Model generation error: {error}", LogCategory.AI),
-                (message, progress) => Log($"Progress: {message} ({progress:P0})", LogCategory.AI)
-            ));
-        }
-        
-        /// <summary>
-        /// Generate and place multiple models based on analysis results.
-        /// </summary>
-        public IEnumerator GenerateAndPlaceModels(AnalysisResults analysisResults, UnityEngine.Terrain terrain, System.Action<List<GameObject>> onComplete, System.Action<string> onError = null, System.Action<float> onProgress = null)
-        {
-            List<GameObject> gameObjects = new List<GameObject>();
+        private void CreateGenerationRequest(MapObject obj, Vector3? overrideScale = null) {
+            ModelGenerationRequest request = new ModelGenerationRequest {
+                objectId = obj.id,
+                objectType = obj.objectType,
+                description = obj.description,
+                style = "realistic",
+                tags = new List<string> { obj.objectType },
+                isManMade = obj.objectType.Contains("building") || obj.objectType.Contains("structure"),
+                position = obj.position,
+                rotation = new Vector3(0, obj.rotation, 0),
+                scale = overrideScale ?? obj.scale,
+                metadata = new Dictionary<string, object>()
+            };
             
-            yield return StartCoroutine(GenerateModelsFromAnalysis(
-                analysisResults,
-                (results) => {
-                    // Convert ModelGenerationResult to GameObject list
-                    gameObjects = results.Where(r => r.success && r.model != null)
-                                        .Select(r => r.model)
-                                        .ToList();
-                },
-                onError,
-                (message, progress) => onProgress?.Invoke(progress)
-            ));
-            
-            onComplete?.Invoke(gameObjects);
-        }
-        
-        /// <summary>
-        /// Wait for a single model generation to complete.
-        /// </summary>
-        private IEnumerator WaitForSingleModelCompletion(ModelGenerationRequest request)
-        {
-            float startTime = Time.time;
-            request.isProcessing = true;
-            
-            while (request.isProcessing && (Time.time - startTime) < maxGenerationTime)
-            {
-                yield return StartCoroutine(CheckTaskStatus(request));
-                yield return new WaitForSeconds(pollingInterval);
+            // Add metadata
+            if (obj.metadata != null) {
+                foreach (var pair in obj.metadata) {
+                    request.metadata[pair.Key] = pair.Value;
+                }
             }
             
-            if (request.isProcessing)
-            {
-                LogError($"Model generation timed out for {request.objectType}", LogCategory.AI);
-                request.isProcessing = false;
-            }
+            // Add to pending requests
+            _pendingRequests[obj.id] = request;
         }
         
         /// <summary>
-        /// Place a model on terrain with proper positioning.
+        /// Convert a detected object to a map object.
         /// </summary>
-        public GameObject PlaceModelOnTerrain(GameObject model, Vector3 position, UnityEngine.Terrain terrain)
-        {
-            if (model == null || terrain == null)
-            {
-                return null;
+        private MapObject ConvertDetectedObjectToMapObject(DetectedObject obj) {
+            MapObject mapObj = new MapObject {
+                id = obj.id,
+                objectType = obj.className,
+                objectName = obj.className,
+                position = new Vector3(obj.centroid.x, 0, obj.centroid.y),
+                rotation = UnityEngine.Random.Range(0f, 360f),
+                scale = new Vector3(
+                    obj.boundingBox.width / 100f,
+                    obj.estimatedHeight > 0 ? obj.estimatedHeight / 100f : 1f,
+                    obj.boundingBox.height / 100f
+                ),
+                description = obj.enhancedDescription ?? obj.shortDescription,
+                estimatedHeight = obj.estimatedHeight,
+                materials = obj.estimatedMaterials,
+                metadata = obj.metadata != null ? new Dictionary<string, object>(obj.metadata) : new Dictionary<string, object>()
+            };
+            
+            return mapObj;
+        }
+        
+        /// <summary>
+        /// Check if objects are similar enough for instancing.
+        /// </summary>
+        private bool IsSimilarObject(MapObject obj1, MapObject obj2) {
+            // Same type is required
+            if (obj1.objectType != obj2.objectType) {
+                return false;
             }
             
-            GameObject instance = Instantiate(model);
+            // Similar size (within 20%)
+            float sizeRatio = obj1.scale.magnitude / obj2.scale.magnitude;
+            if (sizeRatio < 0.8f || sizeRatio > 1.2f) {
+                return false;
+            }
             
-            // Sample terrain height at position
-            float terrainHeight = terrain.SampleHeight(position);
-            Vector3 terrainPosition = new Vector3(position.x, terrainHeight, position.z);
+            // Similar description if available
+            if (!string.IsNullOrEmpty(obj1.description) && !string.IsNullOrEmpty(obj2.description)) {
+                float similarity = CalculateStringSimilarity(obj1.description, obj2.description);
+                return similarity >= _similarityThreshold;
+            }
             
-            // Apply grounding depth
-            terrainPosition.y -= groundingDepth;
+            // Default to similar if descriptions not available
+            return true;
+        }
+        
+        /// <summary>
+        /// Calculate string similarity using Levenshtein distance.
+        /// </summary>
+        private float CalculateStringSimilarity(string s1, string s2) {
+            s1 = s1.ToLower();
+            s2 = s2.ToLower();
             
-            instance.transform.position = terrainPosition;
+            int[,] distance = new int[s1.Length + 1, s2.Length + 1];
             
-            // Adapt to terrain normal if enabled
-            if (adaptToTerrain)
-            {
-                Vector3 terrainNormal = terrain.terrainData.GetInterpolatedNormal(
-                    position.x / terrain.terrainData.size.x,
-                    position.z / terrain.terrainData.size.z
-                );
+            // Initialize
+            for (int i = 0; i <= s1.Length; i++) {
+                distance[i, 0] = i;
+            }
+            for (int j = 0; j <= s2.Length; j++) {
+                distance[0, j] = j;
+            }
+            
+            // Calculate distance
+            for (int i = 1; i <= s1.Length; i++) {
+                for (int j = 1; j <= s2.Length; j++) {
+                    int cost = (s1[i - 1] == s2[j - 1]) ? 0 : 1;
+                    distance[i, j] = Mathf.Min(
+                        distance[i - 1, j] + 1,       // Deletion
+                        distance[i, j - 1] + 1,       // Insertion
+                        distance[i - 1, j - 1] + cost // Substitution
+                    );
+                }
+            }
+            
+            // Calculate similarity (0-1)
+            int maxLength = Mathf.Max(s1.Length, s2.Length);
+            if (maxLength == 0) return 1f; // Both strings empty
+            
+            return 1f - (float)distance[s1.Length, s2.Length] / maxLength;
+        }
+        /// <summary>
+        /// Prepare JSON for generation request.
+        /// </summary>
+        private string PrepareGenerationRequestJson(ModelGenerationRequest request) {
+            // Create request object
+            var requestObj = new {
+                prompt = GetGenerationPrompt(request),
+                style = request.style ?? "realistic",
+                tags = request.tags ?? new List<string>(),
+                format = "glb",
+                settings = new {
+                    quality = "high",
+                    polycount = _maxPolyCount,
+                    textures = true,
+                    animation = false
+                }
+            };
+            
+            // Convert to JSON
+            return JsonConvert.SerializeObject(requestObj);
+        }
+        
+        /// <summary>
+        /// Get prompt for model generation.
+        /// </summary>
+        private string GetGenerationPrompt(ModelGenerationRequest request) {
+            // Start with object type
+            string prompt = request.objectType;
+            
+            // Add description if available
+            if (!string.IsNullOrEmpty(request.description)) {
+                prompt += $", {request.description}";
+            }
+            
+            // Add additional context based on object type
+            if (request.isManMade) {
+                prompt += ", man-made object, 3D asset";
+            }
+            else {
+                prompt += ", natural object, 3D asset";
+            }
+            
+            // Add scale reference
+            float averageScale = (request.scale.x + request.scale.y + request.scale.z) / 3f;
+            if (averageScale < 0.5f) {
+                prompt += ", small object";
+            }
+            else if (averageScale > 2f) {
+                prompt += ", large object";
+            }
+            
+            return prompt;
+        }
+        
+        /// <summary>
+        /// Get fallback model for object type.
+        /// </summary>
+        private GameObject GetFallbackModel(string objectType) {
+            string type = objectType.ToLower();
+            
+            // Check exact match
+            foreach (var mapping in _fallbackModels) {
+                if (mapping.objectType.ToLower() == type && mapping.modelPrefab != null) {
+                    return mapping.modelPrefab;
+                }
+            }
+            
+            // Check aliases
+            foreach (var mapping in _fallbackModels) {
+                if (mapping.aliases != null) {
+                    foreach (var alias in mapping.aliases) {
+                        if (alias.ToLower() == type && mapping.modelPrefab != null) {
+                            return mapping.modelPrefab;
+                        }
+                    }
+                }
+            }
+            
+            // Check partial match
+            foreach (var mapping in _fallbackModels) {
+                if (type.Contains(mapping.objectType.ToLower()) || mapping.objectType.ToLower().Contains(type)) {
+                    return mapping.modelPrefab;
+                }
                 
-                // Check slope angle
-                float slope = Vector3.Angle(Vector3.up, terrainNormal);
-                if (slope <= maxPlacementSlope)
-                {
-                    instance.transform.rotation = Quaternion.FromToRotation(Vector3.up, terrainNormal);
-                }
-            }
-            
-            return instance;
-        }
-        
-        /// <summary>
-        /// Place a model on terrain with custom rotation and scale.
-        /// </summary>
-        public GameObject PlaceModelOnTerrain(GameObject model, Vector3 position, Quaternion rotation, Vector3 scale, UnityEngine.Terrain terrain)
-        {
-            if (model == null || terrain == null)
-            {
-                return null;
-            }
-            
-            GameObject instance = Instantiate(model);
-            
-            // Sample terrain height at position
-            float terrainHeight = terrain.SampleHeight(position);
-            Vector3 terrainPosition = new Vector3(position.x, terrainHeight, position.z);
-            
-            // Apply grounding depth
-            terrainPosition.y -= groundingDepth;
-            
-            instance.transform.position = terrainPosition;
-            instance.transform.rotation = rotation;
-            instance.transform.localScale = scale;
-            
-            // Adapt to terrain normal if enabled (combine with provided rotation)
-            if (adaptToTerrain)
-            {
-                Vector3 terrainNormal = terrain.terrainData.GetInterpolatedNormal(
-                    position.x / terrain.terrainData.size.x,
-                    position.z / terrain.terrainData.size.z
-                );
-                
-                // Check slope angle
-                float slope = Vector3.Angle(Vector3.up, terrainNormal);
-                if (slope <= maxPlacementSlope)
-                {
-                    Quaternion terrainRotation = Quaternion.FromToRotation(Vector3.up, terrainNormal);
-                    instance.transform.rotation = terrainRotation * rotation;
-                }
-            }
-            
-            return instance;
-        }
-        
-        #endregion
-
-        #region Object Grouping
-        
-        /// <summary>
-        /// Group similar objects for efficient instancing.
-        /// </summary>
-        private Dictionary<string, List<DetectedObject>> GroupSimilarObjects(List<DetectedObject> objects)
-        {
-            var groups = new Dictionary<string, List<DetectedObject>>();
-            
-            if (!groupSimilarObjects)
-            {
-                // Create individual groups for each object
-                for (int i = 0; i < objects.Count; i++)
-                {
-                    string key = $"{objects[i].className}_{i}";
-                    groups[key] = new List<DetectedObject> { objects[i] };
-                }
-                return groups;
-            }
-            
-            // Group by class name and similarity
-            foreach (var obj in objects)
-            {
-                string groupKey = FindSimilarGroup(obj, groups);
-                
-                if (string.IsNullOrEmpty(groupKey))
-                {
-                    // Create new group
-                    groupKey = $"{obj.className}_{groups.Count}";
-                    groups[groupKey] = new List<DetectedObject>();
-                }
-                
-                if (groups[groupKey].Count < maxGroupSize)
-                {
-                    groups[groupKey].Add(obj);
-                }
-                else
-                {
-                    // Create overflow group
-                    string overflowKey = $"{obj.className}_{groups.Count}";
-                    groups[overflowKey] = new List<DetectedObject> { obj };
-                }
-            }
-            
-            Log($"Grouped {objects.Count} objects into {groups.Count} groups", LogCategory.AI);
-            return groups;
-        }
-        
-        /// <summary>
-        /// Find a similar group for the given object.
-        /// </summary>
-        private string FindSimilarGroup(DetectedObject obj, Dictionary<string, List<DetectedObject>> groups)
-        {
-            foreach (var kvp in groups)
-            {
-                if (kvp.Value.Count > 0)
-                {
-                    var representative = kvp.Value[0];
-                    float similarity = CalculateObjectSimilarity(obj, representative);
-                    
-                    if (similarity >= instancingSimilarity)
-                    {
-                        return kvp.Key;
+                if (mapping.aliases != null) {
+                    foreach (var alias in mapping.aliases) {
+                        if (type.Contains(alias.ToLower()) || alias.ToLower().Contains(type)) {
+                            return mapping.modelPrefab;
+                        }
                     }
                 }
             }
@@ -1069,403 +1438,352 @@ namespace Traversify.AI {
         }
         
         /// <summary>
-        /// Calculate similarity between two detected objects.
+        /// Create model from fallback prefab.
         /// </summary>
-        private float CalculateObjectSimilarity(DetectedObject obj1, DetectedObject obj2)
-        {
-            // Basic similarity based on class name and size
-            if (obj1.className != obj2.className)
-            {
-                return 0f;
+        private GeneratedModel CreateModelFromFallback(ModelGenerationRequest request, GameObject fallbackPrefab) {
+            // Instantiate fallback model
+            GameObject modelObject = Instantiate(fallbackPrefab);
+            modelObject.name = $"{request.objectType}_Fallback_{request.objectId}";
+            
+            // Parent to models container
+            if (_modelsParent != null) {
+                modelObject.transform.SetParent(_modelsParent);
             }
             
-            // Calculate size similarity
-            float sizeRatio = Mathf.Min(obj1.boundingBox.width, obj2.boundingBox.width) / 
-                             Mathf.Max(obj1.boundingBox.width, obj2.boundingBox.width);
+            // Create generated model
+            GeneratedModel model = new GeneratedModel {
+                objectId = request.objectId,
+                objectType = request.objectType,
+                modelObject = modelObject,
+                originalPosition = request.position,
+                originalRotation = request.rotation,
+                originalScale = request.scale,
+                mesh = modelObject.GetComponentInChildren<MeshFilter>()?.sharedMesh,
+                material = modelObject.GetComponentInChildren<MeshRenderer>()?.sharedMaterial,
+                isInstance = false,
+                instanceSourceId = -1,
+                modelId = $"fallback_{request.objectType}",
+                metadata = request.metadata
+            };
             
-            float heightRatio = Mathf.Min(obj1.boundingBox.height, obj2.boundingBox.height) / 
-                               Mathf.Max(obj1.boundingBox.height, obj2.boundingBox.height);
-            
-            return (sizeRatio + heightRatio) * 0.5f;
+            Log($"Created fallback model for {request.objectType}", LogCategory.Models);
+            return model;
         }
         
-        #endregion
-
-        #region Generation Requests
+        /// <summary>
+        /// Create default primitive model.
+        /// </summary>
+        private GeneratedModel CreateDefaultModel(ModelGenerationRequest request) {
+            // Create primitive based on object type
+            PrimitiveType primitiveType = PrimitiveType.Cube;
+            
+            string type = request.objectType.ToLower();
+            if (type.Contains("sphere") || type.Contains("ball") || type.Contains("round")) {
+                primitiveType = PrimitiveType.Sphere;
+            }
+            else if (type.Contains("cylinder") || type.Contains("tube") || type.Contains("pipe")) {
+                primitiveType = PrimitiveType.Cylinder;
+            }
+            else if (type.Contains("capsule") || type.Contains("pill")) {
+                primitiveType = PrimitiveType.Capsule;
+            }
+            
+            // Create primitive
+            GameObject modelObject = GameObject.CreatePrimitive(primitiveType);
+            modelObject.name = $"{request.objectType}_Default_{request.objectId}";
+            
+            // Apply default material
+            if (_defaultMaterial != null) {
+                MeshRenderer renderer = modelObject.GetComponent<MeshRenderer>();
+                if (renderer != null) {
+                    renderer.material = _defaultMaterial;
+                }
+            }
+            
+            // Parent to models container
+            if (_modelsParent != null) {
+                modelObject.transform.SetParent(_modelsParent);
+            }
+            
+            // Create generated model
+            GeneratedModel model = new GeneratedModel {
+                objectId = request.objectId,
+                objectType = request.objectType,
+                modelObject = modelObject,
+                originalPosition = request.position,
+                originalRotation = request.rotation,
+                originalScale = request.scale,
+                mesh = modelObject.GetComponentInChildren<MeshFilter>()?.sharedMesh,
+                material = modelObject.GetComponentInChildren<MeshRenderer>()?.sharedMaterial,
+                isInstance = false,
+                instanceSourceId = -1,
+                modelId = $"default_{request.objectType}",
+                metadata = request.metadata
+            };
+            
+            Log($"Created default model for {request.objectType}", LogCategory.Models);
+            return model;
+        }
         
         /// <summary>
-        /// Create model generation requests for object groups.
+        /// Try to use model from cache.
         /// </summary>
-        private List<ModelGenerationRequest> CreateGenerationRequests(
-            Dictionary<string, List<DetectedObject>> objectGroups,
-            Dictionary<string, string> enhancedDescriptions)
-        {
-            var requests = new List<ModelGenerationRequest>();
+        private bool TryUseModelFromCache(ModelGenerationRequest request, System.Action<GeneratedModel> onFound) {
+            // Find similar model in cache
+            foreach (var pair in _generatedModels) {
+                var model = pair.Value;
+                if (model.objectType == request.objectType && !model.isInstance) {
+                    // Found a potential match
+                    if (model.modelObject != null) {
+                        // Create instance
+                        GameObject instanceObject = Instantiate(model.modelObject);
+                        instanceObject.name = $"{request.objectType}_Cached_{request.objectId}";
+                        
+                        // Parent to models container
+                        if (_modelsParent != null) {
+                            instanceObject.transform.SetParent(_modelsParent);
+                        }
+                        
+                        // Create generated model
+                        GeneratedModel cachedModel = new GeneratedModel {
+                            objectId = request.objectId,
+                            objectType = request.objectType,
+                            modelObject = instanceObject,
+                            originalPosition = request.position,
+                            originalRotation = request.rotation,
+                            originalScale = request.scale,
+                            mesh = model.mesh,
+                            material = model.material,
+                            isInstance = true,
+                            instanceSourceId = model.objectId,
+                            modelId = model.modelId,
+                            metadata = request.metadata
+                        };
+                        
+                        Log($"Used cached model for {request.objectType}", LogCategory.Models);
+                        onFound?.Invoke(cachedModel);
+                        return true;
+                    }
+                }
+            }
             
-            foreach (var group in objectGroups)
-            {
-                var representative = group.Value[0];
-                string description = enhancedDescriptions.ContainsKey(representative.className) 
-                    ? enhancedDescriptions[representative.className]
-                    : representative.shortDescription ?? $"3D model of {representative.className}";
+            // Try model cache dictionary
+            if (_modelCache.Count > 0) {
+                // Look for similar model IDs
+                foreach (var pair in _modelCache) {
+                    if (pair.Key.Contains(request.objectType) || request.objectType.Contains(pair.Key)) {
+                        if (pair.Value != null) {
+                            // Create instance
+                            GameObject instanceObject = Instantiate(pair.Value);
+                            instanceObject.name = $"{request.objectType}_Cached_{request.objectId}";
+                            
+                            // Parent to models container
+                            if (_modelsParent != null) {
+                                instanceObject.transform.SetParent(_modelsParent);
+                            }
+                            
+                            // Create generated model
+                            GeneratedModel cachedModel = new GeneratedModel {
+                                objectId = request.objectId,
+                                objectType = request.objectType,
+                                modelObject = instanceObject,
+                                originalPosition = request.position,
+                                originalRotation = request.rotation,
+                                originalScale = request.scale,
+                                mesh = instanceObject.GetComponentInChildren<MeshFilter>()?.sharedMesh,
+                                material = instanceObject.GetComponentInChildren<MeshRenderer>()?.sharedMaterial,
+                                isInstance = true,
+                                instanceSourceId = -1,
+                                modelId = pair.Key,
+                                metadata = request.metadata
+                            };
+                            
+                            Log($"Used cached model from dictionary for {request.objectType}", LogCategory.Models);
+                            onFound?.Invoke(cachedModel);
+                            return true;
+                        }
+                    }
+                }
+            }
+            
+            return false;
+        }
+        /// <summary>
+        /// Transform model to position, rotation, and scale.
+        /// </summary>
+        private void TransformModel(GeneratedModel model, Vector3 position, Vector3 rotation, Vector3 scale) {
+            if (model.modelObject != null) {
+                // Apply position
+                model.modelObject.transform.position = position;
                 
-                var request = new ModelGenerationRequest
-                {
-                    objectType = representative.className,
-                    enhancedDescription = description,
-                    detectedObjects = group.Value,
-                    averageScale = CalculateAverageScale(group.Value),
-                    confidence = group.Value.Average(o => o.confidence),
-                    cacheKey = GenerateCacheKey(representative.className, description),
-                    isProcessing = false,
-                    taskId = null,
-                    generatedModel = null
-                };
+                // Apply rotation
+                model.modelObject.transform.eulerAngles = rotation;
                 
-                requests.Add(request);
+                // Apply scale
+                model.modelObject.transform.localScale = Vector3.Scale(scale, _defaultModelScale);
+                
+                // Update model data
+                model.originalPosition = position;
+                model.originalRotation = rotation;
+                model.originalScale = scale;
+            }
+        }
+        
+        /// <summary>
+        /// Add collider to model.
+        /// </summary>
+        private void AddColliderToModel(GameObject modelObject) {
+            // Check if model already has a collider
+            Collider existingCollider = modelObject.GetComponentInChildren<Collider>();
+            if (existingCollider != null) {
+                return;
             }
             
-            Log($"Created {requests.Count} generation requests", LogCategory.AI);
-            return requests;
-        }
-        
-        /// <summary>
-        /// Calculate average scale for a group of objects.
-        /// </summary>
-        private Vector3 CalculateAverageScale(List<DetectedObject> objects)
-        {
-            if (objects.Count == 0) return Vector3.one;
+            // Find all mesh renderers
+            MeshRenderer[] renderers = modelObject.GetComponentsInChildren<MeshRenderer>();
             
-            Vector3 totalScale = Vector3.zero;
-            foreach (var obj in objects)
-            {
-                // Estimate scale based on bounding box size
-                float scale = Mathf.Sqrt(obj.boundingBox.width * obj.boundingBox.height) / 100f;
-                totalScale += new Vector3(scale, scale, scale);
+            if (renderers.Length == 0) {
+                // No renderers, add box collider to root
+                modelObject.AddComponent<BoxCollider>();
+                return;
             }
             
-            return totalScale / objects.Count;
+            // Add mesh colliders to each mesh
+            foreach (var renderer in renderers) {
+                MeshFilter meshFilter = renderer.GetComponent<MeshFilter>();
+                if (meshFilter != null && meshFilter.sharedMesh != null) {
+                    MeshCollider collider = renderer.gameObject.AddComponent<MeshCollider>();
+                    collider.sharedMesh = meshFilter.sharedMesh;
+                    collider.convex = true;
+                }
+            }
         }
         
         /// <summary>
-        /// Generate cache key for model caching.
+        /// Optimize a model to reduce polygon count.
         /// </summary>
-        private string GenerateCacheKey(string objectType, string description)
-        {
-            return $"{objectType}_{description.GetHashCode()}";
-        }
-        
-        #endregion
-
-        #region Tripo3D Integration
-        
-        /// <summary>
-        /// Submit generation requests to Tripo3D API.
-        /// </summary>
-        private IEnumerator SubmitGenerationRequests(List<ModelGenerationRequest> requests,
-            System.Action<string, float> onProgress = null)
-        {
-            int completed = 0;
+        private void OptimizeModel(GameObject modelObject) {
+            // Find all mesh filters
+            MeshFilter[] meshFilters = modelObject.GetComponentsInChildren<MeshFilter>();
             
-            foreach (var request in requests)
-            {
-                // Check cache first
-                if (cacheModels && _modelCache.ContainsKey(request.cacheKey))
-                {
-                    request.generatedModel = _modelCache[request.cacheKey];
-                    Log($"Using cached model for {request.objectType}", LogCategory.AI);
-                    completed++;
+            if (meshFilters.Length == 0) {
+                return;
+            }
+            
+            // Optimize each mesh
+            foreach (var meshFilter in meshFilters) {
+                Mesh originalMesh = meshFilter.sharedMesh;
+                if (originalMesh == null) continue;
+                
+                // Check if optimization is needed
+                if (originalMesh.triangles.Length / 3 <= _maxPolyCount) {
                     continue;
                 }
                 
-                // Submit to Tripo3D
-                yield return StartCoroutine(SubmitSingleRequest(request));
-                completed++;
-                
-                float progress = 0.3f + (completed / (float)requests.Count) * 0.2f; // 30% to 50%
-                onProgress?.Invoke($"Submitted {completed}/{requests.Count} requests...", progress);
-                
-                // Respect rate limits
-                yield return new WaitForSeconds(1f);
-            }
-        }
-        
-        /// <summary>
-        /// Submit a single generation request to Tripo3D.
-        /// </summary>
-        private IEnumerator SubmitSingleRequest(ModelGenerationRequest request)
-        {
-            if (string.IsNullOrEmpty(tripoApiKey))
-            {
-                LogError("Tripo3D API key not set", LogCategory.AI);
-                yield break;
-            }
-            
-            // Prepare request data
-            var requestData = new {
-                type = "text_to_model",
-                prompt = request.enhancedDescription,
-                model_version = "v2.0-20240919",
-                face_limit = 10000,
-                texture_resolution = 1024
-            };
-            
-            string jsonData = JsonUtility.ToJson(requestData);
-            
-            using (var webRequest = new UnityWebRequest($"{tripoApiUrl}/task", "POST"))
-            {
-                webRequest.uploadHandler = new UploadHandlerRaw(System.Text.Encoding.UTF8.GetBytes(jsonData));
-                webRequest.downloadHandler = new DownloadHandlerBuffer();
-                webRequest.SetRequestHeader("Content-Type", "application/json");
-                webRequest.SetRequestHeader("Authorization", $"Bearer {tripoApiKey}");
-                
-                yield return webRequest.SendWebRequest();
-                
-                if (webRequest.result == UnityWebRequest.Result.Success)
-                {
-                    try
-                    {
-                        var response = JsonUtility.FromJson<TripoGenerationResponse>(webRequest.downloadHandler.text);
-                        
-                        if (response.code == 0 && response.data != null)
-                        {
-                            request.taskId = response.data.task_id;
-                            request.isProcessing = true;
-                            Log($"Submitted generation request for {request.objectType}, task ID: {request.taskId}", LogCategory.AI);
-                        }
-                        else
-                        {
-                            LogError($"Tripo3D API error: {response.message}", LogCategory.AI);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        LogError($"Failed to parse Tripo3D response: {ex.Message}", LogCategory.AI);
-                    }
-                }
-                else
-                {
-                    LogError($"Tripo3D request failed: {webRequest.error}", LogCategory.AI);
-                }
-            }
-        }
-        
-        /// <summary>
-        /// Wait for all generation requests to complete and download models.
-        /// </summary>
-        private IEnumerator WaitForGenerationCompletion(List<ModelGenerationRequest> requests,
-            System.Action<string, float> onProgress = null)
-        {
-            float startTime = Time.time;
-            var pendingRequests = requests.Where(r => r.isProcessing).ToList();
-            
-            while (pendingRequests.Count > 0 && (Time.time - startTime) < maxGenerationTime)
-            {
-                for (int i = pendingRequests.Count - 1; i >= 0; i--)
-                {
-                    var request = pendingRequests[i];
-                    yield return StartCoroutine(CheckTaskStatus(request));
+                try {
+                    // Create simplified mesh
+                    Mesh simplifiedMesh = new Mesh();
+                    simplifiedMesh.name = originalMesh.name + "_Simplified";
                     
-                    if (!request.isProcessing)
-                    {
-                        pendingRequests.RemoveAt(i);
+                    // Copy vertices, uvs, etc.
+                    simplifiedMesh.vertices = originalMesh.vertices;
+                    simplifiedMesh.uv = originalMesh.uv;
+                    simplifiedMesh.normals = originalMesh.normals;
+                    simplifiedMesh.colors = originalMesh.colors;
+                    simplifiedMesh.tangents = originalMesh.tangents;
+                    
+                    // Reduce triangle count
+                    int[] triangles = originalMesh.triangles;
+                    int targetTriangleCount = Mathf.CeilToInt(triangles.Length / 3 * _lodReductionFactor);
+                    targetTriangleCount = Mathf.Min(targetTriangleCount, _maxPolyCount);
+                    
+                    // Simple decimation by skipping triangles
+                    if (triangles.Length / 3 > targetTriangleCount) {
+                        int skipFactor = Mathf.CeilToInt(triangles.Length / 3 / (float)targetTriangleCount);
+                        List<int> newTriangles = new List<int>();
+                        
+                        for (int i = 0; i < triangles.Length; i += 3 * skipFactor) {
+                            if (i + 2 < triangles.Length) {
+                                newTriangles.Add(triangles[i]);
+                                newTriangles.Add(triangles[i + 1]);
+                                newTriangles.Add(triangles[i + 2]);
+                            }
+                        }
+                        
+                        simplifiedMesh.triangles = newTriangles.ToArray();
+                    }
+                    else {
+                        simplifiedMesh.triangles = triangles;
                     }
                     
-                    yield return new WaitForSeconds(pollingInterval);
-                }
-                
-                int completed = requests.Count - pendingRequests.Count;
-                float progress = 0.5f + (completed / (float)requests.Count) * 0.3f; // 50% to 80%
-                onProgress?.Invoke($"Generated {completed}/{requests.Count} models...", progress);
-            }
-            
-            if (pendingRequests.Count > 0)
-            {
-                LogError($"Model generation timed out for {pendingRequests.Count} requests", LogCategory.AI);
-            }
-        }
-        
-        /// <summary>
-        /// Check the status of a generation task.
-        /// </summary>
-        private IEnumerator CheckTaskStatus(ModelGenerationRequest request)
-        {
-            if (string.IsNullOrEmpty(request.taskId))
-            {
-                yield break;
-            }
-            
-            using (var webRequest = UnityWebRequest.Get($"{tripoApiUrl}/task/{request.taskId}"))
-            {
-                webRequest.SetRequestHeader("Authorization", $"Bearer {tripoApiKey}");
-                
-                yield return webRequest.SendWebRequest();
-                
-                if (webRequest.result == UnityWebRequest.Result.Success)
-                {
-                    var responseText = webRequest.downloadHandler.text;
-                    yield return StartCoroutine(ProcessTaskStatusResponse(request, responseText));
-                }
-                else
-                {
-                    LogError($"Failed to check task status: {webRequest.error}", LogCategory.AI);
-                }
-            }
-        }
-        
-        /// <summary>
-        /// Process the task status response without try-catch around yield.
-        /// </summary>
-        private IEnumerator ProcessTaskStatusResponse(ModelGenerationRequest request, string responseText)
-        {
-            var response = ParseTaskStatusResponse(responseText);
-            
-            if (response != null && response.code == 0 && response.data != null)
-            {
-                switch (response.data.status)
-                {
-                    case "success":
-                        if (response.data.result != null && !string.IsNullOrEmpty(response.data.result.model_url))
-                        {
-                            yield return StartCoroutine(DownloadModel(request, response.data.result.model_url));
-                        }
-                        request.isProcessing = false;
-                        break;
-                        
-                    case "failed":
-                        LogError($"Model generation failed for {request.objectType}", LogCategory.AI);
-                        request.isProcessing = false;
-                        break;
-                        
-                    case "queued":
-                    case "running":
-                        // Still processing, continue waiting
-                        break;
-                }
-            }
-        }
-        
-        /// <summary>
-        /// Parse task status response with error handling.
-        /// </summary>
-        private TripoGenerationResponse ParseTaskStatusResponse(string responseText)
-        {
-            try
-            {
-                return JsonUtility.FromJson<TripoGenerationResponse>(responseText);
-            }
-            catch (Exception ex)
-            {
-                LogError($"Failed to parse task status response: {ex.Message}", LogCategory.AI);
-                return null;
-            }
-        }
-        
-        /// <summary>
-        /// Download a generated model from Tripo3D.
-        /// </summary>
-        private IEnumerator DownloadModel(ModelGenerationRequest request, string modelUrl)
-        {
-            using (var webRequest = UnityWebRequest.Get(modelUrl))
-            {
-                yield return webRequest.SendWebRequest();
-                
-                if (webRequest.result == UnityWebRequest.Result.Success)
-                {
-                    var modelData = webRequest.downloadHandler.data;
-                    yield return StartCoroutine(ProcessDownloadedModel(request, modelData));
-                }
-                else
-                {
-                    LogError($"Failed to download model from {modelUrl}: {webRequest.error}", LogCategory.AI);
-                }
-            }
-        }
-        
-        /// <summary>
-        /// Process downloaded model data without try-catch around yield.
-        /// </summary>
-        private IEnumerator ProcessDownloadedModel(ModelGenerationRequest request, byte[] modelData)
-        {
-            var filePath = SaveModelToFile(request, modelData);
-            if (!string.IsNullOrEmpty(filePath))
-            {
-                yield return StartCoroutine(LoadModelFromFile(request, filePath));
-                Log($"Downloaded and loaded model for {request.objectType}", LogCategory.AI);
-            }
-        }
-        
-        /// <summary>
-        /// Save model data to file with error handling.
-        /// </summary>
-        private string SaveModelToFile(ModelGenerationRequest request, byte[] modelData)
-        {
-            try
-            {
-                string fileName = $"{request.objectType}_{request.taskId}.glb";
-                string filePath = Path.Combine(Application.persistentDataPath, "GeneratedModels", fileName);
-                
-                Directory.CreateDirectory(Path.GetDirectoryName(filePath));
-                File.WriteAllBytes(filePath, modelData);
-                
-                return filePath;
-            }
-            catch (Exception ex)
-            {
-                LogError($"Failed to save model to file: {ex.Message}", LogCategory.AI);
-                return null;
-            }
-        }
-        
-        /// <summary>
-        /// Load a model from file using Piglet.
-        /// </summary>
-        private IEnumerator LoadModelFromFile(ModelGenerationRequest request, string filePath)
-        {
-            bool loadComplete = false;
-            GameObject loadedModel = null;
-            string errorMessage = null;
-            
-            var loadResult = LoadModelWithPiglet(filePath, 
-                (model) => { loadedModel = model; loadComplete = true; },
-                (error) => { errorMessage = error; loadComplete = true; });
-            
-            if (!loadResult)
-            {
-                errorMessage = "Failed to initialize Piglet import";
-                loadComplete = true;
-            }
-            
-            // Wait for import to complete
-            while (!loadComplete)
-            {
-                yield return null;
-            }
-            
-            if (!string.IsNullOrEmpty(errorMessage))
-            {
-                LogError($"Failed to load model: {errorMessage}", LogCategory.AI);
-            }
-            else if (loadedModel != null)
-            {
-                request.generatedModel = loadedModel;
-                
-                // Add to cache
-                if (cacheModels && !_modelCache.ContainsKey(request.cacheKey))
-                {
-                    _modelCache[request.cacheKey] = loadedModel;
+                    // Recalculate mesh data
+                    simplifiedMesh.RecalculateNormals();
+                    simplifiedMesh.RecalculateBounds();
                     
-                    // Manage cache size
-                    if (_modelCache.Count > maxCacheSize)
-                    {
-                        var oldestKey = _modelCache.Keys.First();
-                        Destroy(_modelCache[oldestKey]);
-                        _modelCache.Remove(oldestKey);
+                    // Apply simplified mesh
+                    meshFilter.sharedMesh = simplifiedMesh;
+                    
+                    // Update collider if present
+                    MeshCollider collider = meshFilter.GetComponent<MeshCollider>();
+                    if (collider != null) {
+                        collider.sharedMesh = simplifiedMesh;
                     }
+                    
+                    Log($"Optimized mesh from {triangles.Length / 3} to {simplifiedMesh.triangles.Length / 3} triangles", LogCategory.Models);
+                }
+                catch (Exception ex) {
+                    LogWarning($"Error optimizing mesh: {ex.Message}", LogCategory.Models);
                 }
             }
+        }
+        
+        /// <summary>
+        /// Log a message using the debugger.
+        /// </summary>
+        private void Log(string message, LogCategory category) {
+            _debugger?.Log(message, category);
+        }
+        
+        /// <summary>
+        /// Log a warning using the debugger.
+        /// </summary>
+        private void LogWarning(string message, LogCategory category) {
+            _debugger?.LogWarning(message, category);
+        }
+        
+        /// <summary>
+        /// Log an error using the debugger.
+        /// </summary>
+        private void LogError(string message, LogCategory category) {
+            _debugger?.LogError(message, category);
         }
         
         #endregion
+    }
+    
+    /// <summary>
+    /// Simple water flow component.
+    /// </summary>
+    public class WaterFlow : MonoBehaviour {
+        public Vector3 flowDirection = Vector3.right;
+        public float flowSpeed = 0.5f;
+        private Material _material;
+        
+        private void Start() {
+            // Get material
+            Renderer renderer = GetComponent<Renderer>();
+            if (renderer != null) {
+                _material = renderer.material;
+            }
+        }
+        
+        private void Update() {
+            // Update material if available
+            if (_material != null) {
+                // Update flow offset
+                Vector2 offset = new Vector2(flowDirection.x, flowDirection.z) * flowSpeed * Time.time;
+                _material.SetVector("_FlowOffset", new Vector4(offset.x, offset.y, 0, 0));
+            }
+        }
     }
 }

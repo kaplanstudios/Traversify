@@ -20,7 +20,9 @@ using UnityEngine;
 using UnityEngine.Events;
 using Traversify.AI;
 using Traversify.Core;
+using Traversify.Models;
 using Traversify.Terrain;
+using Traversify.Visualization;
 
 namespace Traversify {
     /// <summary>

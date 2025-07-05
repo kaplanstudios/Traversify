@@ -27,6 +27,7 @@ using Unity.Profiling;
 #endif
 #if UNITY_SENTIS_AVAILABLE
 using Unity.Sentis;
+using Sentis.OnnxRuntime;
 #endif
 
 using Traversify.AI;
@@ -466,79 +467,18 @@ namespace Traversify.Core {
             _createWorkerMarker.Begin();
             
             try {
-                if (onnxModel == null) {
-                    throw new ArgumentNullException(nameof(onnxModel), "Model cannot be null");
-                }
-                
+                if (onnxModel == null) throw new ArgumentNullException(nameof(onnxModel), "Model cannot be null");
                 config = config ?? new WorkerConfig();
-                
-                // Auto-select backend if needed
-                type = ResolveWorkerType(type, config);
-                
-                // Determine if ONNX runtime should be used
-                if (config.workerType == Type.OnnxCpu || config.workerType == Type.OnnxGpu) {
-                    if (!_onnxRuntimeAvailable) {
-                        Log("ONNX Runtime requested but not available. Using Barracuda backend instead.", LogCategory.AI, LogLevel.Warning);
-                        type = config.workerType == Type.OnnxGpu && _gpuAvailable ? Type.ComputePrecompiled : Type.CSharpBurst;
-                    }
-                }
-                
-                // Prepare model
-                Unity.InferenceEngine.Model nnModel;
-                
-                if (type == Type.OnnxCpu || type == Type.OnnxGpu) {
-                    // Use Onnx model directly for OnnxRuntime backend
-                    nnModel = null;
-                }
-                else {
-                    // Import the ONNX model to Barracuda format
-                    using (var modelBuilder = new ModelBuilder(onnxModel.name)) {
-                        // Use model asset as input source
-                        ModelBuilder.Input nnInput = modelBuilder.CreateInput(onnxModel);
-                        nnModel = modelBuilder.Build(nnInput);
-                    }
-                }
-                
-                // Create the worker with appropriate backend
-                IWorker worker;
-                if (nnModel != null) {
-                    worker = CreateBarracudaWorker(type, nnModel, config);
-                }
-                else {
-                    // Use OnnxRuntime
-                    worker = CreateOnnxRuntimeWorker(onnxModel, type == Type.OnnxGpu, config);
-                }
-                
-                // Register model metadata
-                string modelId = onnxModel.name;
-                if (!_modelRegistry.ContainsKey(modelId)) {
-                    var metadata = ExtractOnnxModelMetadata(onnxModel, config.modelType);
-                    lock (_workerLock) {
-                        _modelRegistry[modelId] = metadata;
-                    }
-                }
-                
-                // Track the worker
-                RegisterWorker(worker, type, modelId, config.modelType);
-                
-                Log($"Created {type} worker for ONNX model {onnxModel.name}", LogCategory.AI);
+                // Use Sentis ONNX runtime for all models
+                IWorker worker = SentisWorkerFactory.CreateWorker(onnxModel, config);
+                Log($"Created Sentis worker for ONNX model {onnxModel.name}", LogCategory.AI);
+                RegisterWorker(worker, config.workerType, onnxModel.name, config.modelType);
                 return worker;
             }
             catch (Exception ex) {
                 Log($"Failed to create ONNX worker: {ex.Message}", LogCategory.AI, LogLevel.Error);
                 
-                // Attempt fallback if GPU method failed
-                if (config?.useGpuFallbacks == true && IsGpuBackend(type)) {
-                    Log($"Attempting fallback to CPU worker after GPU failure", LogCategory.AI, LogLevel.Warning);
-                    try {
-                        var cpuWorker = CreateWorker(Type.CSharpBurst, onnxModel, config);
-                        return cpuWorker;
-                    }
-                    catch (Exception fallbackEx) {
-                        Log($"CPU fallback also failed: {fallbackEx.Message}", LogCategory.AI, LogLevel.Error);
-                    }
-                }
-                
+                // Rethrow after logging
                 throw;
             }
             finally {

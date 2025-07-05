@@ -1,2355 +1,1806 @@
+/*************************************************************************
+ *  Traversify – SegmentationVisualizer.cs                               *
+ *  Author : David Kaplan (dkaplan73)                                    *
+ *  Updated: 2025-07-05                                                  *
+ *  Desc   : Advanced visualization for segmentation masks with          *
+ *           interactive labeling, overlays, and highlighting.           *
+ *************************************************************************/
+
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.UI;
-using UnityEngine.EventSystems;
-using UnityEngine.Rendering;
-using Unity.Collections;
-using Unity.Mathematics;
-using Unity.Jobs;
-using Unity.Burst;
 using TMPro;
-using Traversify.AI;
 using Traversify.Core;
+using Traversify.AI;
+using UnityEngine.EventSystems;
 
-namespace Traversify {
+namespace Traversify.Visualization {
+    /// <summary>
+    /// Advanced visualization system for segmentation results with
+    /// interactive features and detailed labeling.
+    /// </summary>
     [RequireComponent(typeof(TraversifyDebugger))]
-    public class SegmentationVisualizer : TraversifyComponent {
-        #region Configuration
-        [Header("Debug & Progress")]
-        public TraversifyDebugger debugger;
-        public bool enableDebugVisualization = true;
-        public bool showPerformanceStats = true;
+    public class SegmentationVisualizer : TraversifyComponent, IPointerClickHandler, IPointerEnterHandler, IPointerExitHandler {
+        #region Inspector Fields
         
-        [Header("Overlay Settings")]
-        public GameObject overlayPrefab;
-        public Material overlayMaterial;
-        [Range(0f, 5f)] public float overlayYOffset = 0.1f;
-        [Range(0f, 3f)] public float fadeDuration = 0.5f;
-        [Range(0f, 1f)] public float overlayOpacity = 0.6f;
-        public AnimationCurve fadeInCurve = AnimationCurve.EaseInOut(0, 0, 1, 1);
-        public bool useDistanceBasedOpacity = true;
-        [Range(10f, 200f)] public float fadeStartDistance = 50f;
-        [Range(50f, 500f)] public float fadeEndDistance = 200f;
+        [Header("Display Settings")]
+        [Tooltip("Base image to display")]
+        [SerializeField] private RawImage _baseImageDisplay;
+        
+        [Tooltip("Overlay image for segmentation visualization")]
+        [SerializeField] private RawImage _overlayDisplay;
+        
+        [Tooltip("Alpha value for the segmentation overlay")]
+        [Range(0f, 1f)]
+        [SerializeField] private float _overlayAlpha = 0.7f;
+        
+        [Tooltip("Display segmentation outlines")]
+        [SerializeField] private bool _showOutlines = true;
+        
+        [Tooltip("Outline thickness in pixels")]
+        [Range(1f, 10f)]
+        [SerializeField] private float _outlineThickness = 2f;
+        
+        [Tooltip("Outline color")]
+        [SerializeField] private Color _outlineColor = Color.white;
         
         [Header("Label Settings")]
-        public GameObject labelPrefab;
-        [Range(0.5f, 5f)] public float labelYOffset = 2f;
-        public TMP_FontAsset labelFont; // Changed from Font to TMP_FontAsset
-        public int labelFontSize = 24;
-        public Color labelTextColor = Color.white;
-        public Color labelBackgroundColor = new Color(0, 0, 0, 0.8f);
-        public bool billboardLabels = true;
-        public bool scaleLabelsWithDistance = true;
-        [Range(0.1f, 2f)] public float labelMinScale = 0.5f;
-        [Range(1f, 5f)] public float labelMaxScale = 2f;
+        [Tooltip("Parent object for dynamic labels")]
+        [SerializeField] private RectTransform _labelsContainer;
         
-        [Header("Visualization Modes")]
-        public VisualizationMode visualizationMode = VisualizationMode.Overlay;
-        public bool showSegmentBorders = true;
-        public float borderWidth = 2f;
-        public Color borderColor = Color.white;
-        public bool animateSegments = true;
-        public float animationSpeed = 1f;
-        public AnimationStyle animationStyle = AnimationStyle.Pulse;
+        [Tooltip("Label prefab with TextMeshPro component")]
+        [SerializeField] private GameObject _labelPrefab;
         
-        [Header("Interaction")]
-        public bool enableInteraction = true;
-        public LayerMask interactionLayerMask = -1;
-        public float interactionDistance = 100f;
-        public bool highlightOnHover = true;
-        public Color highlightColor = Color.yellow;
-        public float highlightIntensity = 0.3f;
-        public bool showTooltips = true;
-        public GameObject tooltipPrefab;
+        [Tooltip("Show object labels")]
+        [SerializeField] private bool _showLabels = true;
         
-        [Header("Segment Grouping")]
-        public bool groupSimilarSegments = true;
-        public float groupingSimilarityThreshold = 0.8f;
-        public bool showGroupConnections = true;
-        public LineRenderer connectionLinePrefab;
-        public Color connectionColor = new Color(1, 1, 1, 0.3f);
+        [Tooltip("Show class names on labels")]
+        [SerializeField] private bool _showClassNames = true;
         
-        [Header("Performance")]
-        public bool useLOD = true;
-        public float[] lodDistances = { 25f, 50f, 100f, 200f };
-        public bool batchSegments = true;
-        public int maxSegmentsPerBatch = 50;
-        public bool useGPUInstancing = true;
-        public bool cullInvisibleSegments = true;
-        public float cullingUpdateInterval = 0.5f;
+        [Tooltip("Show confidence scores on labels")]
+        [SerializeField] private bool _showConfidence = true;
         
-        [Header("Effects")]
-        public bool usePostProcessing = true;
-        public Material outlinePostProcessMaterial;
-        public bool castShadows = false;
-        public bool receiveShadows = false;
-        public bool useVertexColors = true;
+        [Tooltip("Show object IDs on labels")]
+        [SerializeField] private bool _showObjectIds = false;
         
-        [Header("Data Display")]
-        public bool showSegmentInfo = true;
-        public InfoDisplayMode infoDisplayMode = InfoDisplayMode.Simplified;
-        public bool showConfidenceIndicators = true;
-        public Gradient confidenceGradient;
-        public bool showAreaMetrics = true;
-        public bool showElevationData = true;
+        [Tooltip("Maximum label length")]
+        [SerializeField] private int _maxLabelLength = 40;
+        
+        [Header("Interaction Settings")]
+        [Tooltip("Enable interactive selection")]
+        [SerializeField] private bool _enableInteraction = true;
+        
+        [Tooltip("Selection highlight color")]
+        [SerializeField] private Color _selectionColor = new Color(1f, 1f, 0f, 0.3f);
+        
+        [Tooltip("Hover highlight color")]
+        [SerializeField] private Color _hoverColor = new Color(0.8f, 0.8f, 0.8f, 0.2f);
+        
+        [Tooltip("Label highlight color")]
+        [SerializeField] private Color _labelHighlightColor = Color.yellow;
+        
+        [Header("Animation Settings")]
+        [Tooltip("Animate label appearance")]
+        [SerializeField] private bool _animateLabels = true;
+        
+        [Tooltip("Label animation duration")]
+        [Range(0.1f, 2f)]
+        [SerializeField] private float _labelAnimDuration = 0.5f;
+        
+        [Tooltip("Animate selection highlight")]
+        [SerializeField] private bool _animateSelection = true;
+        
+        [Tooltip("Selection animation duration")]
+        [Range(0.1f, 1f)]
+        [SerializeField] private float _selectionAnimDuration = 0.3f;
+        
+        [Header("Detail Panel")]
+        [Tooltip("Detail panel for selected object")]
+        [SerializeField] private GameObject _detailPanel;
+        
+        [Tooltip("Object name text in detail panel")]
+        [SerializeField] private TextMeshProUGUI _detailNameText;
+        
+        [Tooltip("Object class text in detail panel")]
+        [SerializeField] private TextMeshProUGUI _detailClassText;
+        
+        [Tooltip("Object description text in detail panel")]
+        [SerializeField] private TextMeshProUGUI _detailDescriptionText;
+        
+        [Tooltip("Object confidence text in detail panel")]
+        [SerializeField] private TextMeshProUGUI _detailConfidenceText;
+        
+        [Tooltip("Object dimensions text in detail panel")]
+        [SerializeField] private TextMeshProUGUI _detailDimensionsText;
+        
+        [Tooltip("Object preview image in detail panel")]
+        [SerializeField] private RawImage _detailPreviewImage;
+        
         #endregion
-
-        #region Enums and Data Structures
-        public enum VisualizationMode {
-            Overlay, Outline, Fill, Wireframe, Heatmap, Contour
+        
+        #region Public Properties
+        
+        /// <summary>
+        /// Alpha value for the segmentation overlay.
+        /// </summary>
+        public float overlayAlpha {
+            get => _overlayAlpha;
+            set {
+                _overlayAlpha = Mathf.Clamp01(value);
+                UpdateOverlayAlpha();
+            }
         }
         
-        public enum AnimationStyle {
-            None, Pulse, Wave, Rotate, Float, Shimmer
+        /// <summary>
+        /// Whether to show object labels.
+        /// </summary>
+        public bool showLabels {
+            get => _showLabels;
+            set {
+                _showLabels = value;
+                UpdateLabelsVisibility();
+            }
         }
         
-        public enum InfoDisplayMode {
-            None, Simplified, Detailed, Technical
+        /// <summary>
+        /// Whether to show segmentation outlines.
+        /// </summary>
+        public bool showOutlines {
+            get => _showOutlines;
+            set {
+                _showOutlines = value;
+                RegenerateOverlay();
+            }
         }
         
-        [Serializable]
-        public class SegmentVisualization {
-            public string id;
-            public GameObject overlayObject;
-            public GameObject labelObject;
-            public List<GameObject> borderObjects;
-            public Material instanceMaterial;
-            public Mesh segmentMesh;
-            public Bounds bounds;
-            public float opacity = 0f;
-            public bool isVisible = true;
-            public bool isHighlighted = false;
-            public float animationPhase = 0f;
-            public LODGroup lodGroup;
-            public int currentLOD = 0;
-            public TerrainFeature terrainFeature;
-            public MapObject mapObject;
-            public List<Vector3> borderPoints;
-            public Dictionary<string, object> metadata;
+        /// <summary>
+        /// Whether to enable interactive selection.
+        /// </summary>
+        public bool enableInteraction {
+            get => _enableInteraction;
+            set => _enableInteraction = value;
         }
         
-        [Serializable]
-        public class SegmentGroup {
-            public string groupId;
-            public List<SegmentVisualization> segments;
-            public Vector3 centerPoint;
-            public Color groupColor;
-            public List<GameObject> connectionLines;
-            public bool isExpanded = true;
+        /// <summary>
+        /// Currently selected object.
+        /// </summary>
+        public DetectedObject selectedObject {
+            get => _selectedObject;
         }
         
-        [Serializable]
-        public class InteractionState {
-            public SegmentVisualization hoveredSegment;
-            public SegmentVisualization selectedSegment;
-            public GameObject tooltipInstance;
-            public float hoverTime;
-            public Vector3 lastMousePosition;
-        }
-        
-        [Serializable]
-        public class PerformanceMetrics {
-            public int totalSegments;
-            public int visibleSegments;
-            public int culledSegments;
-            public float averageFrameTime;
-            public float peakMemoryUsage;
-            public int drawCalls;
-            public int triangleCount;
-            public int vertexCount;
-        }
         #endregion
-
         #region Private Fields
-        private Dictionary<string, SegmentVisualization> _segmentVisualizations;
-        private Dictionary<string, SegmentGroup> _segmentGroups;
-        private List<GameObject> _createdObjects;
-        private InteractionState _interactionState;
-        private PerformanceMetrics _performanceMetrics;
-        private Camera _mainCamera;
-        private Canvas _uiCanvas;
-        private MaterialPropertyBlock _propertyBlock;
-        private ComputeShader _segmentationShader;
-        private RenderTexture _segmentationRT;
-        private Coroutine _animationCoroutine;
-        private Coroutine _cullingCoroutine;
-        private Coroutine _interactionCoroutine;
-        private JobHandle _currentJob;
-        private NativeArray<float3> _segmentPositions;
-        private NativeArray<float> _segmentVisibility;
-        private bool _isProcessing = false;
         
-        // Initialize collections
-        private Dictionary<string, SegmentVisualization> _activeSegments = new Dictionary<string, SegmentVisualization>();
-        private Camera _camera;
+        private TraversifyDebugger _debugger;
+        private AnalysisResults _currentResults;
+        private Texture2D _baseTexture;
+        private Texture2D _overlayTexture;
+        private Texture2D _workingOverlay;
+        private List<GameObject> _labels = new List<GameObject>();
+        private Dictionary<int, GameObject> _labelsByObjectId = new Dictionary<int, GameObject>();
+        private Dictionary<int, RectTransform> _objectBoundRects = new Dictionary<int, RectTransform>();
+        private DetectedObject _selectedObject;
+        private DetectedObject _hoveredObject;
+        private int _selectedObjectId = -1;
+        private int _hoveredObjectId = -1;
+        private bool _isInitialized = false;
+        private Vector2 _baseImageSize;
+        private Vector2 _displaySize;
+        private Vector2 _displayOffset;
+        private float _displayScale;
+        private bool _isDirty = false;
+        private Color[] _originalOverlayPixels;
+        private Dictionary<int, Color> _objectColors = new Dictionary<int, Color>();
+        private Dictionary<int, Texture2D> _objectPreviews = new Dictionary<int, Texture2D>();
         
-        // Additional fields for TraversifyComponent implementation
-        private Dictionary<string, GameObject> _segmentOverlays = new Dictionary<string, GameObject>();
-        private Dictionary<string, GameObject> _segmentLabels = new Dictionary<string, GameObject>();
-        private List<SegmentVisualization> _fadingSegments = new List<SegmentVisualization>();
-        private bool _isVisualizationActive = false;
-        private AnalysisResults _currentAnalysisResults = null;
+        // Events
+        public event Action<DetectedObject> OnObjectSelected;
+        public event Action<DetectedObject> OnObjectDeselected;
+        public event Action<DetectedObject> OnObjectHovered;
+        public event Action<DetectedObject> OnObjectClicked;
+        
         #endregion
-
+        
         #region Initialization
-        private void Awake() {
-            Initialize();
-        }
         
-        private void Initialize() {
-            debugger = GetComponent<TraversifyDebugger>();
-            if (debugger == null) {
-                debugger = gameObject.AddComponent<TraversifyDebugger>();
-            }
-            
-            _segmentVisualizations = new Dictionary<string, SegmentVisualization>();
-            _segmentGroups = new Dictionary<string, SegmentGroup>();
-            _createdObjects = new List<GameObject>();
-            _interactionState = new InteractionState();
-            _performanceMetrics = new PerformanceMetrics();
-            _propertyBlock = new MaterialPropertyBlock();
-            
-            _mainCamera = Camera.main;
-            if (_mainCamera == null) {
-                _mainCamera = FindObjectOfType<Camera>();
-            }
-            
-            SetupUI();
-            LoadResources();
-            InitializeGradients();
-            
-            debugger.Log("SegmentationVisualizer initialized", LogCategory.Visualization);
-        }
-        
-        private void SetupUI() {
-            // Create UI canvas for labels and tooltips
-            GameObject canvasGO = new GameObject("SegmentationUI");
-            canvasGO.transform.SetParent(transform);
-            _uiCanvas = canvasGO.AddComponent<Canvas>();
-            _uiCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            _uiCanvas.sortingOrder = 100;
-            
-            var canvasScaler = canvasGO.AddComponent<CanvasScaler>();
-            canvasScaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            canvasScaler.referenceResolution = new Vector2(1920, 1080);
-            
-            canvasGO.AddComponent<GraphicRaycaster>();
-        }
-        
-        private void LoadResources() {
-            // Load compute shaders for GPU processing
-            if (SystemInfo.supportsComputeShaders) {
-                _segmentationShader = Resources.Load<ComputeShader>("Shaders/SegmentationCompute");
-                if (_segmentationShader == null) {
-                    debugger.LogWarning("Segmentation compute shader not found", LogCategory.Visualization);
-                }
-            }
-            
-            // Create default materials if not assigned
-            if (overlayMaterial == null) {
-                // Try URP shader first, then fallback to built-in
-                Shader shader = Shader.Find("Universal Render Pipeline/Unlit");
-                if (shader == null) {
-                    shader = Shader.Find("Unlit/Transparent");
-                    if (shader == null) {
-                        shader = Shader.Find("Sprites/Default");
-                        if (shader == null) {
-                            debugger.LogError("No suitable shader found for overlay material", LogCategory.Visualization);
-                            return;
-                        }
-                    }
-                }
-                
-                overlayMaterial = new Material(shader);
-                overlayMaterial.name = "DefaultOverlayMaterial";
-                
-                // Only set URP-specific properties if using URP shader
-                if (shader.name.Contains("Universal Render Pipeline")) {
-                    overlayMaterial.SetFloat("_Surface", 1); // Transparent
-                    overlayMaterial.SetFloat("_AlphaClip", 0);
-                    overlayMaterial.SetFloat("_Blend", 0);
-                }
-            }
-            
-            // Create default prefabs if not assigned
-            if (overlayPrefab == null) {
-                overlayPrefab = CreateDefaultOverlayPrefab();
-            }
-            
-            if (labelPrefab == null) {
-                labelPrefab = CreateDefaultLabelPrefab();
-            }
-            
-            if (tooltipPrefab == null) {
-                tooltipPrefab = CreateDefaultTooltipPrefab();
-            }
-        }
-        
-        private void InitializeGradients() {
-            if (confidenceGradient == null) {
-                confidenceGradient = new Gradient();
-                var colorKeys = new GradientColorKey[] {
-                    new GradientColorKey(Color.red, 0f),
-                    new GradientColorKey(Color.yellow, 0.5f),
-                    new GradientColorKey(Color.green, 1f)
-                };
-                var alphaKeys = new GradientAlphaKey[] {
-                    new GradientAlphaKey(1f, 0f),
-                    new GradientAlphaKey(1f, 1f)
-                };
-                confidenceGradient.SetKeys(colorKeys, alphaKeys);
-            }
-        }
-        #endregion
-
-        #region Main Visualization Pipeline
-        /// <summary>
-        /// Visualize segmentation results on terrain.
-        /// </summary>
-        public IEnumerator VisualizeSegments(
-            AnalysisResults results,
-            UnityEngine.Terrain terrain,
-            Texture2D sourceImage,
-            Action<List<GameObject>> onComplete,
-            Action<string> onError,
-            Action<float> onProgress
-        ) {
-            // Use SafeCoroutine to handle the main logic with error handling
-            yield return SafeCoroutine.Wrap(
-                InnerVisualizeSegments(results, terrain, sourceImage, onComplete, onProgress),
-                ex => {
-                    debugger.LogError($"Segmentation visualization failed: {ex.Message}", LogCategory.Visualization);
-                    onError?.Invoke($"Visualization error: {ex.Message}");
-                },
-                LogCategory.Visualization
-            );
-        }
-        
-        /// <summary>
-        /// Internal implementation of segment visualization without try-catch around yields.
-        /// </summary>
-        private IEnumerator InnerVisualizeSegments(
-            AnalysisResults results,
-            UnityEngine.Terrain terrain,
-            Texture2D sourceImage,
-            Action<List<GameObject>> onComplete,
-            Action<float> onProgress
-        ) {
-            ClearPrevious();
-            
-            if (results == null || terrain == null) {
-                throw new ArgumentException("Invalid parameters for visualization");
-            }
-            
-            debugger.Log($"Starting visualization of {results.terrainFeatures.Count} terrain features and {results.mapObjects.Count} objects", 
-                LogCategory.Visualization);
-            
-            // Step 1: Create segment visualizations
-            yield return CreateSegmentVisualizations(results, terrain, sourceImage, onProgress);
-            
-            // Step 2: Group similar segments if enabled
-            if (groupSimilarSegments) {
-                yield return GroupSegments(onProgress);
-            }
-            
-            // Step 3: Generate segment meshes
-            yield return GenerateSegmentMeshes(terrain, onProgress);
-            
-            // Step 4: Setup LODs if enabled
-            if (useLOD) {
-                SetupLODs();
-            }
-            
-            // Step 5: Create visual elements
-            yield return CreateVisualElements(terrain, onProgress);
-            
-            // Step 6: Setup animations
-            if (animateSegments) {
-                _animationCoroutine = StartCoroutine(AnimateSegments());
-            }
-            
-            // Step 7: Setup culling
-            if (cullInvisibleSegments) {
-                _cullingCoroutine = StartCoroutine(UpdateCulling());
-            }
-            
-            // Step 8: Setup interaction
-            if (enableInteraction) {
-                _interactionCoroutine = StartCoroutine(HandleInteraction());
-            }
-            
-            // Collect all created objects
-            var allObjects = new List<GameObject>();
-            allObjects.AddRange(_createdObjects);
-            foreach (var viz in _segmentVisualizations.Values) {
-                if (viz.overlayObject != null) allObjects.Add(viz.overlayObject);
-                if (viz.labelObject != null) allObjects.Add(viz.labelObject);
-                allObjects.AddRange(viz.borderObjects);
-            }
-            
-            float totalTime = debugger.StopTimer("SegmentVisualization");
-            debugger.Log($"Visualization completed in {totalTime:F2}s - Created {allObjects.Count} objects", 
-                LogCategory.Visualization);
-            
-            UpdatePerformanceMetrics();
-            onComplete?.Invoke(allObjects);
-        }
-        #endregion
-
-        #region Segment Creation
-        private IEnumerator CreateSegmentVisualizations(
-            AnalysisResults results,
-            UnityEngine.Terrain terrain,
-            Texture2D sourceImage,
-            Action<float> onProgress
-        ) {
-            int totalSegments = results.terrainFeatures.Count + results.mapObjects.Count;
-            int processedSegments = 0;
-            
-            // Process terrain features
-            foreach (var feature in results.terrainFeatures) {
-                var viz = CreateTerrainSegmentVisualization(feature, terrain, sourceImage);
-                _segmentVisualizations[viz.id] = viz;
-                
-                processedSegments++;
-                float progress = processedSegments / (float)totalSegments * 0.2f;
-                onProgress?.Invoke(progress);
-                
-                if (processedSegments % 10 == 0) yield return null;
-            }
-            
-            // Process map objects
-            foreach (var obj in results.mapObjects) {
-                var viz = CreateObjectSegmentVisualization(obj, terrain, sourceImage);
-                _segmentVisualizations[viz.id] = viz;
-                
-                processedSegments++;
-                float progress = processedSegments / (float)totalSegments * 0.2f;
-                onProgress?.Invoke(progress);
-                
-                if (processedSegments % 10 == 0) yield return null;
-            }
-            
-            debugger.Log($"Created {_segmentVisualizations.Count} segment visualizations", LogCategory.Visualization);
-        }
-        
-        private SegmentVisualization CreateTerrainSegmentVisualization(
-            TerrainFeature feature,
-            UnityEngine.Terrain terrain,
-            Texture2D sourceImage
-        ) {
-            var viz = new SegmentVisualization {
-                id = Guid.NewGuid().ToString(),
-                terrainFeature = feature,
-                bounds = CalculateWorldBounds(feature.boundingBox, terrain, sourceImage),
-                metadata = new Dictionary<string, object> {
-                    { "type", "terrain" },
-                    { "label", feature.label },
-                    { "elevation", feature.elevation },
-                    { "confidence", feature.confidence }
-                }
-            };
-            
-            // Extract border points from mask
-            if (feature.segmentMask != null) {
-                viz.borderPoints = ExtractBorderPoints(feature.segmentMask, feature.boundingBox);
-            }
-            
-            return viz;
-        }
-        
-        private SegmentVisualization CreateObjectSegmentVisualization(
-            MapObject mapObject,
-            UnityEngine.Terrain terrain,
-            Texture2D sourceImage
-        ) {
-            var viz = new SegmentVisualization {
-                id = Guid.NewGuid().ToString(),
-                mapObject = mapObject,
-                bounds = CalculateWorldBounds(mapObject.boundingBox, terrain, sourceImage),
-                metadata = new Dictionary<string, object> {
-                    { "type", "object" },
-                    { "label", mapObject.label },
-                    { "objectType", mapObject.type },
-                    { "confidence", mapObject.confidence },
-                    { "scale", mapObject.scale },
-                    { "rotation", mapObject.rotation }
-                }
-            };
-            
-            // Extract border points from mask
-            if (mapObject.segmentMask != null) {
-                viz.borderPoints = ExtractBorderPoints(mapObject.segmentMask, mapObject.boundingBox);
-            }
-            
-            return viz;
-        }
-        
-        private Bounds CalculateWorldBounds(Rect imageBounds, UnityEngine.Terrain terrain, Texture2D sourceImage) {
-            Vector3 terrainSize = terrain.terrainData.size;
-            Vector3 terrainPos = terrain.transform.position;
-            
-            // Convert image coordinates to world coordinates
-            float xMin = terrainPos.x + (imageBounds.xMin / sourceImage.width) * terrainSize.x;
-            float xMax = terrainPos.x + (imageBounds.xMax / sourceImage.width) * terrainSize.x;
-            float zMin = terrainPos.z + (imageBounds.yMin / sourceImage.height) * terrainSize.z;
-            float zMax = terrainPos.z + (imageBounds.yMax / sourceImage.height) * terrainSize.z;
-            
-            // Sample terrain height at corners
-            float[] heights = new float[4];
-            heights[0] = terrain.SampleHeight(new Vector3(xMin, 0, zMin));
-            heights[1] = terrain.SampleHeight(new Vector3(xMax, 0, zMin));
-            heights[2] = terrain.SampleHeight(new Vector3(xMin, 0, zMax));
-            heights[3] = terrain.SampleHeight(new Vector3(xMax, 0, zMax));
-            
-            float minHeight = heights.Min();
-            float maxHeight = heights.Max();
-            
-            Vector3 center = new Vector3((xMin + xMax) / 2f, (minHeight + maxHeight) / 2f + overlayYOffset, (zMin + zMax) / 2f);
-            Vector3 size = new Vector3(xMax - xMin, maxHeight - minHeight + overlayYOffset * 2f, zMax - zMin);
-            
-            return new Bounds(center, size);
-        }
-        
-        private List<Vector3> ExtractBorderPoints(Texture2D mask, Rect bounds) {
-            var borderPoints = new List<Vector3>();
-            
-            int width = mask.width;
-            int height = mask.height;
-            Color[] pixels = mask.GetPixels();
-            
-            // Find border pixels using edge detection
-            for (int y = 1; y < height - 1; y++) {
-                for (int x = 1; x < width - 1; x++) {
-                    int idx = y * width + x;
-                    
-                    if (pixels[idx].a > 0.5f) {
-                        // Check if this is a border pixel
-                        bool isBorder = false;
-                        
-                        // Check 4-connected neighbors
-                        if (pixels[idx - 1].a < 0.5f || pixels[idx + 1].a < 0.5f ||
-                            pixels[idx - width].a < 0.5f || pixels[idx + width].a < 0.5f) {
-                            isBorder = true;
-                        }
-                        
-                        if (isBorder) {
-                            // Convert to world position (relative to bounds)
-                            float u = x / (float)(width - 1);
-                            float v = y / (float)(height - 1);
-                            
-                            borderPoints.Add(new Vector3(u, 0, v));
-                        }
-                    }
-                }
-            }
-            
-            // Simplify border points using Douglas-Peucker algorithm
-            if (borderPoints.Count > 100) {
-                borderPoints = SimplifyPath(borderPoints, 0.01f);
-            }
-            
-            return borderPoints;
-        }
-        
-        private List<Vector3> SimplifyPath(List<Vector3> points, float tolerance) {
-            if (points.Count < 3) return points;
-            
-            // Douglas-Peucker algorithm
-            int firstPoint = 0;
-            int lastPoint = points.Count - 1;
-            List<int> pointIndexesToKeep = new List<int> { firstPoint, lastPoint };
-            
-            while (true) {
-                float maxDistance = 0;
-                int indexToAdd = -1;
-                
-                for (int i = 0; i < pointIndexesToKeep.Count - 1; i++) {
-                    for (int j = pointIndexesToKeep[i] + 1; j < pointIndexesToKeep[i + 1]; j++) {
-                        float distance = PerpendicularDistance(
-                            points[j],
-                            points[pointIndexesToKeep[i]],
-                            points[pointIndexesToKeep[i + 1]]
-                        );
-                        
-                        if (distance > maxDistance) {
-                            maxDistance = distance;
-                            indexToAdd = j;
-                        }
-                    }
-                }
-                
-                if (maxDistance > tolerance && indexToAdd != -1) {
-                    pointIndexesToKeep.Add(indexToAdd);
-                    pointIndexesToKeep.Sort();
-                } else {
-                    break;
-                }
-            }
-            
-            // Build simplified path
-            var simplified = new List<Vector3>();
-            foreach (int index in pointIndexesToKeep) {
-                simplified.Add(points[index]);
-            }
-            
-            return simplified;
-        }
-        
-        private float PerpendicularDistance(Vector3 point, Vector3 lineStart, Vector3 lineEnd) {
-            Vector3 line = lineEnd - lineStart;
-            float lineLength = line.magnitude;
-            
-            if (lineLength == 0) {
-                return Vector3.Distance(point, lineStart);
-            }
-            
-            float t = Mathf.Clamp01(Vector3.Dot(point - lineStart, line) / (lineLength * lineLength));
-            Vector3 projection = lineStart + t * line;
-            
-            return Vector3.Distance(point, projection);
-        }
-        #endregion
-
-        #region Mesh Generation
-        private IEnumerator GenerateSegmentMeshes(UnityEngine.Terrain terrain, Action<float> onProgress) {
-            int totalSegments = _segmentVisualizations.Count;
-            int processedSegments = 0;
-            
-            // Prepare native arrays for job system
-            if (useGPUInstancing) {
-                _segmentPositions = new NativeArray<float3>(totalSegments, Allocator.Persistent);
-                _segmentVisibility = new NativeArray<float>(totalSegments, Allocator.Persistent);
-            }
-            
-            foreach (var kvp in _segmentVisualizations) {
-                var viz = kvp.Value;
-                
-                switch (visualizationMode) {
-                    case VisualizationMode.Overlay:
-                        viz.segmentMesh = GenerateOverlayMesh(viz, terrain);
-                        break;
-                    case VisualizationMode.Outline:
-                        viz.segmentMesh = GenerateOutlineMesh(viz, terrain);
-                        break;
-                    case VisualizationMode.Fill:
-                        viz.segmentMesh = GenerateFillMesh(viz, terrain);
-                        break;
-                    case VisualizationMode.Wireframe:
-                        viz.segmentMesh = GenerateWireframeMesh(viz, terrain);
-                        break;
-                    case VisualizationMode.Heatmap:
-                        viz.segmentMesh = GenerateHeatmapMesh(viz, terrain);
-                        break;
-                    case VisualizationMode.Contour:
-                        viz.segmentMesh = GenerateContourMesh(viz, terrain);
-                        break;
-                }
-                
-                processedSegments++;
-                float progress = 0.2f + (processedSegments / (float)totalSegments * 0.2f);
-                onProgress?.Invoke(progress);
-                
-                if (processedSegments % 5 == 0) yield return null;
-            }
-            
-            debugger.Log($"Generated {processedSegments} segment meshes", LogCategory.Visualization);
-        }
-        
-        private Mesh GenerateOverlayMesh(SegmentVisualization viz, UnityEngine.Terrain terrain) {
-            var mesh = new Mesh();
-            mesh.name = $"Segment_{viz.id}_Overlay";
-            
-            // Get mask texture
-            Texture2D mask = null;
-            Rect bounds = Rect.zero;
-            
-            if (viz.terrainFeature != null) {
-                mask = viz.terrainFeature.segmentMask;
-                bounds = viz.terrainFeature.boundingBox;
-            } else if (viz.mapObject != null) {
-                mask = viz.mapObject.segmentMask;
-                bounds = viz.mapObject.boundingBox;
-            }
-            
-            if (mask == null) {
-                // Create simple quad mesh
-                return CreateQuadMesh(viz.bounds);
-            }
-            
-            // Generate mesh from mask
-            var vertices = new List<Vector3>();
-            var triangles = new List<int>();
-            var uvs = new List<Vector2>();
-            var colors = new List<Color>();
-            
-            int resolution = Mathf.Min(mask.width, mask.height, 64);
-            float stepX = mask.width / (float)resolution;
-            float stepY = mask.height / (float)resolution;
-            
-            // Generate vertices
-            for (int y = 0; y <= resolution; y++) {
-                for (int x = 0; x <= resolution; x++) {
-                    float u = x / (float)resolution;
-                    float v = y / (float)resolution;
-                    
-                    // Sample mask
-                    int maskX = Mathf.Clamp(Mathf.RoundToInt(x * stepX), 0, mask.width - 1);
-                    int maskY = Mathf.Clamp(Mathf.RoundToInt(y * stepY), 0, mask.height - 1);
-                    Color maskColor = mask.GetPixel(maskX, maskY);
-                    
-                    // Calculate world position
-                    Vector3 worldPos = new Vector3(
-                        viz.bounds.min.x + u * viz.bounds.size.x,
-                        0,
-                        viz.bounds.min.z + v * viz.bounds.size.z
-                    );
-                    
-                    // Sample terrain height
-                    worldPos.y = terrain.SampleHeight(worldPos) + overlayYOffset;
-                    
-                    vertices.Add(worldPos);
-                    uvs.Add(new Vector2(u, v));
-                    colors.Add(new Color(1, 1, 1, maskColor.a));
-                }
-            }
-            
-            // Generate triangles
-            for (int y = 0; y < resolution; y++) {
-                for (int x = 0; x < resolution; x++) {
-                    int idx = y * (resolution + 1) + x;
-                    
-                    // Check if center of quad is visible in mask
-                    float centerU = (x + 0.5f) / resolution;
-                    float centerV = (y + 0.5f) / resolution;
-                    int centerMaskX = Mathf.RoundToInt(centerU * mask.width);
-                    int centerMaskY = Mathf.RoundToInt(centerV * mask.height);
-                    
-                    if (centerMaskX >= 0 && centerMaskX < mask.width &&
-                        centerMaskY >= 0 && centerMaskY < mask.height) {
-                        
-                        Color centerColor = mask.GetPixel(centerMaskX, centerMaskY);
-                        if (centerColor.a > 0.1f) {
-                            // Add two triangles for the quad
-                            triangles.Add(idx);
-                            triangles.Add(idx + resolution + 1);
-                            triangles.Add(idx + 1);
-                            
-                            triangles.Add(idx + 1);
-                            triangles.Add(idx + resolution + 1);
-                            triangles.Add(idx + resolution + 2);
-                        }
-                    }
-                }
-            }
-            
-            mesh.SetVertices(vertices);
-            mesh.SetTriangles(triangles, 0);
-            mesh.SetUVs(0, uvs);
-            mesh.SetColors(colors);
-            mesh.RecalculateNormals();
-            mesh.RecalculateBounds();
-            mesh.RecalculateTangents();
-            
-            // Optimize mesh
-            mesh.Optimize();
-            
-            return mesh;
-        }
-        
-        private Mesh GenerateOutlineMesh(SegmentVisualization viz, UnityEngine.Terrain terrain) {
-            if (viz.borderPoints == null || viz.borderPoints.Count < 3) {
-                return null;
-            }
-            
-            var mesh = new Mesh();
-            mesh.name = $"Segment_{viz.id}_Outline";
-            
-            var vertices = new List<Vector3>();
-            var triangles = new List<int>();
-            var uvs = new List<Vector2>();
-            
-            // Convert border points to world space
-            foreach (var point in viz.borderPoints) {
-                Vector3 worldPos = new Vector3(
-                    viz.bounds.min.x + point.x * viz.bounds.size.x,
-                    0,
-                    viz.bounds.min.z + point.z * viz.bounds.size.z
-                );
-                worldPos.y = terrain.SampleHeight(worldPos) + overlayYOffset;
-                vertices.Add(worldPos);
-            }
-            
-            // Generate outline strip
-            float halfWidth = borderWidth * 0.5f;
-            
-            for (int i = 0; i < vertices.Count; i++) {
-                Vector3 current = vertices[i];
-                Vector3 prev = vertices[(i - 1 + vertices.Count) % vertices.Count];
-                Vector3 next = vertices[(i + 1) % vertices.Count];
-                
-                // Calculate normal direction
-                Vector3 dir1 = (current - prev).normalized;
-                Vector3 dir2 = (next - current).normalized;
-                Vector3 avgDir = (dir1 + dir2).normalized;
-                Vector3 normal = new Vector3(-avgDir.z, 0, avgDir.x);
-                
-                // Add vertices for inner and outer edge
-                vertices.Add(current - normal * halfWidth);
-                vertices.Add(current + normal * halfWidth);
-                
-                uvs.Add(new Vector2(i / (float)vertices.Count, 0));
-                uvs.Add(new Vector2(i / (float)vertices.Count, 1));
-            }
-            
-            // Generate triangles for the strip
-            for (int i = 0; i < vertices.Count; i++) {
-                int current = i * 2;
-                int next = ((i + 1) % vertices.Count) * 2;
-                
-                triangles.Add(current);
-                triangles.Add(next);
-                triangles.Add(current + 1);
-                
-                triangles.Add(current + 1);
-                triangles.Add(next);
-                triangles.Add(next + 1);
-            }
-            
-            mesh.SetVertices(vertices);
-            mesh.SetTriangles(triangles, 0);
-            mesh.SetUVs(0, uvs);
-            mesh.RecalculateNormals();
-            mesh.RecalculateBounds();
-            
-            return mesh;
-        }
-        
-        private Mesh CreateQuadMesh(Bounds bounds) {
-            var mesh = new Mesh();
-            
-            var vertices = new Vector3[] {
-                new Vector3(bounds.min.x, bounds.center.y, bounds.min.z),
-                new Vector3(bounds.max.x, bounds.center.y, bounds.min.z),
-                new Vector3(bounds.max.x, bounds.center.y, bounds.max.z),
-                new Vector3(bounds.min.x, bounds.center.y, bounds.max.z)
-            };
-            
-            var triangles = new int[] { 0, 1, 2, 0, 2, 3 };
-            var uvs = new Vector2[] {
-                new Vector2(0, 0),
-                new Vector2(1, 0),
-                new Vector2(1, 1),
-                new Vector2(0, 1)
-            };
-            
-            mesh.vertices = vertices;
-            mesh.triangles = triangles;
-            mesh.uv = uvs;
-            mesh.RecalculateNormals();
-            mesh.RecalculateBounds();
-            
-            return mesh;
-        }
-        #endregion
-
-        #region Visual Elements Creation
-        private IEnumerator CreateVisualElements(UnityEngine.Terrain terrain, Action<float> onProgress) {
-            int totalSegments = _segmentVisualizations.Count;
-            int processedSegments = 0;
-            
-            foreach (var kvp in _segmentVisualizations) {
-                var viz = kvp.Value;
-                
-                // Create overlay object
-                if (viz.segmentMesh != null) {
-                    viz.overlayObject = CreateOverlayObject(viz);
-                }
-                
-                // Create label
-                if (showSegmentInfo) {
-                    viz.labelObject = CreateLabelObject(viz);
-                }
-                
-                // Create borders if enabled
-                if (showSegmentBorders && viz.borderPoints != null) {
-                    viz.borderObjects = CreateBorderObjects(viz, terrain);
-                }
-                
-                processedSegments++;
-                float progress = 0.4f + (processedSegments / (float)totalSegments * 0.2f);
-                onProgress?.Invoke(progress);
-                
-                if (processedSegments % 5 == 0) yield return null;
-            }
-            
-            debugger.Log($"Created visual elements for {processedSegments} segments", LogCategory.Visualization);
-        }
-        
-        private GameObject CreateOverlayObject(SegmentVisualization viz) {
-            GameObject overlayGO = overlayPrefab ? Instantiate(overlayPrefab) : new GameObject($"Overlay_{viz.id}");
-            overlayGO.transform.SetParent(transform);
-            
-            // Add mesh components
-            MeshFilter meshFilter = overlayGO.GetComponent<MeshFilter>();
-            if (meshFilter == null) meshFilter = overlayGO.AddComponent<MeshFilter>();
-            meshFilter.sharedMesh = viz.segmentMesh;
-            
-            MeshRenderer renderer = overlayGO.GetComponent<MeshRenderer>();
-            if (renderer == null) renderer = overlayGO.AddComponent<MeshRenderer>();
-            
-            // Create instance material
-            viz.instanceMaterial = new Material(overlayMaterial);
-            viz.instanceMaterial.name = $"SegmentMaterial_{viz.id}";
-            
-            // Set color
-            Color segmentColor = Color.white;
-            if (viz.terrainFeature != null) {
-                segmentColor = viz.terrainFeature.segmentColor;
-            } else if (viz.mapObject != null) {
-                segmentColor = viz.mapObject.segmentColor;
-            }
-            
-            viz.instanceMaterial.SetColor("_BaseColor", new Color(segmentColor.r, segmentColor.g, segmentColor.b, 0));
-            renderer.sharedMaterial = viz.instanceMaterial;
-            
-            // Configure renderer
-            renderer.shadowCastingMode = castShadows ? ShadowCastingMode.On : ShadowCastingMode.Off;
-            renderer.receiveShadows = receiveShadows;
-            
-            // Add to created objects
-            _createdObjects.Add(overlayGO);
-            
-            return overlayGO;
-        }
-        
-        private GameObject CreateLabelObject(SegmentVisualization viz) {
-            GameObject labelGO = labelPrefab ? Instantiate(labelPrefab) : new GameObject($"Label_{viz.id}");
-            
-            // Position label at segment center
-            Vector3 labelPos = viz.bounds.center;
-            labelPos.y += labelYOffset;
-            labelGO.transform.position = labelPos;
-            
-            // Create or configure text component
-            TextMeshPro textMesh = labelGO.GetComponentInChildren<TextMeshPro>();
-            if (textMesh == null) {
-                textMesh = labelGO.AddComponent<TextMeshPro>();
-            }
-            
-            // Set text content
-            string labelText = GetSegmentLabel(viz);
-            textMesh.text = labelText;
-            // Fix: Check if labelFont is actually a TMP_FontAsset, otherwise use default
-            if (labelFont != null) {
-                textMesh.font = labelFont;
-            }
-            textMesh.fontSize = labelFontSize;
-            textMesh.color = labelTextColor;
-            textMesh.alignment = TextAlignmentOptions.Center;
-            
-            // Add background if needed
-            if (labelBackgroundColor.a > 0) {
-                GameObject backgroundGO = new GameObject("Background");
-                backgroundGO.transform.SetParent(labelGO.transform, false);
-                
-                Image background = backgroundGO.AddComponent<Image>();
-                background.color = labelBackgroundColor;
-                
-                // Size background to text
-                RectTransform bgRect = backgroundGO.GetComponent<RectTransform>();
-                bgRect.sizeDelta = new Vector2(textMesh.preferredWidth + 20, textMesh.preferredHeight + 10);
-                bgRect.anchoredPosition = Vector2.zero;
-                
-                // Move text in front of background
-                textMesh.transform.SetAsLastSibling();
-            }
-            
-            // Add billboard component if needed
-            if (billboardLabels) {
-                labelGO.AddComponent<Billboard>();
-            }
-            
-            // Add distance scaling if enabled
-            if (scaleLabelsWithDistance) {
-                // Note: DistanceScaler component needs to be implemented or use existing Unity component
-                // For now, we'll comment this out to avoid the missing type error
-                /*
-                var scaler = labelGO.AddComponent<DistanceScaler>();
-                scaler.minScale = labelMinScale;
-                scaler.maxScale = labelMaxScale;
-                scaler.referenceDistance = fadeStartDistance;
-                */
-            }
-            
-            labelGO.transform.SetParent(transform);
-            _createdObjects.Add(labelGO);
-            
-            return labelGO;
-        }
-        
-        private List<GameObject> CreateBorderObjects(SegmentVisualization viz, UnityEngine.Terrain terrain) {
-            var borderObjects = new List<GameObject>();
-            
-            if (viz.borderPoints == null || viz.borderPoints.Count < 2) {
-                return borderObjects;
-            }
-            
-            // Create line renderer for border
-            GameObject borderGO = new GameObject($"Border_{viz.id}");
-            borderGO.transform.SetParent(transform);
-            
-            LineRenderer lineRenderer = borderGO.AddComponent<LineRenderer>();
-            lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
-            lineRenderer.startColor = borderColor;
-            lineRenderer.endColor = borderColor;
-            lineRenderer.startWidth = borderWidth * 0.1f;
-            lineRenderer.endWidth = borderWidth * 0.1f;
-            lineRenderer.useWorldSpace = true;
-            
-            // Convert border points to world space
-            var worldPoints = new Vector3[viz.borderPoints.Count + 1];
-            for (int i = 0; i < viz.borderPoints.Count; i++) {
-                Vector3 point = viz.borderPoints[i];
-                Vector3 worldPos = new Vector3(
-                    viz.bounds.min.x + point.x * viz.bounds.size.x,
-                    0,
-                    viz.bounds.min.z + point.z * viz.bounds.size.z
-                );
-                worldPos.y = terrain.SampleHeight(worldPos) + overlayYOffset + 0.1f;
-                worldPoints[i] = worldPos;
-            }
-            
-            // Close the loop
-            worldPoints[worldPoints.Length - 1] = worldPoints[0];
-            
-            lineRenderer.positionCount = worldPoints.Length;
-            lineRenderer.SetPositions(worldPoints);
-            
-            borderObjects.Add(borderGO);
-            _createdObjects.Add(borderGO);
-            
-            return borderObjects;
-        }
-        
-        private string GetSegmentLabel(SegmentVisualization viz) {
-            string label = "";
-            
-            switch (infoDisplayMode) {
-                case InfoDisplayMode.Simplified:
-                    if (viz.terrainFeature != null) {
-                        label = viz.terrainFeature.label;
-                    } else if (viz.mapObject != null) {
-                        label = viz.mapObject.label;
-                    }
-                    break;
-                    
-                case InfoDisplayMode.Detailed:
-                    if (viz.terrainFeature != null) {
-                        label = $"{viz.terrainFeature.label}\n";
-                        if (showElevationData) {
-                            label += $"Elev: {viz.terrainFeature.elevation:F1}m\n";
-                        }
-                        if (showConfidenceIndicators) {
-                            label += $"Conf: {viz.terrainFeature.confidence:P0}";
-                        }
-                    } else if (viz.mapObject != null) {
-                        label = $"{viz.mapObject.label}\n{viz.mapObject.type}";
-                        if (showConfidenceIndicators) {
-                            label += $"\nConf: {viz.mapObject.confidence:P0}";
-                        }
-                    }
-                    break;
-                    
-                case InfoDisplayMode.Technical:
-                    if (viz.metadata != null) {
-                        foreach (var kvp in viz.metadata.Take(5)) {
-                            label += $"{kvp.Key}: {kvp.Value}\n";
-                        }
-                    }
-                    break;
-            }
-            
-            return label.TrimEnd('\n');
-        }
-        #endregion
-
-        #region Grouping
-        private IEnumerator GroupSegments(Action<float> onProgress) {
-            debugger.Log("Grouping similar segments", LogCategory.Visualization);
-            
-            var segments = _segmentVisualizations.Values.ToList();
-            var processed = new HashSet<SegmentVisualization>();
-            
-            foreach (var segment in segments) {
-                if (processed.Contains(segment)) continue;
-                
-                var group = new SegmentGroup {
-                    groupId = Guid.NewGuid().ToString(),
-                    segments = new List<SegmentVisualization> { segment },
-                    groupColor = segment.terrainFeature?.segmentColor ?? segment.mapObject?.segmentColor ?? Color.white
-                };
-                
-                processed.Add(segment);
-                
-                // Find similar segments
-                foreach (var other in segments) {
-                    if (!processed.Contains(other) && CalculateSimilarity(segment, other) >= groupingSimilarityThreshold) {
-                        group.segments.Add(other);
-                        processed.Add(other);
-                    }
-                }
-                
-                // Calculate group center
-                Vector3 centerSum = Vector3.zero;
-                foreach (var seg in group.segments) {
-                    centerSum += seg.bounds.center;
-                }
-                group.centerPoint = centerSum / group.segments.Count;
-                
-                _segmentGroups[group.groupId] = group;
-                
-                yield return null;
-            }
-            
-            debugger.Log($"Created {_segmentGroups.Count} segment groups", LogCategory.Visualization);
-            onProgress?.Invoke(0.3f);
-            
-            // Create group connections if enabled
-            if (showGroupConnections) {
-                yield return CreateGroupConnections();
-            }
-        }
-        
-        private float CalculateSimilarity(SegmentVisualization seg1, SegmentVisualization seg2) {
-            float similarity = 0f;
-            
-            // Type similarity
-            bool bothTerrain = seg1.terrainFeature != null && seg2.terrainFeature != null;
-            bool bothObject = seg1.mapObject != null && seg2.mapObject != null;
-            
-            if (bothTerrain) {
-                if (seg1.terrainFeature.label == seg2.terrainFeature.label) {
-                    similarity += 0.5f;
-                }
-                
-                // Elevation similarity
-                float elevDiff = Mathf.Abs(seg1.terrainFeature.elevation - seg2.terrainFeature.elevation);
-                similarity += (1f - Mathf.Clamp01(elevDiff / 100f)) * 0.3f;
-            } else if (bothObject) {
-                if (seg1.mapObject.type == seg2.mapObject.type) {
-                    similarity += 0.5f;
-                }
-                
-                // Scale similarity
-                float scaleDiff = Vector3.Distance(seg1.mapObject.scale, seg2.mapObject.scale);
-                similarity += (1f - Mathf.Clamp01(scaleDiff)) * 0.3f;
-            } else {
-                return 0f; // Different types
-            }
-            
-            // Spatial proximity
-            float distance = Vector3.Distance(seg1.bounds.center, seg2.bounds.center);
-            float maxDist = Mathf.Max(fadeEndDistance, 100f);
-            similarity += (1f - Mathf.Clamp01(distance / maxDist)) * 0.2f;
-            
-            return similarity;
-        }
-        
-        private IEnumerator CreateGroupConnections() {
-            foreach (var group in _segmentGroups.Values) {
-                if (group.segments.Count < 2) continue;
-                
-                group.connectionLines = new List<GameObject>();
-                
-                // Create connections between segments in group
-                for (int i = 0; i < group.segments.Count - 1; i++) {
-                    for (int j = i + 1; j < group.segments.Count; j++) {
-                        var seg1 = group.segments[i];
-                        var seg2 = group.segments[j];
-                        
-                        GameObject lineGO = connectionLinePrefab ? 
-                            Instantiate(connectionLinePrefab.gameObject) : 
-                            new GameObject($"Connection_{group.groupId}_{i}_{j}");
-                        
-                        lineGO.transform.SetParent(transform);
-                        
-                        LineRenderer line = lineGO.GetComponent<LineRenderer>();
-                        if (line == null) line = lineGO.AddComponent<LineRenderer>();
-                        
-                        line.startColor = connectionColor;
-                        line.endColor = connectionColor;
-                        line.startWidth = 0.1f;
-                        line.endWidth = 0.1f;
-                        
-                        // Create curved connection
-                        Vector3 start = seg1.bounds.center;
-                        Vector3 end = seg2.bounds.center;
-                        Vector3 mid = (start + end) / 2f + Vector3.up * 5f;
-                        
-                        var curvePoints = new Vector3[10];
-                        for (int k = 0; k < 10; k++) {
-                            float t = k / 9f;
-                            curvePoints[k] = QuadraticBezier(start, mid, end, t);
-                        }
-                        
-                        line.positionCount = curvePoints.Length;
-                        line.SetPositions(curvePoints);
-                        
-                        group.connectionLines.Add(lineGO);
-                        _createdObjects.Add(lineGO);
-                    }
-                }
-                
-                yield return null;
-            }
-        }
-        
-        private Vector3 QuadraticBezier(Vector3 p0, Vector3 p1, Vector3 p2, float t) {
-            float u = 1f - t;
-            return u * u * p0 + 2f * u * t * p1 + t * t * p2;
-        }
-        #endregion
-
-        #region Animation
-        private IEnumerator AnimateSegments() {
-            while (true) {
-                float deltaTime = Time.deltaTime;
-                
-                foreach (var viz in _segmentVisualizations.Values) {
-                    if (!viz.isVisible) continue;
-                    
-                    // Update animation phase
-                    viz.animationPhase += deltaTime * animationSpeed;
-                    
-                    switch (animationStyle) {
-                        case AnimationStyle.Pulse:
-                            AnimatePulse(viz);
-                            break;
-                        case AnimationStyle.Wave:
-                            AnimateWave(viz);
-                            break;
-                        case AnimationStyle.Rotate:
-                            AnimateRotate(viz);
-                            break;
-                        case AnimationStyle.Float:
-                            AnimateFloat(viz);
-                            break;
-                        case AnimationStyle.Shimmer:
-                            AnimateShimmer(viz);
-                            break;
-                    }
-                    
-                    // Update opacity based on distance
-                    if (useDistanceBasedOpacity && _mainCamera != null) {
-                        float distance = Vector3.Distance(_mainCamera.transform.position, viz.bounds.center);
-                        float targetOpacity = 1f;
-                        
-                        if (distance > fadeEndDistance) {
-                            targetOpacity = 0f;
-                        } else if (distance > fadeStartDistance) {
-                            targetOpacity = 1f - (distance - fadeStartDistance) / (fadeEndDistance - fadeStartDistance);
-                        }
-                        
-                        targetOpacity *= overlayOpacity;
-                        
-                        // Smooth opacity transition
-                        viz.opacity = Mathf.Lerp(viz.opacity, targetOpacity, deltaTime * 2f);
-                        
-                        if (viz.instanceMaterial != null) {
-                            Color color = viz.instanceMaterial.GetColor("_BaseColor");
-                            color.a = viz.opacity;
-                            viz.instanceMaterial.SetColor("_BaseColor", color);
-                        }
-                    }
-                }
-                
-                yield return null;
-            }
-        }
-        
-        private void AnimatePulse(SegmentVisualization viz) {
-            float pulse = Mathf.Sin(viz.animationPhase * Mathf.PI * 2f) * 0.5f + 0.5f;
-            
-            if (viz.instanceMaterial != null) {
-                // Pulse opacity
-                Color color = viz.instanceMaterial.GetColor("_BaseColor");
-                float baseAlpha = viz.opacity;
-                color.a = baseAlpha * (0.5f + pulse * 0.5f);
-                viz.instanceMaterial.SetColor("_BaseColor", color);
-                
-                // Pulse emission if using lit shader
-                if (viz.instanceMaterial.HasProperty("_EmissionColor")) {
-                    Color emissionColor = color * pulse * 0.5f;
-                    viz.instanceMaterial.SetColor("_EmissionColor", emissionColor);
-                }
-            }
-        }
-        
-        private void AnimateWave(SegmentVisualization viz) {
-            if (viz.overlayObject == null) return;
-            
-            float wave = Mathf.Sin(viz.animationPhase * Mathf.PI * 2f + viz.bounds.center.x * 0.1f);
-            Vector3 pos = viz.overlayObject.transform.position;
-            pos.y = viz.bounds.center.y + overlayYOffset + wave * 0.5f;
-            viz.overlayObject.transform.position = pos;
-        }
-        
-        private void AnimateRotate(SegmentVisualization viz) {
-            if (viz.overlayObject == null) return;
-            
-            viz.overlayObject.transform.rotation = Quaternion.Euler(0, viz.animationPhase * 360f, 0);
-        }
-        
-        private void AnimateFloat(SegmentVisualization viz) {
-            if (viz.overlayObject == null) return;
-            
-            float floatY = Mathf.Sin(viz.animationPhase * Mathf.PI) * 0.5f;
-            float floatX = Mathf.Sin(viz.animationPhase * Mathf.PI * 0.7f) * 0.2f;
-            
-            Vector3 pos = viz.bounds.center;
-            pos.y += overlayYOffset + floatY;
-            pos.x += floatX;
-            viz.overlayObject.transform.position = pos;
-        }
-        
-        private void AnimateShimmer(SegmentVisualization viz) {
-            if (viz.instanceMaterial == null) return;
-            
-            // Animate texture offset for shimmer effect
-            if (viz.instanceMaterial.HasProperty("_MainTex_ST")) {
-                Vector2 offset = new Vector2(
-                    Mathf.Sin(viz.animationPhase) * 0.1f,
-                    Mathf.Cos(viz.animationPhase * 0.7f) * 0.1f
-                );
-                viz.instanceMaterial.SetTextureOffset("_MainTex", offset);
-            }
-        }
-        #endregion
-
-        #region Culling
-        private IEnumerator UpdateCulling() {
-            while (cullInvisibleSegments) {
-                if (_mainCamera == null) {
-                    yield return new WaitForSeconds(cullingUpdateInterval);
-                    continue;
-                }
-                
-                var cameraFrustum = GeometryUtility.CalculateFrustumPlanes(_mainCamera);
-                int visibleCount = 0;
-                int culledCount = 0;
-                
-                foreach (var viz in _segmentVisualizations.Values) {
-                    bool isVisible = GeometryUtility.TestPlanesAABB(cameraFrustum, viz.bounds);
-                    
-                    if (isVisible != viz.isVisible) {
-                        viz.isVisible = isVisible;
-                        
-                        // Enable/disable objects
-                        if (viz.overlayObject != null) viz.overlayObject.SetActive(isVisible);
-                        if (viz.labelObject != null) viz.labelObject.SetActive(isVisible);
-                        foreach (var border in viz.borderObjects) {
-                            if (border != null) border.SetActive(isVisible);
-                        }
-                    }
-                    
-                    if (isVisible) visibleCount++;
-                    else culledCount++;
-                }
-                
-                _performanceMetrics.visibleSegments = visibleCount;
-                _performanceMetrics.culledSegments = culledCount;
-                
-                yield return new WaitForSeconds(cullingUpdateInterval);
-            }
-        }
-        #endregion
-
-        #region Interaction
-        private IEnumerator HandleInteraction() {
-            while (enableInteraction) {
-                if (_mainCamera == null) {
-                    yield return null;
-                    continue;
-                }
-                
-                // Update hover state
-                Ray ray = _mainCamera.ScreenPointToRay(Input.mousePosition);
-                RaycastHit hit;
-                
-                SegmentVisualization hoveredSegment = null;
-                
-                if (Physics.Raycast(ray, out hit, interactionDistance, interactionLayerMask)) {
-                    // Find segment at hit point
-                    foreach (var viz in _segmentVisualizations.Values) {
-                        if (viz.bounds.Contains(hit.point)) {
-                            hoveredSegment = viz;
-                            break;
-                        }
-                    }
-                }
-                
-                // Update hover state
-                if (hoveredSegment != _interactionState.hoveredSegment) {
-                    // Clear previous hover
-                    if (_interactionState.hoveredSegment != null && highlightOnHover) {
-                        SetSegmentHighlight(_interactionState.hoveredSegment, false);
-                    }
-                    
-                    _interactionState.hoveredSegment = hoveredSegment;
-                    _interactionState.hoverTime = 0f;
-                    
-                    // Apply new hover
-                    if (hoveredSegment != null && highlightOnHover) {
-                        SetSegmentHighlight(hoveredSegment, true);
-                    }
-                }
-                
-                // Update hover time
-                if (_interactionState.hoveredSegment != null) {
-                    _interactionState.hoverTime += Time.deltaTime;
-                    
-                    // Show tooltip after delay
-                    if (showTooltips && _interactionState.hoverTime > 0.5f) {
-                        ShowTooltip(_interactionState.hoveredSegment);
-                    }
-                }
-                
-                // Handle click
-                if (Input.GetMouseButtonDown(0) && _interactionState.hoveredSegment != null) {
-                    SelectSegment(_interactionState.hoveredSegment);
-                }
-                
-                _interactionState.lastMousePosition = Input.mousePosition;
-                yield return null;
-            }
-        }
-        
-        private void SetSegmentHighlight(SegmentVisualization viz, bool highlighted) {
-            viz.isHighlighted = highlighted;
-            
-            if (viz.instanceMaterial != null) {
-                if (highlighted) {
-                    viz.instanceMaterial.SetColor("_EmissionColor", highlightColor * highlightIntensity);
-                    viz.instanceMaterial.EnableKeyword("_EMISSION");
-                } else {
-                    viz.instanceMaterial.DisableKeyword("_EMISSION");
-                }
-            }
-            
-            // Scale label if highlighted
-            if (viz.labelObject != null) {
-                float targetScale = highlighted ? 1.2f : 1f;
-                viz.labelObject.transform.localScale = Vector3.one * targetScale;
-            }
-        }
-        
-        private void SelectSegment(SegmentVisualization viz) {
-            // Deselect previous
-            if (_interactionState.selectedSegment != null) {
-                // Handle deselection
-            }
-            
-            _interactionState.selectedSegment = viz;
-            
-            // Trigger selection event
-            debugger.Log($"Selected segment: {viz.id}", LogCategory.Visualization);
-            
-            // Show detailed info
-            if (infoDisplayMode != InfoDisplayMode.None) {
-                UpdateSegmentInfo(viz);
-            }
-        }
-        
-        private void ShowTooltip(SegmentVisualization viz) {
-            if (_interactionState.tooltipInstance != null) {
-                Destroy(_interactionState.tooltipInstance);
-            }
-            
-            _interactionState.tooltipInstance = Instantiate(tooltipPrefab, _uiCanvas.transform);
-            
-            // Position tooltip near cursor
-            RectTransform rect = _interactionState.tooltipInstance.GetComponent<RectTransform>();
-            if (rect != null) {
-                rect.position = Input.mousePosition + new Vector3(20, -20, 0);
-            }
-            
-            // Set tooltip content
-            TextMeshProUGUI tooltipText = _interactionState.tooltipInstance.GetComponentInChildren<TextMeshProUGUI>();
-            if (tooltipText != null) {
-                tooltipText.text = GetTooltipText(viz);
-            }
-        }
-        
-        private string GetTooltipText(SegmentVisualization viz) {
-            var sb = new System.Text.StringBuilder();
-            
-            if (viz.terrainFeature != null) {
-                sb.AppendLine($"<b>{viz.terrainFeature.label}</b>");
-                sb.AppendLine($"Type: Terrain Feature");
-                sb.AppendLine($"Elevation: {viz.terrainFeature.elevation:F1}m");
-                sb.AppendLine($"Confidence: {viz.terrainFeature.confidence:P0}");
-                
-                if (showAreaMetrics) {
-                    float area = viz.bounds.size.x * viz.bounds.size.z;
-                    sb.AppendLine($"Area: {area:F0} m²");
-                }
-            } else if (viz.mapObject != null) {
-                sb.AppendLine($"<b>{viz.mapObject.label}</b>");
-                sb.AppendLine($"Type: {viz.mapObject.type}");
-                sb.AppendLine($"Confidence: {viz.mapObject.confidence:P0}");
-                
-                if (!string.IsNullOrEmpty(viz.mapObject.enhancedDescription)) {
-                    sb.AppendLine($"Description: {viz.mapObject.enhancedDescription}");
-                }
-            }
-            
-            return sb.ToString().TrimEnd();
-        }
-        
-        private void UpdateSegmentInfo(SegmentVisualization viz) {
-            // Update UI panel with detailed segment information
-            // This would update a dedicated UI panel with comprehensive info
-        }
-        #endregion
-
-        #region LOD Setup
-        private void SetupLODs() {
-            foreach (var viz in _segmentVisualizations.Values) {
-                if (viz.overlayObject == null) continue;
-                
-                LODGroup lodGroup = viz.overlayObject.GetComponent<LODGroup>();
-                if (lodGroup == null) {
-                    lodGroup = viz.overlayObject.AddComponent<LODGroup>();
-                }
-                
-                viz.lodGroup = lodGroup;
-                
-                // Create LOD levels
-                var lods = new LOD[lodDistances.Length + 1];
-                
-                // LOD 0 - Full detail
-                var renderers = viz.overlayObject.GetComponentsInChildren<Renderer>();
-                lods[0] = new LOD(                0.6f, renderers);
-                
-                // Create simplified meshes for other LODs
-                if (viz.segmentMesh != null) {
-                    for (int i = 0; i < lodDistances.Length; i++) {
-                        float screenRelativeHeight = 1f / (lodDistances[i] / 10f);
-                        
-                        // Create LOD mesh
-                        Mesh lodMesh = CreateLODMesh(viz.segmentMesh, i + 1);
-                        if (lodMesh != null) {
-                            // Create LOD object
-                            GameObject lodObject = new GameObject($"LOD{i + 1}");
-                            lodObject.transform.SetParent(viz.overlayObject.transform, false);
-                            
-                            MeshFilter lodMeshFilter = lodObject.AddComponent<MeshFilter>();
-                            lodMeshFilter.sharedMesh = lodMesh;
-                            
-                            MeshRenderer lodRenderer = lodObject.AddComponent<MeshRenderer>();
-                            lodRenderer.sharedMaterial = viz.instanceMaterial;
-                            lodRenderer.shadowCastingMode = renderers[0].shadowCastingMode;
-                            lodRenderer.receiveShadows = renderers[0].receiveShadows;
-                            
-                            lods[i + 1] = new LOD(screenRelativeHeight, new Renderer[] { lodRenderer });
-                        }
-                    }
-                }
-                
-                lodGroup.SetLODs(lods);
-                lodGroup.RecalculateBounds();
-            }
-        }
-        
-        private Mesh CreateLODMesh(Mesh originalMesh, int lodLevel) {
-            // Simple mesh decimation based on LOD level
-            float reductionFactor = 1f / (lodLevel + 1);
-            
-            var lodMesh = Instantiate(originalMesh);
-            lodMesh.name = originalMesh.name + $"_LOD{lodLevel}";
-            
-            // For now, just use Unity's built-in simplification
-            // In production, use a proper mesh decimation algorithm
-            if (lodLevel == 1) {
-                // 50% reduction
-                lodMesh = SimplifyMesh(lodMesh, 0.5f);
-            } else if (lodLevel == 2) {
-                // 75% reduction
-                lodMesh = SimplifyMesh(lodMesh, 0.25f);
-            } else {
-                // 90% reduction
-                lodMesh = SimplifyMesh(lodMesh, 0.1f);
-            }
-            
-            return lodMesh;
-        }
-        
-        private Mesh SimplifyMesh(Mesh mesh, float quality) {
-            // Basic mesh simplification
-            // In production, use Unity.Mesh.Simplifier or similar
-            var simplifiedMesh = new Mesh();
-            simplifiedMesh.name = mesh.name + "_Simplified";
-            
-            // For demonstration, just copy with reduced vertex count
-            var vertices = mesh.vertices;
-            var triangles = mesh.triangles;
-            
-            // Skip vertices based on quality
-            int step = Mathf.Max(1, Mathf.RoundToInt(1f / quality));
-            var newVertices = new List<Vector3>();
-            var vertexMap = new Dictionary<int, int>();
-            
-            for (int i = 0; i < vertices.Length; i += step) {
-                vertexMap[i] = newVertices.Count;
-                newVertices.Add(vertices[i]);
-            }
-            
-            // Remap triangles
-            var newTriangles = new List<int>();
-            for (int i = 0; i < triangles.Length; i += 3) {
-                int v0 = triangles[i];
-                int v1 = triangles[i + 1];
-                int v2 = triangles[i + 2];
-                
-                // Find nearest mapped vertices
-                int newV0 = FindNearestMappedVertex(v0, vertexMap, step);
-                int newV1 = FindNearestMappedVertex(v1, vertexMap, step);
-                int newV2 = FindNearestMappedVertex(v2, vertexMap, step);
-                
-                // Skip degenerate triangles
-                if (newV0 != newV1 && newV1 != newV2 && newV2 != newV0) {
-                    newTriangles.Add(vertexMap[newV0]);
-                    newTriangles.Add(vertexMap[newV1]);
-                    newTriangles.Add(vertexMap[newV2]);
-                }
-            }
-            
-            simplifiedMesh.vertices = newVertices.ToArray();
-            simplifiedMesh.triangles = newTriangles.ToArray();
-            simplifiedMesh.RecalculateNormals();
-            simplifiedMesh.RecalculateBounds();
-            
-            return simplifiedMesh;
-        }
-        
-        private int FindNearestMappedVertex(int vertex, Dictionary<int, int> vertexMap, int step) {
-            // Find the nearest vertex that was included in the simplified mesh
-            int nearestMapped = (vertex / step) * step;
-            if (vertexMap.ContainsKey(nearestMapped)) {
-                return nearestMapped;
-            }
-            
-            // Search nearby vertices
-            for (int offset = 1; offset < step; offset++) {
-                if (vertexMap.ContainsKey(nearestMapped + offset)) {
-                    return nearestMapped + offset;
-                }
-                if (nearestMapped - offset >= 0 && vertexMap.ContainsKey(nearestMapped - offset)) {
-                    return nearestMapped - offset;
-                }
-            }
-            
-            return nearestMapped;
-        }
-        #endregion
-
-        #region Performance Monitoring
-        private void UpdatePerformanceMetrics() {
-            _performanceMetrics.totalSegments = _segmentVisualizations.Count;
-            _performanceMetrics.drawCalls = 0;
-            _performanceMetrics.triangleCount = 0;
-            _performanceMetrics.vertexCount = 0;
-            
-            foreach (var viz in _segmentVisualizations.Values) {
-                if (viz.segmentMesh != null) {
-                    _performanceMetrics.triangleCount += viz.segmentMesh.triangles.Length / 3;
-                    _performanceMetrics.vertexCount += viz.segmentMesh.vertexCount;
-                }
-                
-                if (viz.overlayObject != null && viz.overlayObject.activeInHierarchy) {
-                    _performanceMetrics.drawCalls++;
-                }
-            }
-            
-            // Update memory usage
-            _performanceMetrics.peakMemoryUsage = UnityEngine.Profiling.Profiler.GetTotalAllocatedMemoryLong() / (1024f * 1024f);
-            
-            if (showPerformanceStats) {
-                LogPerformanceStats();
-            }
-        }
-        
-        private void LogPerformanceStats() {
-            debugger.Log($"=== Segmentation Performance ===", LogCategory.Visualization);
-            debugger.Log($"Total Segments: {_performanceMetrics.totalSegments}", LogCategory.Visualization);
-            debugger.Log($"Visible: {_performanceMetrics.visibleSegments} | Culled: {_performanceMetrics.culledSegments}", LogCategory.Visualization);
-            debugger.Log($"Draw Calls: {_performanceMetrics.drawCalls}", LogCategory.Visualization);
-            debugger.Log($"Triangles: {_performanceMetrics.triangleCount:N0} | Vertices: {_performanceMetrics.vertexCount:N0}", LogCategory.Visualization);
-            debugger.Log($"Memory: {_performanceMetrics.peakMemoryUsage:F1} MB", LogCategory.Visualization);
-        }
-        #endregion
-
-        #region Specialized Visualization Modes
-        private Mesh GenerateFillMesh(SegmentVisualization viz, UnityEngine.Terrain terrain) {
-            // Create a filled mesh that follows terrain contours
-            var mesh = GenerateOverlayMesh(viz, terrain);
-            if (mesh == null) return null;
-            
-            // Make it double-sided for fill visualization
-            var vertices = mesh.vertices;
-            var triangles = mesh.triangles;
-            var newTriangles = new int[triangles.Length * 2];
-            
-            // Copy original triangles
-            System.Array.Copy(triangles, 0, newTriangles, 0, triangles.Length);
-            
-            // Add reversed triangles for back face
-            for (int i = 0; i < triangles.Length; i += 3) {
-                newTriangles[triangles.Length + i] = triangles[i + 2];
-                newTriangles[triangles.Length + i + 1] = triangles[i + 1];
-                newTriangles[triangles.Length + i + 2] = triangles[i];
-            }
-            
-            mesh.triangles = newTriangles;
-            return mesh;
-        }
-        
-        private Mesh GenerateWireframeMesh(SegmentVisualization viz, UnityEngine.Terrain terrain) {
-            // Generate a wireframe representation
-            var baseMesh = GenerateOverlayMesh(viz, terrain);
-            if (baseMesh == null) return null;
-            
-            var wireframeMesh = new Mesh();
-            wireframeMesh.name = baseMesh.name + "_Wireframe";
-            
-            var vertices = baseMesh.vertices;
-            var triangles = baseMesh.triangles;
-            
-            // Create line list from triangles
-            var lineVertices = new List<Vector3>();
-            var lineIndices = new List<int>();
-            
-            for (int i = 0; i < triangles.Length; i += 3) {
-                // Add each edge of the triangle
-                int v0 = triangles[i];
-                int v1 = triangles[i + 1];
-                int v2 = triangles[i + 2];
-                
-                // Edge 0-1
-                lineVertices.Add(vertices[v0]);
-                lineVertices.Add(vertices[v1]);
-                lineIndices.Add(lineVertices.Count - 2);
-                lineIndices.Add(lineVertices.Count - 1);
-                
-                // Edge 1-2
-                lineVertices.Add(vertices[v1]);
-                lineVertices.Add(vertices[v2]);
-                lineIndices.Add(lineVertices.Count - 2);
-                lineIndices.Add(lineVertices.Count - 1);
-                
-                // Edge 2-0
-                lineVertices.Add(vertices[v2]);
-                lineVertices.Add(vertices[v0]);
-                lineIndices.Add(lineVertices.Count - 2);
-                lineIndices.Add(lineVertices.Count - 1);
-            }
-            
-            wireframeMesh.SetVertices(lineVertices);
-            wireframeMesh.SetIndices(lineIndices, MeshTopology.Lines, 0);
-            wireframeMesh.RecalculateBounds();
-            
-            return wireframeMesh;
-        }
-        
-        private Mesh GenerateHeatmapMesh(SegmentVisualization viz, UnityEngine.Terrain terrain) {
-            var mesh = GenerateOverlayMesh(viz, terrain);
-            if (mesh == null) return null;
-            
-            // Apply vertex colors based on confidence or other metrics
-            var vertices = mesh.vertices;
-            var colors = new Color[vertices.Length];
-            
-            float confidence = 0.5f;
-            if (viz.terrainFeature != null) {
-                confidence = viz.terrainFeature.confidence;
-            } else if (viz.mapObject != null) {
-                confidence = viz.mapObject.confidence;
-            }
-            
-            Color heatmapColor = confidenceGradient.Evaluate(confidence);
-            
-            for (int i = 0; i < colors.Length; i++) {
-                colors[i] = heatmapColor;
-            }
-            
-            mesh.colors = colors;
-            return mesh;
-        }
-        
-        private Mesh GenerateContourMesh(SegmentVisualization viz, UnityEngine.Terrain terrain) {
-            // Generate contour lines at regular elevation intervals
-            var mesh = new Mesh();
-            mesh.name = $"Segment_{viz.id}_Contour";
-            
-            var vertices = new List<Vector3>();
-            var indices = new List<int>();
-            
-            float contourInterval = 5f; // 5 meter intervals
-            float minHeight = viz.bounds.min.y;
-            float maxHeight = viz.bounds.max.y;
-            
-            for (float height = minHeight; height <= maxHeight; height += contourInterval) {
-                // Generate contour at this height
-                var contourPoints = GenerateContourAtHeight(viz, terrain, height);
-                
-                if (contourPoints.Count > 1) {
-                    int startIndex = vertices.Count;
-                    vertices.AddRange(contourPoints);
-                    
-                    // Create line strip
-                    for (int i = 0; i < contourPoints.Count - 1; i++) {
-                        indices.Add(startIndex + i);
-                        indices.Add(startIndex + i + 1);
-                    }
-                }
-            }
-            
-            mesh.SetVertices(vertices);
-            mesh.SetIndices(indices, MeshTopology.Lines, 0);
-            mesh.RecalculateBounds();
-            
-            return mesh;
-        }
-        
-        private List<Vector3> GenerateContourAtHeight(SegmentVisualization viz, UnityEngine.Terrain terrain, float targetHeight) {
-            var contourPoints = new List<Vector3>();
-            
-            // Sample points along the segment boundary
-            if (viz.borderPoints != null) {
-                foreach (var point in viz.borderPoints) {
-                    Vector3 worldPos = new Vector3(
-                        viz.bounds.min.x + point.x * viz.bounds.size.x,
-                        0,
-                        viz.bounds.min.z + point.z * viz.bounds.size.z
-                    );
-                    
-                    float terrainHeight = terrain.SampleHeight(worldPos);
-                    if (Mathf.Abs(terrainHeight - targetHeight) < 1f) {
-                        worldPos.y = targetHeight + overlayYOffset;
-                        contourPoints.Add(worldPos);
-                    }
-                }
-            }
-            
-            return contourPoints;
-        }
-        #endregion
-
-        #region GPU Processing
-        private void SetupGPUProcessing() {
-            if (!SystemInfo.supportsComputeShaders || _segmentationShader == null) {
-                return;
-            }
-            
-            // Create render texture for segmentation processing
-            _segmentationRT = new RenderTexture(1024, 1024, 0, RenderTextureFormat.ARGB32);
-            _segmentationRT.enableRandomWrite = true;
-            _segmentationRT.Create();
-        }
-        
-        private void ProcessSegmentationGPU(Texture2D sourceImage, List<ImageSegment> segments) {
-            if (_segmentationShader == null || _segmentationRT == null) {
-                return;
-            }
-            
-            int kernel = _segmentationShader.FindKernel("ProcessSegmentation");
-            
-            // Set textures
-            _segmentationShader.SetTexture(kernel, "_SourceImage", sourceImage);
-            _segmentationShader.SetTexture(kernel, "_Result", _segmentationRT);
-            
-            // Set parameters
-            _segmentationShader.SetInt("_SegmentCount", segments.Count);
-            _segmentationShader.SetFloat("_Threshold", 0.5f);
-            
-            // Dispatch
-            int threadGroupsX = Mathf.CeilToInt(_segmentationRT.width / 8f);
-            int threadGroupsY = Mathf.CeilToInt(_segmentationRT.height / 8f);
-            _segmentationShader.Dispatch(kernel, threadGroupsX, threadGroupsY, 1);
-        }
-        #endregion
-
-        #region Cleanup
-        private void ClearPrevious() {
-            // Stop coroutines
-            if (_animationCoroutine != null) {
-                StopCoroutine(_animationCoroutine);
-                _animationCoroutine = null;
-            }
-            
-            if (_cullingCoroutine != null) {
-                StopCoroutine(_cullingCoroutine);
-                _cullingCoroutine = null;
-            }
-            
-            if (_interactionCoroutine != null) {
-                StopCoroutine(_interactionCoroutine);
-                _interactionCoroutine = null;
-            }
-            
-            // Complete any pending jobs
-            _currentJob.Complete();
-            
-            // Dispose native arrays
-            if (_segmentPositions.IsCreated) {
-                _segmentPositions.Dispose();
-            }
-            
-            if (_segmentVisibility.IsCreated) {
-                _segmentVisibility.Dispose();
-            }
-            
-            // Destroy tooltip
-            if (_interactionState.tooltipInstance != null) {
-                Destroy(_interactionState.tooltipInstance);
-                _interactionState.tooltipInstance = null;
-            }
-            
-            // Destroy created objects
-            foreach (var obj in _createdObjects) {
-                if (obj != null) Destroy(obj);
-            }
-            _createdObjects.Clear();
-            
-            // Clear visualizations
-            foreach (var viz in _segmentVisualizations.Values) {
-                if (viz.overlayObject != null) Destroy(viz.overlayObject);
-                if (viz.labelObject != null) Destroy(viz.labelObject);
-                foreach (var border in viz.borderObjects) {
-                    if (border != null) Destroy(border);
-                }
-                if (viz.instanceMaterial != null) Destroy(viz.instanceMaterial);
-                if (viz.segmentMesh != null) Destroy(viz.segmentMesh);
-            }
-            _segmentVisualizations.Clear();
-            
-            // Clear groups
-            foreach (var group in _segmentGroups.Values) {
-                foreach (var line in group.connectionLines) {
-                    if (line != null) Destroy(line);
-                }
-            }
-            _segmentGroups.Clear();
-            
-            // Reset state
-            _interactionState = new InteractionState();
-            _performanceMetrics = new PerformanceMetrics();
-        }
-        
-        private void OnDestroy() {
-            ClearPrevious();
-            
-            // Release GPU resources
-            if (_segmentationRT != null) {
-                _segmentationRT.Release();
-                Destroy(_segmentationRT);
-            }
-            
-            debugger.Log("SegmentationVisualizer cleaned up", LogCategory.System);
-        }
-        #endregion
-
-        #region Helper Methods
-        
-        private void InitializeMaterials()
-        {
-            // Initialize default materials if not assigned
-            if (overlayMaterial == null)
-            {
-                overlayMaterial = new Material(Shader.Find("Standard"));
-                overlayMaterial.name = "DefaultOverlayMaterial";
-            }
-        }
-        
-        private GameObject CreateDefaultOverlayPrefab()
-        {
-            GameObject prefab = new GameObject("DefaultOverlay");
-            prefab.AddComponent<MeshFilter>();
-            prefab.AddComponent<MeshRenderer>();
-            return prefab;
-        }
-        
-        private GameObject CreateDefaultLabelPrefab()
-        {
-            GameObject prefab = new GameObject("DefaultLabel");
-            prefab.AddComponent<TextMeshPro>();
-            return prefab;
-        }
-        
-        private GameObject CreateDefaultTooltipPrefab()
-        {
-            GameObject prefab = new GameObject("DefaultTooltip");
-            Canvas canvas = prefab.AddComponent<Canvas>();
-            prefab.AddComponent<CanvasScaler>();
-            prefab.AddComponent<GraphicRaycaster>();
-            
-            GameObject textGO = new GameObject("Text");
-            textGO.transform.SetParent(prefab.transform);
-            textGO.AddComponent<TextMeshProUGUI>();
-            
-            return prefab;
-        }
-        
-        #region TraversifyComponent Implementation
-        
-        /// <summary>
-        /// Component-specific initialization logic.
-        /// </summary>
-        /// <param name="config">Optional configuration object</param>
-        /// <returns>True if initialization was successful</returns>
         protected override bool OnInitialize(object config) {
             try {
-                // Initialize debugger
-                if (debugger == null) {
-                    debugger = GetComponent<TraversifyDebugger>();
-                    if (debugger == null) {
-                        debugger = gameObject.AddComponent<TraversifyDebugger>();
-                    }
+                _debugger = GetComponent<TraversifyDebugger>();
+                if (_debugger == null) {
+                    _debugger = gameObject.AddComponent<TraversifyDebugger>();
                 }
                 
-                // Initialize collections and state
-                _segmentOverlays.Clear();
-                _segmentLabels.Clear();
-                _fadingSegments.Clear();
-                
-                // Reset state
-                _isVisualizationActive = false;
-                _currentAnalysisResults = null;
-                
-                // Initialize materials if not set
-                if (overlayMaterial == null) {
-                    overlayMaterial = new Material(Shader.Find("Standard"));
-                    overlayMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-                    overlayMaterial.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-                    overlayMaterial.SetInt("_ZWrite", 0);
-                    overlayMaterial.renderQueue = 3000;
+                // Apply config if provided
+                if (config != null) {
+                    ApplyConfiguration(config);
                 }
                 
-                debugger?.Log("SegmentationVisualizer initialized successfully", LogCategory.System);
+                // Initialize components
+                InitializeComponents();
+                
+                _isInitialized = true;
+                Log("SegmentationVisualizer initialized successfully", LogCategory.Visualization);
                 return true;
             }
             catch (Exception ex) {
-                debugger?.LogError($"Failed to initialize SegmentationVisualizer: {ex.Message}", LogCategory.System);
+                Debug.LogError($"Failed to initialize SegmentationVisualizer: {ex.Message}");
                 return false;
             }
         }
         
-        #endregion
-        
-        #endregion
-
-        #region Public Methods
+        /// <summary>
+        /// Apply configuration from object.
+        /// </summary>
+        private void ApplyConfiguration(object config) {
+            // Handle dictionary config
+            if (config is Dictionary<string, object> configDict) {
+                // Extract overlay alpha
+                if (configDict.TryGetValue("overlayAlpha", out object alphaObj) && alphaObj is float alpha) {
+                    _overlayAlpha = Mathf.Clamp01(alpha);
+                }
+                
+                // Extract show outlines
+                if (configDict.TryGetValue("showOutlines", out object outlinesObj) && outlinesObj is bool outlines) {
+                    _showOutlines = outlines;
+                }
+                
+                // Extract show labels
+                if (configDict.TryGetValue("showLabels", out object labelsObj) && labelsObj is bool labels) {
+                    _showLabels = labels;
+                }
+                
+                // Extract show class names
+                if (configDict.TryGetValue("showClassNames", out object classNamesObj) && classNamesObj is bool classNames) {
+                    _showClassNames = classNames;
+                }
+                
+                // Extract show confidence
+                if (configDict.TryGetValue("showConfidence", out object confidenceObj) && confidenceObj is bool confidence) {
+                    _showConfidence = confidence;
+                }
+                
+                // Extract enable interaction
+                if (configDict.TryGetValue("enableInteraction", out object interactionObj) && interactionObj is bool interaction) {
+                    _enableInteraction = interaction;
+                }
+            }
+        }
         
         /// <summary>
-        /// Visualizes analysis results by creating overlays and labels for detected segments
+        /// Initialize UI components.
         /// </summary>
-        /// <param name="results">The analysis results to visualize</param>
-        /// <param name="terrain">The terrain to place visualizations on</param>
-        /// <param name="onComplete">Callback when visualization is complete</param>
-        /// <returns>Coroutine for the visualization process</returns>
-        public IEnumerator VisualizeResults(AnalysisResults results, UnityEngine.Terrain terrain, System.Action onComplete = null)
-        {
-            if (results == null)
-            {
-                debugger?.LogError("Analysis results are null", LogCategory.Visualization);
-                onComplete?.Invoke();
-                yield break;
+        private void InitializeComponents() {
+            // Create label container if not assigned
+            if (_labelsContainer == null) {
+                GameObject containerObj = new GameObject("LabelsContainer");
+                containerObj.transform.SetParent(transform);
+                _labelsContainer = containerObj.AddComponent<RectTransform>();
+                _labelsContainer.anchorMin = Vector2.zero;
+                _labelsContainer.anchorMax = Vector2.one;
+                _labelsContainer.offsetMin = Vector2.zero;
+                _labelsContainer.offsetMax = Vector2.zero;
             }
             
-            if (terrain == null)
-            {
-                debugger?.LogError("Terrain is null", LogCategory.Visualization);
-                onComplete?.Invoke();
-                yield break;
+            // Create base image display if not assigned
+            if (_baseImageDisplay == null) {
+                GameObject baseImageObj = new GameObject("BaseImage");
+                baseImageObj.transform.SetParent(transform);
+                _baseImageDisplay = baseImageObj.AddComponent<RawImage>();
+                
+                RectTransform rectTransform = _baseImageDisplay.GetComponent<RectTransform>();
+                rectTransform.anchorMin = Vector2.zero;
+                rectTransform.anchorMax = Vector2.one;
+                rectTransform.offsetMin = Vector2.zero;
+                rectTransform.offsetMax = Vector2.zero;
             }
             
-            debugger?.Log("Starting segmentation visualization", LogCategory.Visualization);
+            // Create overlay display if not assigned
+            if (_overlayDisplay == null) {
+                GameObject overlayObj = new GameObject("OverlayImage");
+                overlayObj.transform.SetParent(transform);
+                _overlayDisplay = overlayObj.AddComponent<RawImage>();
+                
+                RectTransform rectTransform = _overlayDisplay.GetComponent<RectTransform>();
+                rectTransform.anchorMin = Vector2.zero;
+                rectTransform.anchorMax = Vector2.one;
+                rectTransform.offsetMin = Vector2.zero;
+                rectTransform.offsetMax = Vector2.zero;
+            }
             
-            // Clear any existing visualizations
+            // Create label prefab if not assigned
+            if (_labelPrefab == null) {
+                _labelPrefab = CreateDefaultLabelPrefab();
+            }
+            
+            // Create detail panel if not assigned
+            if (_detailPanel == null) {
+                _detailPanel = CreateDefaultDetailPanel();
+            }
+            
+            // Set initial overlay alpha
+            UpdateOverlayAlpha();
+            
+            // Hide detail panel initially
+            if (_detailPanel != null) {
+                _detailPanel.SetActive(false);
+            }
+        }
+        
+        /// <summary>
+        /// Create a default label prefab.
+        /// </summary>
+        private GameObject CreateDefaultLabelPrefab() {
+            GameObject labelObj = new GameObject("LabelPrefab");
+            
+            // Add TextMeshPro component
+            TextMeshProUGUI text = labelObj.AddComponent<TextMeshProUGUI>();
+            text.fontSize = 12;
+            text.color = Color.white;
+            text.alignment = TextAlignmentOptions.Center;
+            text.enableWordWrapping = true;
+            text.overflowMode = TextOverflowModes.Truncate;
+            text.margin = new Vector4(4, 2, 4, 2);
+            
+            // Add background
+            GameObject bgObj = new GameObject("Background");
+            bgObj.transform.SetParent(labelObj.transform);
+            
+            Image bgImage = bgObj.AddComponent<Image>();
+            bgImage.color = new Color(0, 0, 0, 0.7f);
+            
+            RectTransform bgRect = bgImage.GetComponent<RectTransform>();
+            bgRect.anchorMin = Vector2.zero;
+            bgRect.anchorMax = Vector2.one;
+            bgRect.offsetMin = Vector2.zero;
+            bgRect.offsetMax = Vector2.zero;
+            
+            // Set bgObj to be first in hierarchy
+            bgObj.transform.SetSiblingIndex(0);
+            
+            // Add button for interaction
+            Button button = labelObj.AddComponent<Button>();
+            button.transition = Selectable.Transition.ColorTint;
+            
+            // Add layout components
+            ContentSizeFitter fitter = labelObj.AddComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            
+            // Add outline for better visibility
+            Outline outline = labelObj.AddComponent<Outline>();
+            outline.effectColor = Color.black;
+            outline.effectDistance = new Vector2(1, -1);
+            
+            return labelObj;
+        }
+        /// <summary>
+        /// Create a default detail panel.
+        /// </summary>
+        private GameObject CreateDefaultDetailPanel() {
+            GameObject panelObj = new GameObject("DetailPanel");
+            panelObj.transform.SetParent(transform);
+            
+            // Add panel components
+            Image panelImage = panelObj.AddComponent<Image>();
+            panelImage.color = new Color(0.1f, 0.1f, 0.1f, 0.9f);
+            
+            RectTransform panelRect = panelImage.GetComponent<RectTransform>();
+            panelRect.anchorMin = new Vector2(1, 0);
+            panelRect.anchorMax = new Vector2(1, 1);
+            panelRect.pivot = new Vector2(1, 0.5f);
+            panelRect.sizeDelta = new Vector2(300, 0);
+            panelRect.offsetMin = new Vector2(-300, 0);
+            panelRect.offsetMax = Vector2.zero;
+            
+            // Add layout group
+            VerticalLayoutGroup layout = panelObj.AddComponent<VerticalLayoutGroup>();
+            layout.padding = new RectOffset(10, 10, 10, 10);
+            layout.spacing = 10;
+            layout.childAlignment = TextAnchor.UpperCenter;
+            layout.childControlWidth = true;
+            layout.childControlHeight = false;
+            layout.childForceExpandWidth = true;
+            layout.childForceExpandHeight = false;
+            
+            // Add title
+            GameObject titleObj = new GameObject("Title");
+            titleObj.transform.SetParent(panelObj.transform);
+            
+            _detailNameText = titleObj.AddComponent<TextMeshProUGUI>();
+            _detailNameText.fontSize = 18;
+            _detailNameText.fontStyle = FontStyles.Bold;
+            _detailNameText.color = Color.white;
+            _detailNameText.alignment = TextAlignmentOptions.Center;
+            _detailNameText.text = "Object Details";
+            
+            RectTransform titleRect = _detailNameText.GetComponent<RectTransform>();
+            titleRect.sizeDelta = new Vector2(0, 30);
+            
+            // Add preview image
+            GameObject previewObj = new GameObject("Preview");
+            previewObj.transform.SetParent(panelObj.transform);
+            
+            _detailPreviewImage = previewObj.AddComponent<RawImage>();
+            _detailPreviewImage.color = Color.white;
+            
+            RectTransform previewRect = _detailPreviewImage.GetComponent<RectTransform>();
+            previewRect.sizeDelta = new Vector2(0, 150);
+            
+            // Add class text
+            GameObject classObj = new GameObject("Class");
+            classObj.transform.SetParent(panelObj.transform);
+            
+            _detailClassText = classObj.AddComponent<TextMeshProUGUI>();
+            _detailClassText.fontSize = 14;
+            _detailClassText.fontStyle = FontStyles.Bold;
+            _detailClassText.color = Color.white;
+            _detailClassText.alignment = TextAlignmentOptions.Left;
+            _detailClassText.text = "Class: ";
+            
+            RectTransform classRect = _detailClassText.GetComponent<RectTransform>();
+            classRect.sizeDelta = new Vector2(0, 20);
+            
+            // Add confidence text
+            GameObject confidenceObj = new GameObject("Confidence");
+            confidenceObj.transform.SetParent(panelObj.transform);
+            
+            _detailConfidenceText = confidenceObj.AddComponent<TextMeshProUGUI>();
+            _detailConfidenceText.fontSize = 14;
+            _detailConfidenceText.color = Color.white;
+            _detailConfidenceText.alignment = TextAlignmentOptions.Left;
+            _detailConfidenceText.text = "Confidence: ";
+            
+            RectTransform confidenceRect = _detailConfidenceText.GetComponent<RectTransform>();
+            confidenceRect.sizeDelta = new Vector2(0, 20);
+            
+            // Add dimensions text
+            GameObject dimensionsObj = new GameObject("Dimensions");
+            dimensionsObj.transform.SetParent(panelObj.transform);
+            
+            _detailDimensionsText = dimensionsObj.AddComponent<TextMeshProUGUI>();
+            _detailDimensionsText.fontSize = 14;
+            _detailDimensionsText.color = Color.white;
+            _detailDimensionsText.alignment = TextAlignmentOptions.Left;
+            _detailDimensionsText.text = "Dimensions: ";
+            
+            RectTransform dimensionsRect = _detailDimensionsText.GetComponent<RectTransform>();
+            dimensionsRect.sizeDelta = new Vector2(0, 20);
+            
+            // Add description text
+            GameObject descriptionObj = new GameObject("Description");
+            descriptionObj.transform.SetParent(panelObj.transform);
+            
+            _detailDescriptionText = descriptionObj.AddComponent<TextMeshProUGUI>();
+            _detailDescriptionText.fontSize = 14;
+            _detailDescriptionText.color = Color.white;
+            _detailDescriptionText.alignment = TextAlignmentOptions.Left;
+            _detailDescriptionText.enableWordWrapping = true;
+            _detailDescriptionText.text = "Description: ";
+            
+            RectTransform descriptionRect = _detailDescriptionText.GetComponent<RectTransform>();
+            descriptionRect.sizeDelta = new Vector2(0, 100);
+            
+            // Add close button
+            GameObject closeButtonObj = new GameObject("CloseButton");
+            closeButtonObj.transform.SetParent(panelObj.transform);
+            
+            Button closeButton = closeButtonObj.AddComponent<Button>();
+            Image closeButtonImage = closeButtonObj.AddComponent<Image>();
+            closeButtonImage.color = new Color(0.7f, 0.2f, 0.2f, 1f);
+            
+            TextMeshProUGUI closeButtonText = new GameObject("Text").AddComponent<TextMeshProUGUI>();
+            closeButtonText.transform.SetParent(closeButtonObj.transform);
+            closeButtonText.text = "Close";
+            closeButtonText.fontSize = 14;
+            closeButtonText.fontStyle = FontStyles.Bold;
+            closeButtonText.color = Color.white;
+            closeButtonText.alignment = TextAlignmentOptions.Center;
+            
+            RectTransform closeButtonTextRect = closeButtonText.GetComponent<RectTransform>();
+            closeButtonTextRect.anchorMin = Vector2.zero;
+            closeButtonTextRect.anchorMax = Vector2.one;
+            closeButtonTextRect.offsetMin = Vector2.zero;
+            closeButtonTextRect.offsetMax = Vector2.zero;
+            
+            RectTransform closeButtonRect = closeButtonObj.GetComponent<RectTransform>();
+            closeButtonRect.sizeDelta = new Vector2(0, 40);
+            
+            // Add button callback
+            closeButton.onClick.AddListener(() => {
+                ClearSelection();
+                if (_detailPanel != null) {
+                    _detailPanel.SetActive(false);
+                }
+            });
+            
+            return panelObj;
+        }
+        
+        private void Update() {
+            // Check if overlay needs to be regenerated
+            if (_isDirty) {
+                RegenerateOverlay();
+                _isDirty = false;
+            }
+        }
+        
+        private void OnDisable() {
             ClearVisualization();
-            
-            int totalItems = (results.terrainFeatures?.Count ?? 0) + (results.mapObjects?.Count ?? 0);
-            int processedItems = 0;
-            
-            // Visualize terrain features as overlays
-            if (results.terrainFeatures != null)
-            {
-                foreach (var feature in results.terrainFeatures)
-                {
-                    CreateTerrainFeatureOverlay(feature, terrain);
-                    processedItems++;
-                    
-                    // Yield every few items to prevent frame drops
-                    if (processedItems % 5 == 0)
-                        yield return null;
-                }
-            }
-            
-            // Visualize map objects as labels/markers
-            if (results.mapObjects != null)
-            {
-                foreach (var mapObj in results.mapObjects)
-                {
-                    CreateMapObjectLabel(mapObj, terrain);
-                    processedItems++;
-                    
-                    // Yield every few items to prevent frame drops
-                    if (processedItems % 5 == 0)
-                        yield return null;
-                }
-            }
-            
-            debugger?.Log($"Visualization complete: {processedItems} items visualized", LogCategory.Visualization);
-            onComplete?.Invoke();
         }
         
-        /// <summary>
-        /// Clears all existing visualizations
-        /// </summary>
-        public void ClearVisualization()
-        {
-            // Find and destroy all existing overlay objects
-            var existingOverlays = GameObject.FindGameObjectsWithTag("TerrainOverlay");
-            foreach (var overlay in existingOverlays)
-            {
-                if (Application.isPlaying)
-                    Destroy(overlay);
-                else
-                    DestroyImmediate(overlay);
-            }
-            
-            // Find and destroy all existing label objects
-            var existingLabels = GameObject.FindGameObjectsWithTag("ObjectLabel");
-            foreach (var label in existingLabels)
-            {
-                if (Application.isPlaying)
-                    Destroy(label);
-                else
-                    DestroyImmediate(label);
-            }
-            
-            debugger?.Log("Visualization cleared", LogCategory.Visualization);
+        private void OnDestroy() {
+            ClearVisualization();
         }
         
         #endregion
         
-        #region Private Methods
+        #region Visualization Methods
         
         /// <summary>
-        /// Creates a visual overlay for a terrain feature
+        /// Visualize analysis results.
         /// </summary>
-        private void CreateTerrainFeatureOverlay(TerrainFeature feature, UnityEngine.Terrain terrain)
-        {
-            if (feature == null || terrain == null) return;
+        public void VisualizeResults(AnalysisResults results, bool clearPrevious = true) {
+            if (results == null) {
+                LogError("Cannot visualize null results", LogCategory.Visualization);
+                return;
+            }
             
-            try
-            {
-                GameObject overlay = overlayPrefab ? Instantiate(overlayPrefab) : GameObject.CreatePrimitive(PrimitiveType.Quad);
-                overlay.name = $"Overlay_{feature.label}";
-                overlay.tag = "TerrainOverlay";
+            try {
+                float startTime = Time.realtimeSinceStartup;
                 
-                // Position and scale the overlay based on the feature's bounding box
-                Vector3 terrainSize = terrain.terrainData.size;
-                Vector3 terrainPos = terrain.transform.position;
+                // Store results
+                _currentResults = results;
                 
-                // Convert bounding box to world coordinates
-                float worldX = terrainPos.x + (feature.boundingBox.x / 1000f) * terrainSize.x; // Assuming 1000px = terrain width
-                float worldZ = terrainPos.z + (feature.boundingBox.y / 1000f) * terrainSize.z;
-                float worldWidth = (feature.boundingBox.width / 1000f) * terrainSize.x;
-                float worldHeight = (feature.boundingBox.height / 1000f) * terrainSize.z;
-                
-                // Sample terrain height at the center
-                Vector3 centerPos = new Vector3(worldX + worldWidth/2, 0, worldZ + worldHeight/2);
-                float terrainHeight = terrain.SampleHeight(centerPos);
-                
-                // Position the overlay
-                overlay.transform.position = new Vector3(
-                    centerPos.x, 
-                    terrainHeight + overlayYOffset, 
-                    centerPos.z
-                );
-                
-                // Scale the overlay
-                overlay.transform.localScale = new Vector3(worldWidth, 1, worldHeight);
-                overlay.transform.rotation = Quaternion.Euler(90, 0, 0); // Flat on ground
-                
-                // Apply material and color
-                Renderer renderer = overlay.GetComponent<Renderer>();
-                if (renderer != null)
-                {
-                    Material mat = overlayMaterial ? Instantiate(overlayMaterial) : new Material(Shader.Find("Standard"));
-                    mat.color = feature.segmentColor;
-                    mat.SetFloat("_Mode", 3); // Transparent mode
-                    mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-                    mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-                    mat.SetInt("_ZWrite", 0);
-                    mat.renderQueue = 3000;
-                    renderer.material = mat;
+                // Clear previous visualization if requested
+                if (clearPrevious) {
+                    ClearVisualization();
                 }
                 
-                // Start fade-in animation if enabled
-                if (animateSegments)
-                {
-                    StartCoroutine(FadeInOverlay(overlay));
+                // Set base image
+                if (results.sourceImage != null) {
+                    _baseTexture = results.sourceImage;
+                    _baseImageDisplay.texture = _baseTexture;
+                    _baseImageSize = new Vector2(_baseTexture.width, _baseTexture.height);
+                    
+                    // Update layout to maintain aspect ratio
+                    UpdateDisplayLayout();
                 }
                 
-                debugger?.Log($"Created overlay for terrain feature: {feature.label}", LogCategory.Visualization);
+                // Set overlay
+                if (results.segmentationOverlay != null) {
+                    _overlayTexture = results.segmentationOverlay;
+                    _overlayDisplay.texture = _overlayTexture;
+                    
+                    // Store original pixels for manipulation
+                    _originalOverlayPixels = _overlayTexture.GetPixels();
+                    
+                    // Apply initial alpha
+                    UpdateOverlayAlpha();
+                }
+                else {
+                    // Generate overlay from detected objects
+                    GenerateOverlayFromObjects(results.detectedObjects);
+                }
+                
+                // Generate object colors
+                GenerateObjectColors(results.detectedObjects);
+                
+                // Create object previews
+                GenerateObjectPreviews(results.detectedObjects);
+                
+                // Create labels if enabled
+                if (_showLabels) {
+                    StartCoroutine(CreateLabelsForObjects(results.detectedObjects));
+                }
+                
+                float visualizeTime = Time.realtimeSinceStartup - startTime;
+                Log($"Visualization completed in {visualizeTime:F2} seconds", LogCategory.Visualization);
             }
-            catch (System.Exception ex)
-            {
-                debugger?.LogError($"Error creating terrain overlay for {feature.label}: {ex.Message}", LogCategory.Visualization);
+            catch (Exception ex) {
+                LogError($"Error visualizing results: {ex.Message}", LogCategory.Visualization);
             }
+        }
+        /// <summary>
+        /// Clear current visualization.
+        /// </summary>
+        public void ClearVisualization() {
+            // Clear selection
+            ClearSelection();
+            
+            // Clear hover
+            ClearHover();
+            
+            // Clear labels
+            ClearLabels();
+            
+            // Clear textures
+            _baseTexture = null;
+            _overlayTexture = null;
+            _workingOverlay = null;
+            _originalOverlayPixels = null;
+            
+            // Clear display
+            if (_baseImageDisplay != null) {
+                _baseImageDisplay.texture = null;
+            }
+            
+            if (_overlayDisplay != null) {
+                _overlayDisplay.texture = null;
+            }
+            
+            // Clear object data
+            _objectColors.Clear();
+            _objectPreviews.Clear();
+            
+            // Hide detail panel
+            if (_detailPanel != null) {
+                _detailPanel.SetActive(false);
+            }
+            
+            // Reset state
+            _currentResults = null;
+            _isDirty = false;
         }
         
         /// <summary>
-        /// Creates a label for a map object
+        /// Generate overlay from detected objects.
         /// </summary>
-        private void CreateMapObjectLabel(MapObject mapObj, UnityEngine.Terrain terrain)
-        {
-            if (mapObj == null || terrain == null) return;
+        private void GenerateOverlayFromObjects(List<DetectedObject> objects) {
+            if (objects == null || objects.Count == 0 || _baseTexture == null) {
+                return;
+            }
             
-            try
-            {
-                GameObject label = labelPrefab ? Instantiate(labelPrefab) : new GameObject($"Label_{mapObj.label}");
-                label.name = $"Label_{mapObj.label}";
-                label.tag = "ObjectLabel";
+            try {
+                // Create new overlay texture
+                _workingOverlay = new Texture2D(_baseTexture.width, _baseTexture.height, TextureFormat.RGBA32, false);
                 
-                // Convert normalized position to world position
-                Vector3 terrainSize = terrain.terrainData.size;
-                Vector3 terrainPos = terrain.transform.position;
-                
-                Vector3 worldPos = new Vector3(
-                    terrainPos.x + mapObj.position.x * terrainSize.x,
-                    0,
-                    terrainPos.z + mapObj.position.y * terrainSize.z
-                );
-                
-                // Sample terrain height and add offset
-                float terrainHeight = terrain.SampleHeight(worldPos);
-                worldPos.y = terrainHeight + labelYOffset;
-                
-                label.transform.position = worldPos;
-                
-                // Create or update text component
-                TMPro.TextMeshPro textMesh = label.GetComponent<TMPro.TextMeshPro>();
-                if (textMesh == null)
-                {
-                    textMesh = label.AddComponent<TMPro.TextMeshPro>();
+                // Fill with transparent color
+                Color[] transparentPixels = new Color[_workingOverlay.width * _workingOverlay.height];
+                for (int i = 0; i < transparentPixels.Length; i++) {
+                    transparentPixels[i] = Color.clear;
                 }
+                _workingOverlay.SetPixels(transparentPixels);
                 
-                // Set text properties
-                textMesh.text = !string.IsNullOrEmpty(mapObj.enhancedDescription) ? mapObj.enhancedDescription : mapObj.label;
-                textMesh.fontSize = labelFontSize;
-                textMesh.color = labelTextColor;
-                textMesh.alignment = TMPro.TextAlignmentOptions.Center;
+                // Store original pixels
+                _originalOverlayPixels = new Color[transparentPixels.Length];
+                Array.Copy(transparentPixels, _originalOverlayPixels, transparentPixels.Length);
                 
-                if (labelFont != null)
-                {
-                    textMesh.font = labelFont;
-                }
-                
-                // Add billboard behavior if enabled
-                if (billboardLabels)
-                {
-                    Billboard billboard = label.GetComponent<Billboard>();
-                    if (billboard == null)
-                    {
-                        billboard = label.AddComponent<Billboard>();
+                // Apply segmentation masks with different colors
+                for (int i = 0; i < objects.Count; i++) {
+                    var obj = objects[i];
+                    
+                    // Skip if no segments
+                    if (obj.segments == null || obj.segments.Count == 0) {
+                        continue;
+                    }
+                    
+                    // Generate color for this object
+                    Color objectColor = GenerateObjectColor(obj, i);
+                    
+                    // Get segment mask
+                    foreach (var segment in obj.segments) {
+                        if (segment.maskTexture == null) continue;
+                        
+                        // Apply segment to overlay
+                        ApplySegmentToOverlay(_workingOverlay, segment.maskTexture, objectColor);
                     }
                 }
                 
-                // Add background quad if needed
-                if (labelBackgroundColor.a > 0)
-                {
-                    CreateLabelBackground(label, textMesh);
+                // Apply outlines if enabled
+                if (_showOutlines) {
+                    ApplyOutlinesToOverlay(_workingOverlay, objects);
                 }
                 
-                debugger?.Log($"Created label for map object: {mapObj.label}", LogCategory.Visualization);
+                // Apply changes
+                _workingOverlay.Apply();
+                
+                // Set as overlay
+                _overlayTexture = _workingOverlay;
+                _overlayDisplay.texture = _overlayTexture;
+                
+                // Apply alpha
+                UpdateOverlayAlpha();
             }
-            catch (System.Exception ex)
-            {
-                debugger?.LogError($"Error creating object label for {mapObj.label}: {ex.Message}", LogCategory.Visualization);
+            catch (Exception ex) {
+                LogError($"Error generating overlay: {ex.Message}", LogCategory.Visualization);
             }
         }
         
         /// <summary>
-        /// Creates a background for the label text
+        /// Apply segment mask to overlay texture.
         /// </summary>
-        private void CreateLabelBackground(GameObject label, TMPro.TextMeshPro textMesh)
-        {
-            GameObject background = GameObject.CreatePrimitive(PrimitiveType.Quad);
-            background.name = "Background";
-            background.transform.SetParent(label.transform);
-            background.transform.localPosition = Vector3.back * 0.01f; // Slightly behind text
+        private void ApplySegmentToOverlay(Texture2D overlay, Texture2D mask, Color segmentColor) {
+            // Ensure same dimensions
+            if (mask.width != overlay.width || mask.height != overlay.height) {
+                mask = ResizeTexture(mask, overlay.width, overlay.height);
+            }
             
-            // Size background to text bounds
-            Bounds textBounds = textMesh.bounds;
-            background.transform.localScale = new Vector3(textBounds.size.x * 1.2f, textBounds.size.y * 1.2f, 1f);
+            // Get pixels
+            Color[] overlayPixels = overlay.GetPixels();
+            Color[] maskPixels = mask.GetPixels();
             
-            // Apply background material
-            Renderer bgRenderer = background.GetComponent<Renderer>();
-            if (bgRenderer != null)
-            {
-                Material bgMat = new Material(Shader.Find("Standard"));
-                bgMat.color = labelBackgroundColor;
-                bgMat.SetFloat("_Mode", 3); // Transparent mode
-                bgMat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-                bgMat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-                bgMat.SetInt("_ZWrite", 0);
-                bgMat.renderQueue = 2999; // Behind text
-                bgRenderer.material = bgMat;
+            // Apply mask
+            for (int i = 0; i < overlayPixels.Length; i++) {
+                float maskValue = maskPixels[i].r;
+                if (maskValue > 0.5f) { // Threshold
+                    // Apply segment color with transparency
+                    Color color = segmentColor;
+                    color.a = color.a * maskValue;
+                    
+                    // Alpha blend
+                    overlayPixels[i] = Color.Lerp(overlayPixels[i], color, color.a);
+                }
+            }
+            
+            overlay.SetPixels(overlayPixels);
+        }
+        
+        /// <summary>
+        /// Apply outlines to overlay texture.
+        /// </summary>
+        private void ApplyOutlinesToOverlay(Texture2D overlay, List<DetectedObject> objects) {
+            // Get pixels
+            Color[] overlayPixels = overlay.GetPixels();
+            
+            // Apply outlines for each object
+            foreach (var obj in objects) {
+                // Skip if no segments
+                if (obj.segments == null || obj.segments.Count == 0) {
+                    continue;
+                }
+                
+                foreach (var segment in obj.segments) {
+                    if (segment.contourPoints == null || segment.contourPoints.Count < 2) {
+                        continue;
+                    }
+                    
+                    // Draw contour lines
+                    for (int i = 0; i < segment.contourPoints.Count; i++) {
+                        Vector2 p1 = segment.contourPoints[i];
+                        Vector2 p2 = segment.contourPoints[(i + 1) % segment.contourPoints.Count];
+                        
+                        DrawLine(overlay, overlayPixels, p1, p2, _outlineColor, _outlineThickness);
+                    }
+                }
+            }
+            
+            // Update texture
+            overlay.SetPixels(overlayPixels);
+        }
+        
+        /// <summary>
+        /// Draw a line on the texture.
+        /// </summary>
+        private void DrawLine(Texture2D texture, Color[] pixels, Vector2 start, Vector2 end, Color color, float thickness) {
+            int width = texture.width;
+            int height = texture.height;
+            
+            // Bresenham's line algorithm
+            int x0 = Mathf.RoundToInt(start.x);
+            int y0 = Mathf.RoundToInt(start.y);
+            int x1 = Mathf.RoundToInt(end.x);
+            int y1 = Mathf.RoundToInt(end.y);
+            
+            int dx = Mathf.Abs(x1 - x0);
+            int dy = Mathf.Abs(y1 - y0);
+            int sx = x0 < x1 ? 1 : -1;
+            int sy = y0 < y1 ? 1 : -1;
+            int err = dx - dy;
+            
+            while (true) {
+                // Draw pixel at current position with thickness
+                for (int tx = -Mathf.FloorToInt(thickness); tx <= Mathf.CeilToInt(thickness); tx++) {
+                    for (int ty = -Mathf.FloorToInt(thickness); ty <= Mathf.CeilToInt(thickness); ty++) {
+                        int px = x0 + tx;
+                        int py = y0 + ty;
+                        
+                        // Check if within bounds
+                        if (px >= 0 && px < width && py >= 0 && py < height) {
+                            int index = py * width + px;
+                            
+                            // Only draw if within thickness radius
+                            if (tx * tx + ty * ty <= thickness * thickness) {
+                                // Alpha blend
+                                pixels[index] = Color.Lerp(pixels[index], color, color.a);
+                            }
+                        }
+                    }
+                }
+                
+                // Exit if reached endpoint
+                if (x0 == x1 && y0 == y1) break;
+                
+                // Calculate next position
+                int e2 = 2 * err;
+                if (e2 > -dy) {
+                    err -= dy;
+                    x0 += sx;
+                }
+                if (e2 < dx) {
+                    err += dx;
+                    y0 += sy;
+                }
             }
         }
         
         /// <summary>
-        /// Fade-in animation for overlays
+        /// Generate colors for detected objects.
         /// </summary>
-        private IEnumerator FadeInOverlay(GameObject overlay)
-        {
-            Renderer renderer = overlay.GetComponent<Renderer>();
-            if (renderer == null) yield break;
+        private void GenerateObjectColors(List<DetectedObject> objects) {
+            _objectColors.Clear();
             
-            Material mat = renderer.material;
-            Color originalColor = mat.color;
-            Color transparentColor = new Color(originalColor.r, originalColor.g, originalColor.b, 0f);
+            for (int i = 0; i < objects.Count; i++) {
+                var obj = objects[i];
+                Color color = GenerateObjectColor(obj, i);
+                _objectColors[obj.id] = color;
+            }
+        }
+        /// <summary>
+        /// Generate a color for an object.
+        /// </summary>
+        private Color GenerateObjectColor(DetectedObject obj, int index) {
+            // If object already has a color, use it
+            if (obj.color != Color.clear) {
+                return new Color(obj.color.r, obj.color.g, obj.color.b, _overlayAlpha);
+            }
             
-            // Start transparent
-            mat.color = transparentColor;
+            // Different color schemes for different object types
+            float hue;
+            float saturation;
+            float value;
             
-            float elapsed = 0f;
-            while (elapsed < fadeDuration)
-            {
-                elapsed += Time.deltaTime;
-                float t = elapsed / fadeDuration;
+            if (obj.isTerrain) {
+                // Terrain color scheme (natural colors)
+                switch (obj.className.ToLower()) {
+                    case "water":
+                    case "lake":
+                    case "river":
+                    case "ocean":
+                        hue = 0.6f; // Blue
+                        saturation = 0.8f;
+                        value = 0.9f;
+                        break;
+                    case "mountain":
+                    case "hill":
+                        hue = 0.1f; // Brown
+                        saturation = 0.5f;
+                        value = 0.6f;
+                        break;
+                    case "forest":
+                    case "tree":
+                    case "woods":
+                        hue = 0.3f; // Green
+                        saturation = 0.7f;
+                        value = 0.7f;
+                        break;
+                    case "grass":
+                    case "grassland":
+                    case "plain":
+                        hue = 0.25f; // Light green
+                        saturation = 0.6f;
+                        value = 0.8f;
+                        break;
+                    case "sand":
+                    case "desert":
+                    case "beach":
+                        hue = 0.12f; // Tan
+                        saturation = 0.4f;
+                        value = 0.9f;
+                        break;
+                    case "snow":
+                    case "ice":
+                        hue = 0.0f; // White-blue
+                        saturation = 0.1f;
+                        value = 1.0f;
+                        break;
+                    default:
+                        // Use hue based on terrain name hash
+                        hue = (obj.className.GetHashCode() % 100) / 100f;
+                        saturation = 0.5f;
+                        value = 0.8f;
+                        break;
+                }
+            }
+            else if (obj.isManMade) {
+                // Man-made objects (more vibrant colors)
+                hue = ((index * 37) % 360) / 360f; // Use prime number for better distribution
+                saturation = 0.7f;
+                value = 0.9f;
+            }
+            else {
+                // Natural objects (more muted colors)
+                hue = ((index * 41) % 360) / 360f; // Use different prime number
+                saturation = 0.6f;
+                value = 0.8f;
+            }
+            
+            // Create color with alpha
+            Color color = Color.HSVToRGB(hue, saturation, value);
+            color.a = _overlayAlpha;
+            
+            return color;
+        }
+        
+        /// <summary>
+        /// Generate preview textures for objects.
+        /// </summary>
+        private void GenerateObjectPreviews(List<DetectedObject> objects) {
+            _objectPreviews.Clear();
+            
+            if (_baseTexture == null) return;
+            
+            foreach (var obj in objects) {
+                // Skip if bounding box is invalid
+                if (obj.boundingBox.width <= 0 || obj.boundingBox.height <= 0) {
+                    continue;
+                }
                 
-                // Apply animation curve if available
-                if (fadeInCurve != null)
-                    t = fadeInCurve.Evaluate(t);
+                // Extract region from base image
+                Texture2D preview = ExtractPreviewTexture(obj);
+                if (preview != null) {
+                    _objectPreviews[obj.id] = preview;
+                }
+            }
+        }
+        
+        /// <summary>
+        /// Extract preview texture for an object.
+        /// </summary>
+        private Texture2D ExtractPreviewTexture(DetectedObject obj) {
+            try {
+                // Calculate region
+                int x = Mathf.FloorToInt(obj.boundingBox.x);
+                int y = Mathf.FloorToInt(obj.boundingBox.y);
+                int width = Mathf.CeilToInt(obj.boundingBox.width);
+                int height = Mathf.CeilToInt(obj.boundingBox.height);
                 
-                Color currentColor = Color.Lerp(transparentColor, originalColor, t);
-                mat.color = currentColor;
+                // Ensure within bounds
+                x = Mathf.Clamp(x, 0, _baseTexture.width - 1);
+                y = Mathf.Clamp(y, 0, _baseTexture.height - 1);
+                width = Mathf.Clamp(width, 1, _baseTexture.width - x);
+                height = Mathf.Clamp(height, 1, _baseTexture.height - y);
+                
+                // Create texture
+                Texture2D preview = new Texture2D(width, height, TextureFormat.RGBA32, false);
+                
+                // Copy pixels
+                Color[] pixels = _baseTexture.GetPixels(x, _baseTexture.height - y - height, width, height);
+                preview.SetPixels(pixels);
+                preview.Apply();
+                
+                return preview;
+            }
+            catch (Exception ex) {
+                LogError($"Error extracting preview: {ex.Message}", LogCategory.Visualization);
+                return null;
+            }
+        }
+        
+        /// <summary>
+        /// Create labels for detected objects.
+        /// </summary>
+        private IEnumerator CreateLabelsForObjects(List<DetectedObject> objects) {
+            // Clear existing labels
+            ClearLabels();
+            
+            // Wait a frame for layout to update
+            yield return null;
+            
+            // Calculate display scale and offset
+            UpdateDisplayLayout();
+            
+            // Create labels
+            float delay = _animateLabels ? _labelAnimDuration / objects.Count : 0;
+            
+            for (int i = 0; i < objects.Count; i++) {
+                var obj = objects[i];
+                
+                // Skip if bounding box is invalid
+                if (obj.boundingBox.width <= 0 || obj.boundingBox.height <= 0) {
+                    continue;
+                }
+                
+                // Create label
+                GameObject labelObj = CreateLabelForObject(obj);
+                
+                // Animate if enabled
+                if (_animateLabels) {
+                    // Start with zero scale
+                    labelObj.transform.localScale = Vector3.zero;
+                    
+                    // Animate to full scale
+                    StartCoroutine(AnimateLabel(labelObj, delay * i));
+                }
+                
+                // Add to lists
+                _labels.Add(labelObj);
+                _labelsByObjectId[obj.id] = labelObj;
+                
+                // Yield for animation
+                if (delay > 0) {
+                    yield return new WaitForSeconds(delay);
+                }
+            }
+        }
+        
+        /// <summary>
+        /// Create a label for an object.
+        /// </summary>
+        private GameObject CreateLabelForObject(DetectedObject obj) {
+            // Instantiate label prefab
+            GameObject labelObj = Instantiate(_labelPrefab, _labelsContainer);
+            
+            // Get components
+            TextMeshProUGUI text = labelObj.GetComponent<TextMeshProUGUI>();
+            RectTransform rect = labelObj.GetComponent<RectTransform>();
+            Button button = labelObj.GetComponent<Button>();
+            
+            // Set text
+            string labelText = GetLabelText(obj);
+            text.text = labelText;
+            
+            // Set position
+            Vector2 screenPos = ConvertToScreenSpace(obj.boundingBox.center);
+            rect.anchoredPosition = screenPos;
+            
+            // Set name
+            labelObj.name = $"Label_{obj.id}_{obj.className}";
+            
+            // Set color
+            if (_objectColors.TryGetValue(obj.id, out Color color)) {
+                Image background = labelObj.GetComponentInChildren<Image>();
+                if (background != null) {
+                    background.color = new Color(color.r * 0.7f, color.g * 0.7f, color.b * 0.7f, 0.8f);
+                }
+            }
+            
+            // Add click handler
+            if (button != null) {
+                button.onClick.AddListener(() => {
+                    OnLabelClicked(obj.id);
+                });
+            }
+            
+            // Create bounding rect for interaction
+            CreateBoundingRect(obj);
+            
+            return labelObj;
+        }
+        /// <summary>
+        /// Create a bounding rect for object interaction.
+        /// </summary>
+        private void CreateBoundingRect(DetectedObject obj) {
+            // Create game object
+            GameObject boundObj = new GameObject($"Bound_{obj.id}");
+            boundObj.transform.SetParent(_labelsContainer);
+            
+            // Add components
+            RectTransform rect = boundObj.AddComponent<RectTransform>();
+            Image image = boundObj.AddComponent<Image>();
+            
+            // Make transparent
+            image.color = Color.clear;
+            
+            // Set position and size
+            Vector2 screenMin = ConvertToScreenSpace(obj.boundingBox.min);
+            Vector2 screenMax = ConvertToScreenSpace(obj.boundingBox.max);
+            
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.zero;
+            rect.pivot = Vector2.zero;
+            rect.anchoredPosition = screenMin;
+            rect.sizeDelta = screenMax - screenMin;
+            
+            // Add event triggers
+            EventTrigger trigger = boundObj.AddComponent<EventTrigger>();
+            
+            // Add pointer enter event
+            EventTrigger.Entry enterEntry = new EventTrigger.Entry();
+            enterEntry.eventID = EventTriggerType.PointerEnter;
+            enterEntry.callback.AddListener((data) => { OnObjectHover(obj.id); });
+            trigger.triggers.Add(enterEntry);
+            
+            // Add pointer exit event
+            EventTrigger.Entry exitEntry = new EventTrigger.Entry();
+            exitEntry.eventID = EventTriggerType.PointerExit;
+            exitEntry.callback.AddListener((data) => { OnObjectUnhover(obj.id); });
+            trigger.triggers.Add(exitEntry);
+            
+            // Add pointer click event
+            EventTrigger.Entry clickEntry = new EventTrigger.Entry();
+            clickEntry.eventID = EventTriggerType.PointerClick;
+            clickEntry.callback.AddListener((data) => { OnObjectClick(obj.id); });
+            trigger.triggers.Add(clickEntry);
+            
+            // Store in dictionary
+            _objectBoundRects[obj.id] = rect;
+        }
+        
+        /// <summary>
+        /// Get text for object label.
+        /// </summary>
+        private string GetLabelText(DetectedObject obj) {
+            string labelText = "";
+            
+            // Add class name
+            if (_showClassNames) {
+                labelText += obj.className;
+            }
+            
+            // Add confidence
+            if (_showConfidence && obj.confidence > 0) {
+                if (labelText.Length > 0) {
+                    labelText += " ";
+                }
+                labelText += $"({obj.confidence:P0})";
+            }
+            
+            // Add object ID
+            if (_showObjectIds) {
+                if (labelText.Length > 0) {
+                    labelText += " ";
+                }
+                labelText += $"[{obj.id}]";
+            }
+            
+            // Truncate if too long
+            if (labelText.Length > _maxLabelLength) {
+                labelText = labelText.Substring(0, _maxLabelLength - 3) + "...";
+            }
+            
+            return labelText;
+        }
+        
+        /// <summary>
+        /// Animate a label appearing.
+        /// </summary>
+        private IEnumerator AnimateLabel(GameObject label, float delay) {
+            // Wait for delay
+            yield return new WaitForSeconds(delay);
+            
+            // Animate scale
+            float startTime = Time.time;
+            float duration = _labelAnimDuration * 0.5f; // Half the total animation time
+            
+            while (Time.time - startTime < duration) {
+                float t = (Time.time - startTime) / duration;
+                t = Mathf.SmoothStep(0, 1, t); // Smooth animation
+                
+                label.transform.localScale = Vector3.Lerp(Vector3.zero, Vector3.one, t);
                 
                 yield return null;
             }
             
-            // Ensure final color is set
-            mat.color = originalColor;
+            // Ensure final scale
+            label.transform.localScale = Vector3.one;
+        }
+        
+        /// <summary>
+        /// Clear all labels.
+        /// </summary>
+        private void ClearLabels() {
+            // Destroy label objects
+            foreach (var label in _labels) {
+                if (label != null) {
+                    Destroy(label);
+                }
+            }
+            
+            // Destroy bounding rects
+            foreach (var pair in _objectBoundRects) {
+                if (pair.Value != null) {
+                    Destroy(pair.Value.gameObject);
+                }
+            }
+            
+            // Clear collections
+            _labels.Clear();
+            _labelsByObjectId.Clear();
+            _objectBoundRects.Clear();
+        }
+        
+        /// <summary>
+        /// Update labels visibility.
+        /// </summary>
+        private void UpdateLabelsVisibility() {
+            if (_labelsContainer != null) {
+                _labelsContainer.gameObject.SetActive(_showLabels);
+            }
+        }
+        
+        /// <summary>
+        /// Update overlay alpha.
+        /// </summary>
+        private void UpdateOverlayAlpha() {
+            if (_overlayDisplay != null) {
+                Color color = _overlayDisplay.color;
+                color.a = _overlayAlpha;
+                _overlayDisplay.color = color;
+            }
+        }
+        
+        /// <summary>
+        /// Regenerate overlay texture.
+        /// </summary>
+        private void RegenerateOverlay() {
+            if (_currentResults == null || _currentResults.detectedObjects == null) {
+                return;
+            }
+            
+            GenerateOverlayFromObjects(_currentResults.detectedObjects);
+        }
+        
+        #endregion
+        
+        #region Interaction Handling
+        
+        /// <summary>
+        /// Handle pointer click event.
+        /// </summary>
+        public void OnPointerClick(PointerEventData eventData) {
+            if (!_enableInteraction) return;
+            
+            // Convert to local position
+            Vector2 localPoint;
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                (RectTransform)transform, eventData.position, eventData.pressEventCamera, out localPoint);
+            
+            // Convert to image space
+            Vector2 imagePoint = ConvertToImageSpace(localPoint);
+            
+            // Find object at this position
+            int objectId = FindObjectAtPosition(imagePoint);
+            
+            if (objectId >= 0) {
+                OnObjectClick(objectId);
+            }
+            else {
+                ClearSelection();
+                
+                // Hide detail panel
+                if (_detailPanel != null) {
+                    _detailPanel.SetActive(false);
+                }
+            }
+        }
+        
+        /// <summary>
+        /// Handle pointer enter event.
+        /// </summary>
+        public void OnPointerEnter(PointerEventData eventData) {
+            // Not used for the main component
+        }
+        
+        /// <summary>
+        /// Handle pointer exit event.
+        /// </summary>
+        public void OnPointerExit(PointerEventData eventData) {
+            // Clear hover if not on a specific object
+            ClearHover();
+        }
+        /// <summary>
+        /// Handle object hover.
+        /// </summary>
+        private void OnObjectHover(int objectId) {
+            if (!_enableInteraction) return;
+            
+            // Skip if same as current
+            if (objectId == _hoveredObjectId) return;
+            
+            // Clear previous hover
+            ClearHover();
+            
+            // Find object
+            DetectedObject obj = FindObjectById(objectId);
+            if (obj == null) return;
+            
+            // Store hover
+            _hoveredObjectId = objectId;
+            _hoveredObject = obj;
+            
+            // Highlight in overlay
+            HighlightObjectInOverlay(obj, _hoverColor);
+            
+            // Highlight label
+            HighlightLabel(objectId, true);
+            
+            // Trigger event
+            OnObjectHovered?.Invoke(obj);
+        }
+        
+        /// <summary>
+        /// Handle object unhover.
+        /// </summary>
+        private void OnObjectUnhover(int objectId) {
+            if (!_enableInteraction) return;
+            
+            // Only clear if this is the hovered object
+            if (objectId != _hoveredObjectId) return;
+            
+            ClearHover();
+        }
+        
+        /// <summary>
+        /// Clear hover state.
+        /// </summary>
+        private void ClearHover() {
+            if (_hoveredObjectId < 0) return;
+            
+            // Restore overlay
+            RegenerateOverlay();
+            
+            // Unhighlight label
+            HighlightLabel(_hoveredObjectId, false);
+            
+            // Clear state
+            _hoveredObjectId = -1;
+            _hoveredObject = null;
+        }
+        
+        /// <summary>
+        /// Handle object click.
+        /// </summary>
+        private void OnObjectClick(int objectId) {
+            if (!_enableInteraction) return;
+            
+            // Find object
+            DetectedObject obj = FindObjectById(objectId);
+            if (obj == null) return;
+            
+            // Toggle selection
+            if (objectId == _selectedObjectId) {
+                ClearSelection();
+            }
+            else {
+                SelectObject(objectId);
+            }
+            
+            // Trigger event
+            OnObjectClicked?.Invoke(obj);
+        }
+        
+        /// <summary>
+        /// Handle label click.
+        /// </summary>
+        private void OnLabelClicked(int objectId) {
+            if (!_enableInteraction) return;
+            
+            // Same as object click
+            OnObjectClick(objectId);
+        }
+        
+        /// <summary>
+        /// Select an object.
+        /// </summary>
+        public void SelectObject(int objectId) {
+            if (!_enableInteraction) return;
+            
+            // Clear previous selection
+            ClearSelection();
+            
+            // Find object
+            DetectedObject obj = FindObjectById(objectId);
+            if (obj == null) return;
+            
+            // Store selection
+            _selectedObjectId = objectId;
+            _selectedObject = obj;
+            
+            // Highlight in overlay
+            HighlightObjectInOverlay(obj, _selectionColor);
+            
+            // Highlight label
+            HighlightLabel(objectId, true);
+            
+            // Show detail panel
+            ShowObjectDetails(obj);
+            
+            // Trigger event
+            OnObjectSelected?.Invoke(obj);
+        }
+        
+        /// <summary>
+        /// Clear selection.
+        /// </summary>
+        public void ClearSelection() {
+            if (_selectedObjectId < 0) return;
+            
+            // Restore overlay
+            RegenerateOverlay();
+            
+            // Unhighlight label
+            HighlightLabel(_selectedObjectId, false);
+            
+            // Trigger event
+            if (_selectedObject != null) {
+                OnObjectDeselected?.Invoke(_selectedObject);
+            }
+            
+            // Clear state
+            _selectedObjectId = -1;
+            _selectedObject = null;
+        }
+        
+         /// <summary>
+        /// Highlight object in overlay.
+        /// </summary>
+        private void HighlightObjectInOverlay(DetectedObject obj, Color highlightColor) {
+            if (_overlayTexture == null || _originalOverlayPixels == null) return;
+            
+            try {
+                // Make a copy of the original pixels
+                Color[] pixels = new Color[_originalOverlayPixels.Length];
+                Array.Copy(_originalOverlayPixels, pixels, _originalOverlayPixels.Length);
+                
+                // Apply segments with highlight color
+                if (obj.segments != null && obj.segments.Count > 0) {
+                    foreach (var segment in obj.segments) {
+                        if (segment.maskTexture == null) continue;
+                        
+                        // Ensure same dimensions
+                        Texture2D mask = segment.maskTexture;
+                        if (mask.width != _overlayTexture.width || mask.height != _overlayTexture.height) {
+                            mask = ResizeTexture(mask, _overlayTexture.width, _overlayTexture.height);
+                        }
+                        
+                        // Get mask pixels
+                        Color[] maskPixels = mask.GetPixels();
+                        
+                        // Apply highlight
+                        for (int i = 0; i < pixels.Length; i++) {
+                            float maskValue = maskPixels[i].r;
+                            if (maskValue > 0.5f) { // Threshold
+                                // Apply highlight color
+                                Color color = highlightColor;
+                                color.a = color.a * maskValue;
+                                
+                                // Alpha blend
+                                pixels[i] = Color.Lerp(pixels[i], color, color.a);
+                            }
+                        }
+                    }
+                }
+                else {
+                    // Use bounding box if no segments
+                    int x = Mathf.FloorToInt(obj.boundingBox.x);
+                    int y = Mathf.FloorToInt(obj.boundingBox.y);
+                    int width = Mathf.CeilToInt(obj.boundingBox.width);
+                    int height = Mathf.CeilToInt(obj.boundingBox.height);
+                    
+                    // Ensure within bounds
+                    x = Mathf.Clamp(x, 0, _overlayTexture.width - 1);
+                    y = Mathf.Clamp(y, 0, _overlayTexture.height - 1);
+                    width = Mathf.Clamp(width, 1, _overlayTexture.width - x);
+                    height = Mathf.Clamp(height, 1, _overlayTexture.height - y);
+                    
+                    // Apply highlight to bounding box
+                    for (int py = y; py < y + height; py++) {
+                        for (int px = x; px < x + width; px++) {
+                            int index = py * _overlayTexture.width + px;
+                            if (index >= 0 && index < pixels.Length) {
+                                // Alpha blend
+                                pixels[index] = Color.Lerp(pixels[index], highlightColor, highlightColor.a);
+                            }
+                        }
+                    }
+                }
+                
+                // Apply to texture
+                _overlayTexture.SetPixels(pixels);
+                _overlayTexture.Apply();
+            }
+            catch (Exception ex) {
+                LogError($"Error highlighting object: {ex.Message}", LogCategory.Visualization);
+            }
+        }
+        
+        /// <summary>
+        /// Highlight a label.
+        /// </summary>
+        private void HighlightLabel(int objectId, bool highlight) {
+            if (!_labelsByObjectId.TryGetValue(objectId, out GameObject labelObj)) {
+                return;
+            }
+            
+            // Get text component
+            TextMeshProUGUI text = labelObj.GetComponent<TextMeshProUGUI>();
+            if (text == null) return;
+            
+            // Apply highlight
+            if (highlight) {
+                text.color = _labelHighlightColor;
+                text.fontStyle = FontStyles.Bold;
+                
+                // Bring to front
+                labelObj.transform.SetAsLastSibling();
+                
+                // Scale up slightly
+                if (_animateSelection) {
+                    StartCoroutine(AnimateLabelScale(labelObj, 1.2f));
+                }
+                else {
+                    labelObj.transform.localScale = Vector3.one * 1.2f;
+                }
+            }
+            else {
+                text.color = Color.white;
+                text.fontStyle = FontStyles.Normal;
+                
+                // Reset scale
+                if (_animateSelection) {
+                    StartCoroutine(AnimateLabelScale(labelObj, 1.0f));
+                }
+                else {
+                    labelObj.transform.localScale = Vector3.one;
+                }
+            }
+        }
+        
+        /// <summary>
+        /// Animate label scale.
+        /// </summary>
+        private IEnumerator AnimateLabelScale(GameObject label, float targetScale) {
+            float startTime = Time.time;
+            float duration = _selectionAnimDuration;
+            Vector3 startScale = label.transform.localScale;
+            Vector3 targetVector = Vector3.one * targetScale;
+            
+            while (Time.time - startTime < duration) {
+                float t = (Time.time - startTime) / duration;
+                t = Mathf.SmoothStep(0, 1, t); // Smooth animation
+                
+                label.transform.localScale = Vector3.Lerp(startScale, targetVector, t);
+                
+                yield return null;
+            }
+            
+            // Ensure final scale
+            label.transform.localScale = targetVector;
+        }
+        
+        /// <summary>
+        /// Show object details in panel.
+        /// </summary>
+        private void ShowObjectDetails(DetectedObject obj) {
+            if (_detailPanel == null) return;
+            
+            // Activate panel
+            _detailPanel.SetActive(true);
+            
+            // Set title
+            if (_detailNameText != null) {
+                _detailNameText.text = obj.className;
+            }
+            
+            // Set class
+            if (_detailClassText != null) {
+                string classInfo = $"Class: {obj.className}";
+                if (obj.isTerrain) classInfo += " (Terrain)";
+                if (obj.isManMade) classInfo += " (Man-made)";
+                _detailClassText.text = classInfo;
+            }
+            
+            // Set confidence
+            if (_detailConfidenceText != null) {
+                _detailConfidenceText.text = $"Confidence: {obj.confidence:P0}";
+            }
+            
+            // Set dimensions
+            if (_detailDimensionsText != null) {
+                _detailDimensionsText.text = $"Dimensions: {obj.boundingBox.width:F0}x{obj.boundingBox.height:F0}";
+            }
+            
+            // Set description
+            if (_detailDescriptionText != null) {
+                string description = obj.enhancedDescription;
+                if (string.IsNullOrEmpty(description)) {
+                    description = obj.shortDescription;
+                }
+                if (string.IsNullOrEmpty(description)) {
+                    description = $"A {obj.className} object.";
+                }
+                _detailDescriptionText.text = $"Description: {description}";
+            }
+            
+            // Set preview image
+            if (_detailPreviewImage != null) {
+                if (_objectPreviews.TryGetValue(obj.id, out Texture2D preview)) {
+                    _detailPreviewImage.texture = preview;
+                    _detailPreviewImage.gameObject.SetActive(true);
+                }
+                else {
+                    _detailPreviewImage.gameObject.SetActive(false);
+                }
+            }
+        }
+        
+        #endregion
+        
+        #region Utility Methods
+        
+        /// <summary>
+        /// Find object by ID.
+        /// </summary>
+        private DetectedObject FindObjectById(int id) {
+            if (_currentResults == null || _currentResults.detectedObjects == null) {
+                return null;
+            }
+            
+            return _currentResults.detectedObjects.Find(obj => obj.id == id);
+        }
+        
+        /// <summary>
+        /// Find object at position.
+        /// </summary>
+        private int FindObjectAtPosition(Vector2 position) {
+            if (_currentResults == null || _currentResults.detectedObjects == null) {
+                return -1;
+            }
+            
+            // Check each object's segments
+            foreach (var obj in _currentResults.detectedObjects) {
+                // Check segments first
+                if (obj.segments != null && obj.segments.Count > 0) {
+                    foreach (var segment in obj.segments) {
+                        if (segment.contourPoints != null && segment.contourPoints.Count >= 3) {
+                            if (PointInPolygon(position, segment.contourPoints)) {
+                                return obj.id;
+                            }
+                        }
+                    }
+                }
+                
+                // Fallback to bounding box
+                if (obj.boundingBox.Contains(position)) {
+                    return obj.id;
+                }
+            }
+            
+            return -1;
+        }
+        
+        /// <summary>
+        /// Check if point is inside polygon.
+        /// </summary>
+        private bool PointInPolygon(Vector2 point, List<Vector2> polygon) {
+            int polygonLength = polygon.Count, i = 0;
+            bool inside = false;
+            
+            // x, y for tested point.
+            float pointX = point.x, pointY = point.y;
+            
+            // Start with the last vertex in polygon.
+            float startX = polygon[polygonLength - 1].x, startY = polygon[polygonLength - 1].y;
+            
+            // Loop through polygon vertices.
+            for (i = 0; i < polygonLength; i++) {
+                // End point of current polygon segment.
+                float endX = polygon[i].x, endY = polygon[i].y;
+                
+                // Connect current and previous vertices.
+                bool intersect = ((startY > pointY) != (endY > pointY)) 
+                    && (pointX < (endX - startX) * (pointY - startY) / (endY - startY) + startX);
+                
+                if (intersect) inside = !inside;
+                
+                // Next line segment starts from this vertex.
+                startX = endX;
+                startY = endY;
+            }
+            
+            return inside;
+        }
+        /// <summary>
+        /// Update display layout.
+        /// </summary>
+        private void UpdateDisplayLayout() {
+            if (_baseImageDisplay == null) return;
+            
+            // Get display rect
+            RectTransform displayRect = _baseImageDisplay.GetComponent<RectTransform>();
+            Rect rect = displayRect.rect;
+            
+            // Calculate display size and scale
+            _displaySize = new Vector2(rect.width, rect.height);
+            _displayOffset = new Vector2(rect.x, rect.y);
+            
+            // Calculate scale to fit image in display
+            float scaleX = _displaySize.x / _baseImageSize.x;
+            float scaleY = _displaySize.y / _baseImageSize.y;
+            _displayScale = Mathf.Min(scaleX, scaleY);
+            
+            // Update base image aspect ratio
+            if (_baseTexture != null) {
+                _baseImageDisplay.SetNativeSize();
+                _baseImageDisplay.transform.localScale = Vector3.one * _displayScale;
+            }
+            
+            // Update overlay to match
+            if (_overlayDisplay != null) {
+                _overlayDisplay.SetNativeSize();
+                _overlayDisplay.transform.localScale = Vector3.one * _displayScale;
+            }
+        }
+        
+        /// <summary>
+        /// Convert screen space to image space.
+        /// </summary>
+        private Vector2 ConvertToImageSpace(Vector2 screenPoint) {
+            // Adjust for display offset and scale
+            Vector2 normalizedPoint = screenPoint;
+            normalizedPoint /= _displayScale;
+            
+            // Flip Y (Unity UI has Y=0 at top, image has Y=0 at bottom)
+            normalizedPoint.y = _baseImageSize.y - normalizedPoint.y;
+            
+            return normalizedPoint;
+        }
+        
+        /// <summary>
+        /// Convert image space to screen space.
+        /// </summary>
+        private Vector2 ConvertToScreenSpace(Vector2 imagePoint) {
+            // Convert image coordinates to screen space
+            Vector2 screenPoint = imagePoint;
+            
+            // Flip Y (Unity UI has Y=0 at top, image has Y=0 at bottom)
+            screenPoint.y = _baseImageSize.y - screenPoint.y;
+            
+            // Apply scale
+            screenPoint *= _displayScale;
+            
+            return screenPoint;
+        }
+        
+        /// <summary>
+        /// Resize a texture to the specified dimensions.
+        /// </summary>
+        private Texture2D ResizeTexture(Texture2D source, int targetWidth, int targetHeight) {
+            // Skip if already the right size
+            if (source.width == targetWidth && source.height == targetHeight) {
+                return source;
+            }
+            
+            RenderTexture rt = RenderTexture.GetTemporary(targetWidth, targetHeight, 0, RenderTextureFormat.ARGB32);
+            Graphics.Blit(source, rt);
+            
+            RenderTexture prevRT = RenderTexture.active;
+            RenderTexture.active = rt;
+            
+            Texture2D result = new Texture2D(targetWidth, targetHeight, TextureFormat.RGBA32, false);
+            result.ReadPixels(new Rect(0, 0, targetWidth, targetHeight), 0, 0);
+            result.Apply();
+            
+            RenderTexture.active = prevRT;
+            RenderTexture.ReleaseTemporary(rt);
+            
+            return result;
+        }
+        
+        /// <summary>
+        /// Log a message using the debugger.
+        /// </summary>
+        private void Log(string message, LogCategory category) {
+            _debugger?.Log(message, category);
+        }
+        
+        /// <summary>
+        /// Log a warning using the debugger.
+        /// </summary>
+        private void LogWarning(string message, LogCategory category) {
+            _debugger?.LogWarning(message, category);
+        }
+        
+        /// <summary>
+        /// Log an error using the debugger.
+        /// </summary>
+        private void LogError(string message, LogCategory category) {
+            _debugger?.LogError(message, category);
         }
         
         #endregion
     }
-}
+} 

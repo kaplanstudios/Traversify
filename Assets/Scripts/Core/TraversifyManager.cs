@@ -11,6 +11,8 @@ using UnityEngine.Networking;
 using TMPro;
 using Traversify.AI; 
 using Traversify.Terrain;
+using Traversify.Models;
+using Traversify.Visualization;
 using SimpleFileBrowser;
 using USentis = Unity.Sentis; 
 

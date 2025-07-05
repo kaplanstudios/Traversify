@@ -11,13 +11,10 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading.Tasks;
-using System.IO;
 using UnityEngine;
-using UnityEngine.Rendering;
-using Unity.Mathematics;
 using Traversify.AI;
 using Traversify.Core;
+using Traversify.Models;
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
@@ -1275,4 +1272,3 @@ namespace Traversify {
         #endregion
     }
 }
-
